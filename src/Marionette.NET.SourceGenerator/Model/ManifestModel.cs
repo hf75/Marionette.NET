@@ -60,7 +60,8 @@ internal sealed record CallableModel(
     bool ReturnsTask,
     bool ReturnsTaskOfT,
     string? TaskResultTypeFullName,
-    EquatableArray<ParameterModel> Parameters);
+    EquatableArray<ParameterModel> Parameters,
+    string ParametersJsonSchema); // Phase 2.2: pre-computed input schema for the per-method MCP tool
 
 /// <summary>
 /// One parameter to an [McpCallable] method. DefaultValue is captured as a

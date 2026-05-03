@@ -190,6 +190,14 @@ internal static class Emitter
             sb.AppendLine("                    },");
         }
 
+        // Phase 2.2: pre-computed parameter object schema. Stamped onto the
+        // dynamic per-method MCP tool's InputSchema at runtime. Single-line
+        // JSON, deterministic, derived at compile-time so the runtime never
+        // walks ITypeSymbol.
+        sb.Append("                    ParametersJsonSchema: \"");
+        sb.Append(EscapeString(call.ParametersJsonSchema));
+        sb.AppendLine("\",");
+
         // Invoke lambda. This is the AOT-critical bit:
         //   static (instance, args) => {
         //       var typed = (Foo)instance;

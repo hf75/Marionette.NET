@@ -284,6 +284,33 @@ internal sealed class TodoAppFixture : IDisposable
     }
 
     /// <summary>
+    /// Phase 2.2: tools/call against an arbitrary tool name with raw
+    /// arguments. Used by EC-7 to call per-method dynamic tools directly
+    /// (e.g. <c>TodoListViewModel.AddTodo({"title":"..."})</c>).
+    /// </summary>
+    public async Task<string> CallToolAsync(string toolName, object? arguments = null, TimeSpan? timeout = null)
+    {
+        var id = NextId();
+        await SendRawAsync(new
+        {
+            jsonrpc = "2.0",
+            id,
+            method = "tools/call",
+            @params = new { name = toolName, arguments = arguments ?? new { } },
+        }).ConfigureAwait(false);
+
+        using var resp = await WaitForResponseAsync(id, timeout ?? TimeSpan.FromSeconds(10))
+                        .ConfigureAwait(false)
+                        ?? throw new TimeoutException(
+                            $"No response to tools/call {toolName} within the timeout window.");
+
+        if (!TryReadToolText(resp.RootElement, out var text))
+            throw new InvalidOperationException(
+                $"tools/call {toolName} response had no text content: {resp.RootElement.GetRawText()}");
+        return text;
+    }
+
+    /// <summary>
     /// resources/subscribe to the given URI. Returns true when the response
     /// carries a result (the SDK's standard EmptyResult).
     /// </summary>

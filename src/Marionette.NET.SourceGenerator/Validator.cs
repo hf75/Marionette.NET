@@ -162,6 +162,14 @@ internal static class Validator
         // ---- MAR004: parameter type blacklist ----
         // Phase 1.b is permissive — only obvious blacklist hits trigger.
         var paramBuilder = ImmutableArray.CreateBuilder<ParameterModel>();
+        // Phase 2.2: collect (name, ITypeSymbol, isRequired) tuples in
+        // declaration order so JsonSchemaWriter.WriteParametersSchema gets
+        // the same data the runtime sees. We deliberately walk Method.Parameters
+        // here (Roslyn-side) rather than later from ParameterModel (which
+        // does not retain the ITypeSymbol — that's intentional for the
+        // pipeline equality contract).
+        var schemaInputs = new List<(string Name, ITypeSymbol Type, bool IsRequired)>(method.Parameters.Length);
+
         foreach (var p in method.Parameters)
         {
             var typeFullName = p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -187,6 +195,8 @@ internal static class Validator
                 TypeFullName: typeFullName,
                 IsRequired: !p.HasExplicitDefaultValue,
                 DefaultLiteral: defaultLiteral));
+
+            schemaInputs.Add((p.Name, p.Type, !p.HasExplicitDefaultValue));
         }
 
         // Return-shape analysis.
@@ -197,6 +207,11 @@ internal static class Validator
         var returnTypeFullName = method.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         var (returnsTask, returnsTaskOfT, taskResultTypeFullName) = ClassifyReturnType(method.ReturnType);
 
+        // Phase 2.2: pre-compute the JSON schema for this callable's
+        // parameter object. The runtime stamps it onto the per-method
+        // McpServerTool's InputSchema; runtime never re-walks symbols.
+        var parametersSchema = JsonSchemaWriter.WriteParametersSchema(schemaInputs);
+
         return new CallableModel(
             MethodName: method.Name,
             Description: description,
@@ -206,7 +221,8 @@ internal static class Validator
             ReturnsTask: returnsTask,
             ReturnsTaskOfT: returnsTaskOfT,
             TaskResultTypeFullName: taskResultTypeFullName,
-            Parameters: paramBuilder.ToImmutable().ToEquatableArray());
+            Parameters: paramBuilder.ToImmutable().ToEquatableArray(),
+            ParametersJsonSchema: parametersSchema);
     }
 
     // -------------------------------------------------------------------------

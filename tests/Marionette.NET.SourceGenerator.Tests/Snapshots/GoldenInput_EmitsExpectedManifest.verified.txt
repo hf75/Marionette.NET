@@ -44,6 +44,7 @@ public static class GeneratedManifest
                         new ParamDescriptor(Name: "a", ClrTypeName: "int", IsRequired: true, DefaultValue: null),
                         new ParamDescriptor(Name: "b", ClrTypeName: "int", IsRequired: true, DefaultValue: null),
                     },
+                    ParametersJsonSchema: "{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"integer\"},\"b\":{\"type\":\"integer\"}},\"required\":[\"a\",\"b\"]}",
                     Invoke: static (instance, args) =>
                     {
                         var typed = (global::Demo.Calculator)instance;
@@ -62,6 +63,7 @@ public static class GeneratedManifest
                         new ParamDescriptor(Name: "numerator", ClrTypeName: "double", IsRequired: true, DefaultValue: null),
                         new ParamDescriptor(Name: "denominator", ClrTypeName: "double", IsRequired: true, DefaultValue: null),
                     },
+                    ParametersJsonSchema: "{\"type\":\"object\",\"properties\":{\"numerator\":{\"type\":\"number\"},\"denominator\":{\"type\":\"number\"}},\"required\":[\"numerator\",\"denominator\"]}",
                     Invoke: static (instance, args) =>
                     {
                         var typed = (global::Demo.Calculator)instance;
@@ -76,6 +78,7 @@ public static class GeneratedManifest
                     TimeoutSeconds: 0,
                     IsAsync: false,
                     Parameters: global::System.Array.Empty<ParamDescriptor>(),
+                    ParametersJsonSchema: "{\"type\":\"object\",\"properties\":{}}",
                     Invoke: static (instance, args) =>
                     {
                         var typed = (global::Demo.Calculator)instance;
@@ -89,6 +92,7 @@ public static class GeneratedManifest
                     TimeoutSeconds: 0,
                     IsAsync: true,
                     Parameters: global::System.Array.Empty<ParamDescriptor>(),
+                    ParametersJsonSchema: "{\"type\":\"object\",\"properties\":{}}",
                     Invoke: static (instance, args) =>
                     {
                         var typed = (global::Demo.Calculator)instance;

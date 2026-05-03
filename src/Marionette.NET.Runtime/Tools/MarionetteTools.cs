@@ -103,7 +103,7 @@ public sealed class MarionetteTools
         "parameter name; values must match the parameter type listed in inspect_app_api. " +
         "Returns the method's result (boxed as JSON) or a structured " +
         "{success:false,errorCode:'...',message:'...'} object on failure.")]
-    public static async Task<string> InvokeMethodAsync(
+    public static Task<string> InvokeMethodAsync(
         ManifestRegistry registry,
         IUiAutomationAdapter adapter,
         LoopProtectionService loopGuard,
@@ -116,97 +116,28 @@ public sealed class MarionetteTools
         JsonElement? args = null,
         CancellationToken cancellationToken = default)
     {
-        var hop = loopGuard.TryEnterHop();
-        if (hop.Exceeded)
-        {
-            return new JsonObject
-            {
-                ["success"] = false,
-                ["errorCode"] = "loop_limit_exceeded",
-                ["message"] = $"Hop counter {hop.Hops} exceeds limit {loopGuard.MaxDepth}. Loop-protection " +
-                              "(MASTERPLAN Spielregel 3) refuses further invocations until the call chain decays.",
-                ["hops"] = hop.Hops,
-            }.ToJsonString();
-        }
-
+        // Phase 2.2: the dispatch pipeline (loop-protection, marshalling,
+        // UI-thread routing, async unwrap, error shaping) is shared with the
+        // dynamic per-method tool path via MarionetteDispatch. Resolution
+        // (root + method lookup) stays here because the meta-tool surface
+        // accepts string identifiers from the LLM and must surface
+        // unknown_root / unknown_method structured errors itself.
         var registered = registry.Find(root);
         if (registered is null)
         {
-            return MakeError("unknown_root", $"No root named '{root}' is registered.").ToJsonString();
-        }
-        if (registered.Instance is null)
-        {
-            return MakeError("root_unavailable",
-                $"Root '{root}' has no live instance: {registered.CreateError ?? "no factory; install adapter that binds an instance"}.")
-                .ToJsonString();
+            return Task.FromResult(MakeError("unknown_root", $"No root named '{root}' is registered.").ToJsonString());
         }
 
         var callable = registered.Descriptor.Callables.FirstOrDefault(c => c.Name == method);
         if (callable is null)
         {
-            return MakeError("unknown_method",
+            return Task.FromResult(MakeError("unknown_method",
                 $"Root '{root}' has no [McpCallable] method named '{method}'.")
-                .ToJsonString();
+                .ToJsonString());
         }
 
-        Dictionary<string, object?> argMap;
-        try
-        {
-            argMap = MarshalArguments(callable, args);
-        }
-        catch (Exception ex)
-        {
-            return MakeError("argument_marshalling_failed", ex.Message).ToJsonString();
-        }
-
-        // UI-thread vs thread-pool dispatch.
-        Func<object?> doCall = () => callable.Invoke(registered.Instance!, argMap);
-
-        try
-        {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            if (callable.TimeoutSeconds > 0)
-            {
-                cts.CancelAfter(TimeSpan.FromSeconds(callable.TimeoutSeconds));
-            }
-
-            object? result;
-            if (callable.OffUiThread)
-            {
-                // OffUiThread=true: stay on the thread-pool. The method may
-                // dispatch back to the UI thread itself if it touches state.
-                result = await Task.Run(doCall, cts.Token).ConfigureAwait(false);
-            }
-            else
-            {
-                result = await adapter.DispatchAsync(doCall, cts.Token).ConfigureAwait(false);
-            }
-
-            // If the method is async, the return is a Task / ValueTask /
-            // Task<T> / ValueTask<T>. Await it generically.
-            if (callable.IsAsync)
-            {
-                result = await AwaitAndUnwrapAsync(result).ConfigureAwait(false);
-            }
-
-            return SerializeResult(result);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // The MCP host is shutting down — surface a clean error.
-            return MakeError("cancelled", "Invocation was cancelled.").ToJsonString();
-        }
-        catch (OperationCanceledException) when (callable.TimeoutSeconds > 0)
-        {
-            return MakeError("timeout",
-                $"Method '{root}.{method}' did not complete within {callable.TimeoutSeconds}s.")
-                .ToJsonString();
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "invoke_method failed: {Root}.{Method}", root, method);
-            return MakeError("invocation_failed", ex.Message).ToJsonString();
-        }
+        return MarionetteDispatch.InvokeAsync(
+            registered, callable, args, adapter, loopGuard, logger, cancellationToken);
     }
 
     // -------------------------------------------------------------------------
@@ -318,170 +249,14 @@ public sealed class MarionetteTools
     }
 
     // =========================================================================
-    // Helpers — serialization, marshalling, async unwrapping
+    // Helpers — argument marshalling, async unwrapping, and dispatch live in
+    // MarionetteDispatch (Phase 2.2; shared with DynamicCallableHandler).
+    // The remaining helpers below are inspect_app_api / read_observable
+    // serialisation and the structured-error builder.
     // =========================================================================
 
-    /// <summary>
-    /// Marshal a JSON args bag onto the <see cref="CallableDescriptor.Invoke"/>
-    /// dictionary contract: keys are parameter names, values are CLR objects
-    /// of the exact type the generator's lambda casts to.
-    /// </summary>
-    private static Dictionary<string, object?> MarshalArguments(CallableDescriptor callable, JsonElement? args)
-    {
-        var map = new Dictionary<string, object?>(StringComparer.Ordinal);
-        if (callable.Parameters.Count == 0) return map;
-
-        // No args bag at all → every parameter must be optional.
-        if (args is not { } argsEl || argsEl.ValueKind == JsonValueKind.Undefined || argsEl.ValueKind == JsonValueKind.Null)
-        {
-            foreach (var p in callable.Parameters)
-            {
-                if (p.IsRequired)
-                    throw new ArgumentException($"Required parameter '{p.Name}' was not supplied.");
-                if (p.DefaultValue is not null) map[p.Name] = p.DefaultValue;
-            }
-            return map;
-        }
-
-        if (argsEl.ValueKind != JsonValueKind.Object)
-            throw new ArgumentException($"args must be a JSON object; got {argsEl.ValueKind}.");
-
-        foreach (var p in callable.Parameters)
-        {
-            if (argsEl.TryGetProperty(p.Name, out var propEl))
-            {
-                map[p.Name] = ConvertJsonToClr(propEl, p.ClrTypeName, p.Name);
-            }
-            else if (p.IsRequired)
-            {
-                throw new ArgumentException($"Required parameter '{p.Name}' was not supplied.");
-            }
-            else if (p.DefaultValue is not null)
-            {
-                map[p.Name] = p.DefaultValue;
-            }
-        }
-        return map;
-    }
-
-    /// <summary>
-    /// Convert a JsonElement to a boxed CLR value matching the generator's
-    /// short type-name. Phase 1.2 supports the common primitives; complex
-    /// types fall back to <see cref="JsonSerializer.Deserialize{TValue}"/>
-    /// against a system type lookup, but this is rare in v1 user APIs.
-    /// </summary>
-    private static object? ConvertJsonToClr(JsonElement el, string clrTypeName, string paramName)
-    {
-        // Strip nullable annotations / global:: prefix for matching.
-        var name = clrTypeName;
-        if (name.EndsWith("?", StringComparison.Ordinal)) name = name[..^1];
-        if (name.StartsWith("global::", StringComparison.Ordinal)) name = name["global::".Length..];
-
-        switch (name)
-        {
-            case "int":
-            case "System.Int32":
-                return el.GetInt32();
-            case "long":
-            case "System.Int64":
-                return el.GetInt64();
-            case "short":
-            case "System.Int16":
-                return (short)el.GetInt32();
-            case "byte":
-            case "System.Byte":
-                return (byte)el.GetInt32();
-            case "uint":
-            case "System.UInt32":
-                return el.GetUInt32();
-            case "ulong":
-            case "System.UInt64":
-                return el.GetUInt64();
-            case "float":
-            case "System.Single":
-                return el.GetSingle();
-            case "double":
-            case "System.Double":
-                return el.GetDouble();
-            case "decimal":
-            case "System.Decimal":
-                return el.GetDecimal();
-            case "bool":
-            case "System.Boolean":
-                return el.GetBoolean();
-            case "string":
-            case "System.String":
-                return el.ValueKind == JsonValueKind.Null ? null : el.GetString();
-            case "char":
-            case "System.Char":
-                var s = el.GetString();
-                return string.IsNullOrEmpty(s) ? '\0' : s![0];
-            case "System.DateTime":
-                return el.GetDateTime();
-            case "System.Guid":
-                return el.GetGuid();
-            default:
-                // Fallback: deserialize via STJ. This may not be AOT-clean for
-                // exotic types; v1 user APIs are encouraged to stick to
-                // primitives + records (see attributes-reference doc).
-                return JsonSerializer.Deserialize<JsonElement>(el.GetRawText());
-        }
-    }
-
-    /// <summary>
-    /// Awaits a Task / ValueTask / Task&lt;T&gt; / ValueTask&lt;T&gt; that the
-    /// generator's <c>Invoke</c> lambda returned, and unwraps the inner result
-    /// when present. We intentionally use the BCL's
-    /// <c>System.Runtime.CompilerServices</c> awaiter API rather than dynamic
-    /// dispatch so the path stays AOT-clean.
-    /// </summary>
-    private static async Task<object?> AwaitAndUnwrapAsync(object? maybeTask)
-    {
-        switch (maybeTask)
-        {
-            case null:
-                return null;
-            case Task task:
-                await task.ConfigureAwait(false);
-                // Task<T> exposes the result via the `Result` property; we
-                // can read it via the runtime type because Task<T> derives
-                // from Task. JsonSerializer handles the boxing fine.
-                var taskType = task.GetType();
-                if (taskType.IsGenericType && taskType.GetGenericTypeDefinition() == typeof(Task<>))
-                {
-                    var prop = taskType.GetProperty("Result");
-                    return prop?.GetValue(task);
-                }
-                return null;
-            case ValueTask vt:
-                await vt.ConfigureAwait(false);
-                return null;
-            default:
-                // ValueTask<T>: the only practical way to await it without
-                // generic dispatch is via the typed As-Task adapter. Reflection
-                // here is one read of a method off the runtime type, then
-                // delegate-style invoke. Phase 5 may move this to a
-                // generator-emitted typed wrapper.
-                var t = maybeTask.GetType();
-                if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(ValueTask<>))
-                {
-                    var asTask = t.GetMethod("AsTask", Type.EmptyTypes);
-                    if (asTask?.Invoke(maybeTask, parameters: null) is Task asyncTask)
-                    {
-                        await asyncTask.ConfigureAwait(false);
-                        var resultProp = asyncTask.GetType().GetProperty("Result");
-                        return resultProp?.GetValue(asyncTask);
-                    }
-                }
-                return maybeTask;
-        }
-    }
-
     private static string SerializeResult(object? value)
-    {
-        if (value is null) return "null";
-        return JsonSerializer.Serialize(value, ModelContextProtocol.McpJsonUtilities.DefaultOptions);
-    }
+        => MarionetteDispatch.SerializeResult(value);
 
     private static JsonObject SerializeRoot(RegisteredRoot r)
     {

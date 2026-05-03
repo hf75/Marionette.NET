@@ -143,6 +143,12 @@ public static class MarionetteHost
         builder.Services.AddSingleton<EventLogService>();
         builder.Services.AddSingleton<EventResourceProvider>();
 
+        // Phase 2.2: per-method dynamic-tool registry. Bound to McpServer
+        // after host build (see step 7 below) so the very first tools/list
+        // response includes the per-method tools — Spielregel 7
+        // deferred-schema-fetch insurance.
+        builder.Services.AddSingleton<Marionette.Runtime.Tools.DynamicToolRegistry>();
+
         // ---- MCP server wiring ------------------------------------------
         var mcpBuilder = builder.Services
             .AddMcpServer(opts =>
@@ -158,6 +164,12 @@ public static class MarionetteHost
                 opts.Capabilities ??= new ServerCapabilities();
                 opts.Capabilities.Resources ??= new ResourcesCapability();
                 opts.Capabilities.Resources.Subscribe = true;
+
+                // Phase 2.2: advertise tool-list-changed support so clients
+                // refresh their tool cache when DynamicToolRegistry mutates
+                // the set (hot-plug roots, future Phase 5+).
+                opts.Capabilities.Tools ??= new ToolsCapability();
+                opts.Capabilities.Tools.ListChanged = true;
             })
             .WithStdioServerTransport()
             // Generic-typed tool registration is the AOT-friendly path
@@ -251,6 +263,12 @@ public static class MarionetteHost
         var eventLog = sp.GetRequiredService<EventLogService>();
         eventLog.Start();
         sp.GetRequiredService<EventResourceProvider>().Bind(server);
+
+        // Phase 2.2: register per-method dynamic tools. Must happen BEFORE
+        // the server starts the run loop (i.e. before the first tools/list
+        // response goes out). Spielregel 7: clients with deferred schema
+        // fetch only see tools that exist at handshake time.
+        sp.GetRequiredService<Marionette.Runtime.Tools.DynamicToolRegistry>().RegisterInitial(server);
 
         stdoutGuard.AttachLogger(startupLogger);
 

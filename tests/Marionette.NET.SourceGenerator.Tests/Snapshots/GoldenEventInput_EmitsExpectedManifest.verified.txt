@@ -43,6 +43,7 @@ public static class GeneratedManifest
                     {
                         new ParamDescriptor(Name: "name", ClrTypeName: "string", IsRequired: true, DefaultValue: null),
                     },
+                    ParametersJsonSchema: "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}",
                     Invoke: static (instance, args) =>
                     {
                         var typed = (global::Demo.EventRoot)instance;

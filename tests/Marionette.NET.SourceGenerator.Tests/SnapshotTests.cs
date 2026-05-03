@@ -69,6 +69,93 @@ public class SnapshotTests
     }
 
     [Fact]
+    public void GoldenOverloads_EmitsBothCallables()
+    {
+        // Phase 2.2 trapdoor verification: when two [McpCallable] methods on
+        // the same root share a name (overloads with different signatures),
+        // the source generator must emit BOTH CallableDescriptors. The
+        // runtime's DynamicToolRegistry then disambiguates the dynamic tool
+        // names via the 8-hex hash suffix. The descriptors themselves carry
+        // the full signature information needed for hash computation.
+        var source = """
+            using Marionette;
+
+            namespace Demo;
+
+            [McpRoot("overloadroot")]
+            public class OverloadRoot
+            {
+                [McpCallable("Add two integers.")]
+                public int Add(int a, int b) => a + b;
+
+                [McpCallable("Add three integers.")]
+                public int Add(int a, int b, int c) => a + b + c;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        // Both Add descriptors must be present in the emitted manifest.
+        // The generator emits them in source order; the runtime then
+        // disambiguates the dynamic tool names. We verify by string match
+        // rather than a full snapshot (the parameter schemas differ between
+        // the two-arg and three-arg overloads).
+        var generated = result.GeneratedText;
+        Assert.Contains("Name: \"Add\"", generated);
+        // Two ParametersJsonSchema lines, each with a different shape.
+        Assert.Contains("\\\"a\\\":{\\\"type\\\":\\\"integer\\\"},\\\"b\\\":{\\\"type\\\":\\\"integer\\\"}}", generated);
+        Assert.Contains("\\\"a\\\":{\\\"type\\\":\\\"integer\\\"},\\\"b\\\":{\\\"type\\\":\\\"integer\\\"},\\\"c\\\":{\\\"type\\\":\\\"integer\\\"}}", generated);
+        // Two distinct Invoke lambdas (different arg counts).
+        Assert.Contains("typed.Add(a, b);", generated);
+        Assert.Contains("typed.Add(a, b, c);", generated);
+    }
+
+    [Fact]
+    public void GoldenParametersSchema_EmitsExpectedManifest()
+    {
+        // Phase 2.2 snapshot: a root with [McpCallable] methods exercising
+        // every shape the JsonSchemaWriter.WriteParametersSchema helper has
+        // to cover — required scalars, an optional with default, an enum
+        // arg, an array. Verifies the per-method ParametersJsonSchema string
+        // emitted into Marionette.g.cs.
+        var source = """
+            using Marionette;
+            using System;
+
+            namespace Demo;
+
+            public enum Severity { Info, Warning, Error }
+
+            [McpRoot("paramsroot")]
+            public class ParamsRoot
+            {
+                [McpCallable("Required scalars + optional with default.")]
+                public int Combo(string name, int count, bool flag = true) => count;
+
+                [McpCallable("Enum + array params.")]
+                public void Tagged(Severity level, string[] tags) { }
+
+                [McpCallable("Zero parameters.")]
+                public string Ping() => "pong";
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        Snapshot.Verify(Normalize(result.GeneratedText), "GoldenParametersSchema_EmitsExpectedManifest");
+    }
+
+    [Fact]
     public void GoldenEventInput_EmitsExpectedManifest()
     {
         // Phase 1.6 snapshot: a root with both event shapes (EventHandler and

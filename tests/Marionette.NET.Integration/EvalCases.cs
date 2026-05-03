@@ -312,6 +312,64 @@ public class EvalCases
     }
 
     // -------------------------------------------------------------------------
+    // EC-7: Dynamic per-method tools work (Phase 2.2)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task EC7_DynamicTools_RegisterAndDispatch()
+    {
+        using var fx = new TodoAppFixture();
+        await fx.InitializeAsync();
+
+        // ---- 1. Every <root>.<method> dynamic tool must be in tools/list.
+        //         Spielregel 7: Claude Code CLI fetches the tool list on
+        //         handshake and won't refresh later, so the per-method tools
+        //         must already be registered by the very first list response.
+        var tools = await fx.ListToolsAsync();
+        string[] expectedDynamicTools =
+        {
+            "TodoListViewModel.AddTodo",
+            "TodoListViewModel.RemoveTodo",
+            "TodoListViewModel.ToggleDone",
+            "TodoListViewModel.ClearCompleted",
+            "TodoListViewModel.RenameTodo",
+        };
+        foreach (var t in expectedDynamicTools)
+        {
+            Assert.True(tools.Contains(t),
+                $"EC-7: dynamic tool '{t}' missing from tools/list. Got: {string.Join(",", tools)}.");
+        }
+
+        // The four meta-tools must coexist alongside (Phase 2.2 doesn't
+        // remove them — adopters keep both paths).
+        Assert.Contains("invoke_method", tools);
+        Assert.Contains("inspect_app_api", tools);
+        Assert.Contains("read_observable", tools);
+        Assert.Contains("capture_screenshot", tools);
+
+        // ---- 2. Direct call via the dynamic tool (NOT invoke_method).
+        var dynamicAddText = await fx.CallToolAsync(
+            "TodoListViewModel.AddTodo",
+            new { title = "EC-7 test" });
+        AssertCallableSuccess(dynamicAddText, "TodoListViewModel.AddTodo (dynamic)");
+
+        // ---- 3. TotalCount must reflect the change (the dynamic tool runs
+        //         the same callable that invoke_method would).
+        var afterDynamic = await fx.ReadObservableAsync("TodoListViewModel", "TotalCount");
+        Assert.Equal("1", afterDynamic.Trim());
+
+        // ---- 4. Bonus: same call via invoke_method (meta-tool) — both
+        //         paths should yield equivalent results. This confirms
+        //         the dispatch pipeline is shared (MarionetteDispatch).
+        var metaAddText = await fx.InvokeMethodAsync(
+            "TodoListViewModel", "AddTodo", new { title = "EC-7 via meta" });
+        AssertCallableSuccess(metaAddText, "AddTodo (meta-tool)");
+
+        var afterMeta = await fx.ReadObservableAsync("TodoListViewModel", "TotalCount");
+        Assert.Equal("2", afterMeta.Trim());
+    }
+
+    // -------------------------------------------------------------------------
     // EC-5: Stdout stays JSON-RPC pure
     // -------------------------------------------------------------------------
 

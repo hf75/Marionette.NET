@@ -142,7 +142,7 @@ Write-Host ''
 $harnessExit = $LASTEXITCODE
 
 if ($harnessExit -eq 0) {
-    Write-Pass "Headless harness verdict: PASS (10/10 checks incl. event delivery)"
+    Write-Pass "Headless harness verdict: PASS (12/12 checks incl. event delivery + dynamic tools)"
 } else {
     Write-Fail "Headless harness verdict: FAIL (exit $harnessExit)"
 }

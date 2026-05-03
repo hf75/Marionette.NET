@@ -60,6 +60,53 @@ internal static class JsonSchemaWriter
     /// </summary>
     public static string EmptyObjectSchema() => "{\"type\":\"object\",\"properties\":{}}";
 
+    /// <summary>
+    /// Phase 2.2: Build a parameter object schema for an <c>[McpCallable]</c>
+    /// method. Output shape:
+    /// <code>{"type":"object","properties":{name1:&lt;schema&gt;,...},"required":["a","b"]}</code>
+    /// Required parameters (no compile-time default) appear in
+    /// <c>"required"</c>; optional parameters are listed in
+    /// <c>"properties"</c> only. The order of properties matches the C#
+    /// declaration order (deterministic). For zero-parameter methods we emit
+    /// <c>{"type":"object","properties":{}}</c> (no <c>"required"</c>).
+    /// </summary>
+    /// <param name="parameters">Sequence of <c>(name, type, isRequired)</c> tuples.</param>
+    public static string WriteParametersSchema(
+        IEnumerable<(string Name, ITypeSymbol Type, bool IsRequired)> parameters)
+    {
+        var list = parameters?.ToList() ?? new List<(string, ITypeSymbol, bool)>();
+        if (list.Count == 0) return EmptyObjectSchema();
+
+        var sb = new StringBuilder();
+        sb.Append("{\"type\":\"object\",\"properties\":{");
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append('"').Append(EscapeJson(list[i].Name)).Append("\":");
+            // Each parameter type gets its own schema sub-tree. We re-use the
+            // event-args walker — it already handles primitives, enums,
+            // arrays, INPC-records — plus the depth/cycle guards. parameters
+            // are always at depth 0 so depth budget is preserved.
+            WriteType(sb, list[i].Type, new HashSet<string>(), depth: 0);
+        }
+        sb.Append('}');
+
+        // "required" array — only if at least one parameter is required.
+        var required = list.Where(p => p.IsRequired).Select(p => p.Name).ToList();
+        if (required.Count > 0)
+        {
+            sb.Append(",\"required\":[");
+            for (int i = 0; i < required.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append('"').Append(EscapeJson(required[i])).Append('"');
+            }
+            sb.Append(']');
+        }
+        sb.Append('}');
+        return sb.ToString();
+    }
+
     private static void WriteType(StringBuilder sb, ITypeSymbol type, HashSet<string> seen, int depth)
     {
         // Unwrap Nullable<T> first; the "null" union is added in the wrapper.

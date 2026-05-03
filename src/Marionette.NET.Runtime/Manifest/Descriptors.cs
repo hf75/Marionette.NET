@@ -81,6 +81,14 @@ public sealed record RootDescriptor(
 /// <param name="TimeoutSeconds">Per-invocation timeout in seconds. Zero means no timeout.</param>
 /// <param name="IsAsync"><see langword="true"/> if the method returns <c>Task</c>, <c>Task&lt;T&gt;</c>, <c>ValueTask</c>, or <c>ValueTask&lt;T&gt;</c>.</param>
 /// <param name="Parameters">Parameter descriptors in declaration order.</param>
+/// <param name="ParametersJsonSchema">
+/// Single-line JSON schema describing the callable's parameter object — shape
+/// <c>{"type":"object","properties":{...},"required":[...]}</c>. Built at
+/// compile time by the source generator's <c>JsonSchemaWriter</c>; consumed
+/// by the Phase 2.2 <c>DynamicToolRegistry</c> to set
+/// <c>Tool.InputSchema</c> for each per-method MCP tool. Empty-parameter
+/// callables get <c>{"type":"object","properties":{}}</c>.
+/// </param>
 /// <param name="Invoke">
 /// Compile-time emitted dispatcher. Receives the root instance and a
 /// dictionary of named arguments; returns:
@@ -97,6 +105,7 @@ public sealed record CallableDescriptor(
     int TimeoutSeconds,
     bool IsAsync,
     IReadOnlyList<ParamDescriptor> Parameters,
+    string ParametersJsonSchema,
     Func<object, IReadOnlyDictionary<string, object?>, object?> Invoke);
 
 /// <summary>

@@ -253,11 +253,55 @@ internal static class Program
                 }
                 if (missing.Count == 0)
                 {
-                    Console.WriteLine($"PASS — tools/list contains all four Phase-1 tools (got: {string.Join(",", listed)})");
+                    Console.WriteLine($"PASS — tools/list contains all four Phase-1 tools (got: {string.Join(",", listed.Where(t => phase12ExpectedTools.Contains(t)).OrderBy(t => t, StringComparer.Ordinal))})");
                 }
                 else
                 {
                     Console.Error.WriteLine($"FAIL — tools/list missing: {string.Join(",", missing)}; got: {string.Join(",", listed)}");
+                    failures++;
+                }
+
+                // Phase 2.2: every TodoApp / Dashboard mode must also expose
+                // per-method dynamic tools (`<rootName>.<methodName>`). The
+                // four meta-tools coexist alongside; adopters can use either
+                // path. Spielregel 7: dynamic tools must already exist by
+                // the very first tools/list response (the SDK gets them
+                // staged in DynamicToolRegistry.RegisterInitial before the
+                // run loop starts).
+                string[] expectedDynamicTools = avaloniaMode
+                    ? new[]
+                    {
+                        "DashboardViewModel.UpsertMetric",
+                        "DashboardViewModel.RemoveMetric",
+                        "DashboardViewModel.ResetAll",
+                        "DashboardViewModel.TogglePaused",
+                        "DashboardViewModel.RefreshAsync",
+                    }
+                    : (todoAppMode
+                        ? new[]
+                        {
+                            "TodoListViewModel.AddTodo",
+                            "TodoListViewModel.RemoveTodo",
+                            "TodoListViewModel.ToggleDone",
+                            "TodoListViewModel.ClearCompleted",
+                            "TodoListViewModel.RenameTodo",
+                        }
+                        : new[]
+                        {
+                            "MainWindow.Add",
+                        });
+                var missingDyn = new System.Collections.Generic.List<string>();
+                foreach (var t in expectedDynamicTools)
+                {
+                    if (!listed.Contains(t)) missingDyn.Add(t);
+                }
+                if (missingDyn.Count == 0)
+                {
+                    Console.WriteLine($"PASS — tools/list also contains the {expectedDynamicTools.Length} per-method dynamic tools ({string.Join(",", expectedDynamicTools)})");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — tools/list missing dynamic tools: {string.Join(",", missingDyn)}; got: {string.Join(",", listed)}");
                     failures++;
                 }
                 listResp.Dispose();
@@ -435,6 +479,32 @@ internal static class Program
                 {
                     Console.Error.WriteLine($"FAIL — read_observable MetricCount = {finalCount?.ToString() ?? "<error>"}, expected {expectedFinal}.");
                     failures++;
+                }
+
+                // ---- Phase 2.2: invoke UpsertMetric VIA THE DYNAMIC TOOL.
+                //      Same operation as above, hitting DashboardViewModel.UpsertMetric
+                //      directly to verify the per-method dispatch surface.
+                var dynBefore = await ReadObservableInt(child, stdoutMessages, "DashboardViewModel", "MetricCount");
+                var dynamicUpsert = await InvokeDynamicToolAsync(child, stdoutMessages,
+                    "DashboardViewModel.UpsertMetric",
+                    new { name = "DynamicProbe", value = 99.0, unit = "%" });
+                if (!dynamicUpsert.Success)
+                {
+                    Console.Error.WriteLine($"FAIL — [via dynamic tool] UpsertMetric failed: {dynamicUpsert.Detail}");
+                    failures++;
+                }
+                else
+                {
+                    var dynAfter = await ReadObservableInt(child, stdoutMessages, "DashboardViewModel", "MetricCount");
+                    if (dynAfter == (dynBefore ?? 0) + 1)
+                    {
+                        Console.WriteLine($"PASS — [via dynamic tool] DashboardViewModel.UpsertMetric({{name=\"DynamicProbe\"}}) succeeded; MetricCount {dynBefore} -> {dynAfter}");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"FAIL — [via dynamic tool] UpsertMetric returned success but MetricCount = {dynAfter} (expected {(dynBefore ?? 0) + 1}).");
+                        failures++;
+                    }
                 }
 
                 // ---- Phase 1.6: declarative event delivery for MetricUpserted.
@@ -688,6 +758,32 @@ internal static class Program
                     }
                 }
 
+                // ---- Phase 2.2: invoke AddTodo VIA THE DYNAMIC TOOL.
+                //      The harness above used invoke_method (the meta-tool),
+                //      this call hits TodoListViewModel.AddTodo directly so
+                //      the dispatch surface is verified end-to-end.
+                var dynBefore = await ReadObservableInt(child, stdoutMessages, "TodoListViewModel", "TotalCount");
+                var dynamicAdd = await InvokeDynamicToolAsync(child, stdoutMessages,
+                    "TodoListViewModel.AddTodo", new { title = "via dynamic tool" });
+                if (!dynamicAdd.Success)
+                {
+                    Console.Error.WriteLine($"FAIL — [via dynamic tool] AddTodo failed: {dynamicAdd.Detail}");
+                    failures++;
+                }
+                else
+                {
+                    var dynAfter = await ReadObservableInt(child, stdoutMessages, "TodoListViewModel", "TotalCount");
+                    if (dynAfter == (dynBefore ?? 0) + 1)
+                    {
+                        Console.WriteLine($"PASS — [via dynamic tool] TodoListViewModel.AddTodo({{title=\"via dynamic tool\"}}) succeeded; TotalCount {dynBefore} -> {dynAfter}");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"FAIL — [via dynamic tool] AddTodo returned success but TotalCount = {dynAfter} (expected {(dynBefore ?? 0) + 1}).");
+                        failures++;
+                    }
+                }
+
                 // ---- Phase 1.6: declarative event delivery. Subscribe to the
                 //      TodoAdded event, fire AddTodo, expect a
                 //      notifications/resources/updated for the events URI, then
@@ -877,7 +973,7 @@ internal static class Program
                     if (TryReadToolText(invokeResp.RootElement, out var addText) &&
                         addText.Trim() == "5")
                     {
-                        Console.WriteLine("PASS — invoke_method MainWindow.Add(2,3) returned 5");
+                        Console.WriteLine("PASS — [via meta-tool] invoke_method MainWindow.Add(2,3) returned 5");
                     }
                     else
                     {
@@ -885,6 +981,19 @@ internal static class Program
                         failures++;
                     }
                     invokeResp.Dispose();
+                }
+
+                // Phase 2.2: same call via the dynamic per-method tool.
+                var dynStripe = await InvokeDynamicToolAsync(child, stdoutMessages,
+                    "MainWindow.Add", new { a = 2, b = 3 });
+                if (dynStripe.Success && dynStripe.Detail == "5")
+                {
+                    Console.WriteLine("PASS — [via dynamic tool] MainWindow.Add({a:2,b:3}) returned 5");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — [via dynamic tool] MainWindow.Add(2,3) returned {(dynStripe.Success ? dynStripe.Detail : "error: " + dynStripe.Detail)}.");
+                    failures++;
                 }
 
                 // -------- tools/call read_observable MainWindow.Result --------
@@ -1316,6 +1425,13 @@ internal static class Program
             },
         };
         await SendAsync(child, req);
+
+#pragma warning disable CS1591 // We rebind below; the marker comment lets `dynamic-tool` consumers find this.
+        // (Phase 2.2: the parallel helper InvokeDynamicToolAsync — defined
+        // immediately below — calls the per-method tool directly with the
+        // computed name `<root>.<method>` and `arguments` set to the
+        // user-method's parameter bag, NOT the `invoke_method` envelope.)
+#pragma warning restore CS1591
         var resp = await WaitForResponseAsync(queue, id, TimeSpan.FromSeconds(10));
         if (resp is null) return (false, "no response within 10s");
         try
@@ -1338,6 +1454,61 @@ internal static class Program
             }
             catch (JsonException) { /* "null" or a primitive — that's success */ }
 
+            return (true, text.Trim());
+        }
+        finally
+        {
+            resp.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Phase 2.2: invoke a per-method dynamic tool DIRECTLY via tools/call,
+    /// bypassing the meta-tool envelope. The tool name is the
+    /// <c><![CDATA[<root>.<method>]]></c> identity that
+    /// <c>DynamicToolRegistry</c> registered. <paramref name="methodArgs"/>
+    /// is the user-method's parameter bag (e.g. <c>new { title = "buy milk" }</c>),
+    /// passed as the call's <c>arguments</c> directly. Returns success +
+    /// diagnostic detail with a <c>[via dynamic tool]</c> path marker.
+    /// </summary>
+    private static async Task<(bool Success, string Detail)> InvokeDynamicToolAsync(
+        Process child,
+        BlockingCollection<JsonDocument> queue,
+        string toolName,
+        object? methodArgs)
+    {
+        var id = Interlocked.Increment(ref _nextRequestId);
+        var req = new
+        {
+            jsonrpc = "2.0",
+            id,
+            method = "tools/call",
+            @params = new
+            {
+                name = toolName,
+                arguments = methodArgs ?? new { },
+            },
+        };
+        await SendAsync(child, req);
+        var resp = await WaitForResponseAsync(queue, id, TimeSpan.FromSeconds(10));
+        if (resp is null) return (false, "no response within 10s");
+        try
+        {
+            if (!TryReadToolText(resp.RootElement, out var text))
+                return (false, "no text content");
+            try
+            {
+                using var inner = JsonDocument.Parse(text);
+                if (inner.RootElement.ValueKind == JsonValueKind.Object &&
+                    inner.RootElement.TryGetProperty("success", out var s) &&
+                    s.ValueKind == JsonValueKind.False)
+                {
+                    var code = inner.RootElement.TryGetProperty("errorCode", out var c) ? c.GetString() : "?";
+                    var msg = inner.RootElement.TryGetProperty("message", out var m) ? m.GetString() : "?";
+                    return (false, $"[{code}] {msg}");
+                }
+            }
+            catch (JsonException) { /* primitive */ }
             return (true, text.Trim());
         }
         finally
