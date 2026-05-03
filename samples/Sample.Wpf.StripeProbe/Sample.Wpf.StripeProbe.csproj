@@ -53,10 +53,36 @@
     <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />
   </ItemGroup>
 
+  <!--
+    Source generator wiring (Phase 1.b). The generator is loaded as a Roslyn
+    analyzer, NOT as a runtime dependency. The two attributes are critical:
+       OutputItemType="Analyzer"     - feeds the DLL into the analyzer pipeline
+       ReferenceOutputAssembly=false - prevents the DLL from being copied into
+                                       this project's output / deps.json
+    The generator emits Marionette.Generated.GeneratedManifest in this assembly
+    on every build, regardless of EnableMcpAutomation. The descriptors carry no
+    runtime dependencies (only typed lambdas + records), so they trim cleanly
+    in stripped Release builds.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.SourceGenerator\Marionette.NET.SourceGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
   <!-- Adapter (and transitively Runtime + ModelContextProtocol) only when MCP is on. -->
   <ItemGroup Condition="'$(EnableMcpAutomation)'=='true'">
     <ProjectReference Include="..\..\src\Marionette.NET.Adapter.Wpf\Marionette.NET.Adapter.Wpf.csproj" />
   </ItemGroup>
+
+  <!--
+    Phase 1.b: emit the generator output to disk so adopters can inspect
+    Marionette.g.cs. No effect on the build itself; just convenience.
+  -->
+  <PropertyGroup>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
 
   <!--
     Phase 1.a: MCP_ENABLED constant + _SuppressWpfTrimError come from

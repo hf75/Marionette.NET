@@ -1,0 +1,148 @@
+// Marionette.NET — generator diagnostic / rejection tests
+//
+// Five small "ill-formed" inputs that should produce specific diagnostic IDs.
+// Together they cover the diagnostic IDs called out as Phase 1.b focus:
+// MAR001, MAR002, MAR003, MAR008. (MAR005, MAR006 follow the same shape;
+// MAR004, MAR007 stay permissive in 1.b per the spec.)
+
+using System.Linq;
+using Microsoft.CodeAnalysis;
+using Xunit;
+
+namespace Marionette.SourceGenerator.Tests;
+
+public class DiagnosticTests
+{
+    [Fact]
+    public void MAR001_StaticClassWithMcpRoot_IsRejected()
+    {
+        var source = """
+            using Marionette;
+            namespace Demo;
+
+            [McpRoot]
+            public static class StaticRoot
+            {
+                public static int Adder(int a) => a + 1;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source);
+
+        Assert.Contains(result.GeneratorDiagnostics,
+            d => d.Id == "MAR001" && d.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void MAR001_GenericClassWithMcpRoot_IsRejected()
+    {
+        var source = """
+            using Marionette;
+            namespace Demo;
+
+            [McpRoot]
+            public class GenericRoot<T>
+            {
+                [McpCallable("Identity")]
+                public T Echo(T value) => value;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source);
+
+        Assert.Contains(result.GeneratorDiagnostics,
+            d => d.Id == "MAR001" && d.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void MAR002_InternalCallable_IsRejected()
+    {
+        var source = """
+            using Marionette;
+            namespace Demo;
+
+            [McpRoot]
+            public class Root
+            {
+                [McpCallable("Adds")]
+                internal int Add(int a, int b) => a + b;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source);
+
+        Assert.Contains(result.GeneratorDiagnostics,
+            d => d.Id == "MAR002" && d.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void MAR003_CallableOnUnRootedClass_EmitsWarning()
+    {
+        var source = """
+            using Marionette;
+            namespace Demo;
+
+            // No [McpRoot] on this class.
+            public class Stray
+            {
+                [McpCallable("Stray method")]
+                public int Add(int a, int b) => a + b;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source);
+
+        Assert.Contains(result.GeneratorDiagnostics,
+            d => d.Id == "MAR003" && d.Severity == DiagnosticSeverity.Warning);
+    }
+
+    [Fact]
+    public void MAR008_McpRootWithNoMembers_EmitsInfo()
+    {
+        var source = """
+            using Marionette;
+            namespace Demo;
+
+            [McpRoot]
+            public class EmptyRoot
+            {
+                public string Name { get; set; } = "";
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source);
+
+        Assert.Contains(result.GeneratorDiagnostics,
+            d => d.Id == "MAR008" && d.Severity == DiagnosticSeverity.Info);
+    }
+
+    // -------------------------------------------------------------------------
+    // Sanity / regression: well-formed input must NOT produce any error
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void WellFormedInput_ProducesNoErrors()
+    {
+        var source = """
+            using Marionette;
+            namespace Demo;
+
+            [McpRoot]
+            public class GoodRoot
+            {
+                [McpCallable("Adds")]
+                public int Add(int a, int b) => a + b;
+
+                [McpObservable("Last")]
+                public int Last { get; private set; }
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source);
+
+        Assert.False(result.HasGeneratorErrors,
+            string.Join("\n", result.GeneratorDiagnostics.Select(d => $"{d.Id}: {d.GetMessage()}")));
+        Assert.False(result.HasCompilationErrors,
+            string.Join("\n", result.CompilationDiagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => $"{d.Id}: {d.GetMessage()}")));
+    }
+}

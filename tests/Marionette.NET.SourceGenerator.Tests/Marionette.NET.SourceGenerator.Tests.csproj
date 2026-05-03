@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Marionette.SourceGenerator.Tests</RootNamespace>
+    <AssemblyName>Marionette.NET.SourceGenerator.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+
+    <!--
+      The generator builds for ns2.0 (Roslyn host requirement); the test project
+      runs on net10.0. Cross-targeting is the standard pattern: we reference the
+      generator as a normal ProjectReference here (NOT OutputItemType=Analyzer)
+      because the tests want the Type symbols and not the analyzer hookup.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Roslyn test scaffolding — drive the generator in-memory. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.SourceGenerator\Marionette.NET.SourceGenerator.csproj" />
+    <!--
+      The tests need the actual attribute set so the generator can find them
+      via metadata-name lookup. We reference Abstractions normally — the Roslyn
+      compilation in our tests is built from sources that USE these attributes,
+      so the compilation needs them on its reference list.
+    -->
+    <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />
+  </ItemGroup>
+
+  <!--
+    Snapshot files. Verified files are tracked; received files are produced on
+    each run for diff-checking and ignored via .gitignore (*.received.txt).
+  -->
+  <ItemGroup>
+    <None Update="Snapshots\**\*.verified.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

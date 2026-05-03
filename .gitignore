@@ -62,6 +62,10 @@ coverage*.json
 coverage*.xml
 coverage*.info
 
+# Snapshot tests — only .verified.txt is committed; .received.txt is the
+# diffable scratch file produced on each test run.
+*.received.txt
+
 # MCP / Marionette local state
 .marionette/
 *.marionette.log

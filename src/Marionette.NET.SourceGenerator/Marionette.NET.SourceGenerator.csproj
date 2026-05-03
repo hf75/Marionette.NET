@@ -1,0 +1,77 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Source generators MUST target netstandard2.0: that is the only TFM the
+    Roslyn compiler host loads at design / build time. Targeting net10.0 here
+    would silently break IDE integration. See:
+      https://learn.microsoft.com/dotnet/csharp/roslyn-sdk/source-generators-overview
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>Marionette.SourceGenerator</RootNamespace>
+    <AssemblyName>Marionette.NET.SourceGenerator</AssemblyName>
+    <Description>Roslyn incremental source generator for Marionette.NET. Emits a per-assembly manifest of MCP entrypoints from [McpRoot]/[McpCallable]/[McpObservable]/[McpTriggerable] attributes.</Description>
+
+    <!-- Roslyn analyzer / generator markers -->
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+
+    <!--
+      LangVersion is set to latest by Directory.Build.props; ImplicitUsings is
+      'enable'. ns2.0 has no implicit-using-namespace defaults so this is fine.
+      Nullable is also 'enable' from Directory.Build.props.
+
+      The generator must compile cleanly — Directory.Build.props sets
+      TreatWarningsAsErrors=true. We intentionally leave that on; any analyzer
+      diagnostic from RS1xxx (Roslyn analyzer rules) is a real bug.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      4.14.0 is the Roslyn version that ships with the .NET 10 SDK. We pin to
+      it because it is the highest version a host running on 10.0.202 will
+      have available without MSBuild upgrade. Using a newer one risks the
+      analyzer failing to load on older hosts.
+
+      PrivateAssets=all keeps Microsoft.CodeAnalysis.CSharp from flowing
+      transitively to consumers — it's a generator-side dependency only.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!--
+    DELIBERATELY no <ProjectReference Include="..\Marionette.NET.Abstractions\..." />.
+    Source generators load in the Roslyn host's AppDomain (or AssemblyLoadContext on
+    modern Roslyn) and do not have access to the analyzed compilation's binary
+    references. The generator matches attributes by metadata-name strings only —
+    see Marionette.SourceGenerator.AttributeNames in ManifestGenerator.cs.
+  -->
+
+  <!--
+    Analyzer release tracking. Required by RS2008 once
+    EnforceExtendedAnalyzerRules=true. Acts as a registry of every
+    DiagnosticDescriptor we declare; new rules go in Unshipped, then
+    flow to Shipped on each major release.
+  -->
+  <ItemGroup>
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+  <!--
+    For NuGet packaging (Phase 7), source generator DLLs must ship under
+    analyzers/dotnet/cs/ rather than lib/. Phase 1.b only uses ProjectReferences
+    so this stays informational, but we wire the Pack-time directives now to
+    keep Phase 7 cheap.
+  -->
+  <ItemGroup>
+    <None Include="$(OutputPath)\$(AssemblyName).dll"
+          Pack="true"
+          PackagePath="analyzers/dotnet/cs"
+          Visible="false" />
+  </ItemGroup>
+
+</Project>

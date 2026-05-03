@@ -3,7 +3,12 @@ using Marionette;
 
 namespace Sample.Wpf.StripeProbe;
 
-[McpRoot("StripeProbe main window — Phase 0 fixture for IL stripping verification.")]
+// Phase 1.b: short manifest name. The Phase-0 sample originally used the
+// (now-renamed) constructor parameter as a free-form description; per
+// 1a-foundation.md the ctor argument is the manifest name, defaulting to the
+// type name when omitted. Using the short type name keeps the generator's
+// output in the typical adopter shape.
+[McpRoot]
 public partial class MainWindow : Window
 {
     public MainWindow()

@@ -1,0 +1,123 @@
+// Marionette.NET — Source Generator diagnostics
+//
+// All Marionette generator diagnostics use the MAR#### ID prefix and the
+// "Marionette.Generator" category. IDs are stable across versions: never
+// renumber, never repurpose. Add new IDs at the end.
+//
+// Severity policy:
+//   Error    — Generator emits no descriptor for the offending site. Build
+//              should fail (the user assembly is in an inconsistent state).
+//   Warning  — Generator emits no descriptor but the rest of the assembly is
+//              fine. User can ship without fixing.
+//   Info     — Heuristic note; never blocks anything.
+
+using Microsoft.CodeAnalysis;
+
+namespace Marionette.SourceGenerator;
+
+internal static class Diagnostics
+{
+    private const string Category = "Marionette.Generator";
+
+    /// <summary>
+    /// MAR001: a class decorated with [McpRoot] is static or generic, so it
+    /// cannot be used as a manifest root. The generator skips it entirely.
+    /// </summary>
+    public static readonly DiagnosticDescriptor InvalidRootClass = new(
+        id: "MAR001",
+        title: "Invalid [McpRoot] target",
+        messageFormat: "[McpRoot] requires a non-static, non-generic reference type; '{0}' does not qualify",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR002: an [McpCallable] method is not public. Public access is required
+    /// because the generator emits a strongly-typed dispatcher that calls the
+    /// method directly; it does not use reflection to reach into private
+    /// members.
+    /// </summary>
+    public static readonly DiagnosticDescriptor CallableNotPublic = new(
+        id: "MAR002",
+        title: "[McpCallable] method must be public",
+        messageFormat: "[McpCallable] method '{0}' must be public; the generator does not emit dispatchers for non-public methods",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR003: an [McpCallable] method's declaring class lacks [McpRoot]. The
+    /// member is silently ignored (warning, not error, so adopters can ship
+    /// while migrating).
+    /// </summary>
+    public static readonly DiagnosticDescriptor CallableOnUnrootedClass = new(
+        id: "MAR003",
+        title: "[McpCallable] on un-rooted class is ignored",
+        messageFormat: "[McpCallable] on '{0}' is ignored — the declaring class must be decorated with [McpRoot] for the generator to emit a dispatcher",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR004: an [McpCallable] parameter has a type the runtime cannot
+    /// safely marshal. Phase 1.b is permissive — only obvious blacklist hits
+    /// trigger the diagnostic.
+    /// </summary>
+    public static readonly DiagnosticDescriptor UnsupportedParameterType = new(
+        id: "MAR004",
+        title: "[McpCallable] parameter type not supported",
+        messageFormat: "Parameter '{0}' of type '{1}' on [McpCallable] '{2}' is not supported (blacklisted: Stream, delegate, IntPtr, pointer)",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR005: an [McpObservable] property has a setter but no getter. There
+    /// is nothing to read.
+    /// </summary>
+    public static readonly DiagnosticDescriptor ObservableHasNoGetter = new(
+        id: "MAR005",
+        title: "[McpObservable] requires a public getter",
+        messageFormat: "[McpObservable] property '{0}' requires a public getter",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR006: an [McpObservable] property is not public. The generator
+    /// cannot emit a typed getter that reaches the value, so the property is
+    /// skipped.
+    /// </summary>
+    public static readonly DiagnosticDescriptor ObservableNotPublic = new(
+        id: "MAR006",
+        title: "[McpObservable] property should be public",
+        messageFormat: "[McpObservable] '{0}' is not public and will be skipped by the generator",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR007: an [McpTriggerable] property's static type is not a known
+    /// "clickable" control type. Phase 1 only supports WPF Button-like
+    /// controls; other surfaces are punted to later phases.
+    /// </summary>
+    public static readonly DiagnosticDescriptor TriggerableUnsupportedType = new(
+        id: "MAR007",
+        title: "[McpTriggerable] only supports controls with a Click event in Phase 1",
+        messageFormat: "[McpTriggerable] '{0}' only supports controls with a Click event in Phase 1 (got '{1}')",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR008: an [McpRoot] class declares no MCP entrypoints. Likely an
+    /// authoring oversight; emitted as Info so it never blocks a build.
+    /// </summary>
+    public static readonly DiagnosticDescriptor RootHasNoMembers = new(
+        id: "MAR008",
+        title: "[McpRoot] declares no MCP entrypoints",
+        messageFormat: "Root '{0}' exposes no [McpCallable]/[McpObservable]/[McpTriggerable] members; the manifest entry will be empty",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Info,
+        isEnabledByDefault: true);
+}
