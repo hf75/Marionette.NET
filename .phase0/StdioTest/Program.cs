@@ -1,16 +1,38 @@
-// Spike C / Phase 1.2 — stdio handshake harness for Sample.Wpf.StripeProbe.exe --mcp --headless
+// Spike C / Phase 1.2 / 1.3 — stdio handshake harness for Sample.Wpf.StripeProbe.exe
 //
-// Validates the Phase 1.2 contract end-to-end:
+// Validates the contract end-to-end across two modes:
+//
+//   * Default (no flag):       child runs `--mcp --headless` (no GUI / no Dispatcher).
+//                              Exercises the manifest + meta-tools surface; the
+//                              capture_screenshot tool must surface the
+//                              documented `screenshot_not_supported` structured
+//                              error (NoOpAdapter path).
+//
+//   * `--gui`:                 child runs `--mcp` (WPF GUI alongside the MCP server).
+//                              Same handshake AND additionally asserts that
+//                              capture_screenshot returns a valid PNG-encoded
+//                              ImageContentBlock. The captured image is saved
+//                              to `.phase1/screenshot-test.png` for human
+//                              sanity-checking. This path requires an
+//                              interactive desktop session — it WILL NOT work
+//                              on a headless CI runner. The harness force-kills
+//                              the GUI child on completion (Spike C taught us
+//                              `Application.Run` keeps the process alive).
+//
+// Runs covered by the harness:
 //   * MCP initialize handshake succeeds.
 //   * tools/list returns exactly the four Phase-1 tools:
 //       inspect_app_api, invoke_method, read_observable, capture_screenshot
 //   * tools/call inspect_app_api returns JSON containing the sample's root.
 //   * tools/call invoke_method on MainWindow.Add(2,3) returns 5.
-//   * tools/call read_observable on MainWindow.Result returns 5 (after Add).
-//   * tools/call capture_screenshot returns a structured "not_supported" /
-//     "screenshot_not_supported" error in Phase 1.2 (NoOpAdapter).
+//   * tools/call read_observable on MainWindow.Result returns an integer.
+//   * tools/call capture_screenshot:
+//       - default mode: structured `screenshot_not_supported` error
+//       - --gui    mode: image/png ContentBlock, base64 decodes to a valid
+//                        PNG (magic 89 50 4E 47 0D 0A 1A 0A).
 //   * Stdout contains 0 pollution lines (every line parses as JSON-RPC).
-//   * Child exits cleanly on stdin EOF.
+//   * Child exits cleanly on stdin EOF (default mode) or is force-killed
+//     (--gui mode).
 
 using System;
 using System.Collections.Concurrent;
@@ -31,7 +53,7 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: StdioTest <path-to-Sample.Wpf.StripeProbe.exe>");
+            Console.Error.WriteLine("Usage: StdioTest <path-to-Sample.Wpf.StripeProbe.exe> [--gui] [--probe]");
             return 2;
         }
 
@@ -49,7 +71,8 @@ internal static class Program
             return 2;
         }
 
-        Console.WriteLine($"=== Phase 1.2 stdio handshake harness ===");
+        var phaseLabel = guiMode ? "Phase 1.3 stdio + GUI screenshot harness" : "Phase 1.2 stdio handshake harness";
+        Console.WriteLine($"=== {phaseLabel} ===");
         Console.WriteLine($"Child: {exePath}");
         Console.WriteLine($"Args:  --mcp{(guiMode ? string.Empty : " --headless")}");
         if (probeMode) Console.WriteLine($"Diagnostic: MARIONETTE_STDOUT_PROBE=1 (Q2 violator probe)");
@@ -123,14 +146,18 @@ internal static class Program
                 {
                     protocolVersion = "2025-11-25",
                     capabilities = new { },
-                    clientInfo = new { name = "phase-1.2-harness", version = "0.1.0" },
+                    clientInfo = new { name = "phase-1.3-harness", version = "0.1.0" },
                 },
             };
             await SendAsync(child, initReq);
-            var initResp = await WaitForResponseAsync(stdoutMessages, initId, TimeSpan.FromSeconds(10));
+            // GUI startup is slower than headless because WPF has to spin up
+            // the Dispatcher + first render before the host's stdio loop
+            // ackowledges the init request. Give it more headroom.
+            var initTimeout = guiMode ? TimeSpan.FromSeconds(20) : TimeSpan.FromSeconds(10);
+            var initResp = await WaitForResponseAsync(stdoutMessages, initId, initTimeout);
             if (initResp is null)
             {
-                Console.Error.WriteLine("FAIL — no response to initialize within 10s");
+                Console.Error.WriteLine($"FAIL — no response to initialize within {initTimeout.TotalSeconds:F0}s");
                 failures++;
             }
             else
@@ -275,11 +302,12 @@ internal static class Program
             }
 
             // -------- tools/call read_observable MainWindow.Result --------
-            // Phase 1.2 note: Add is pure math; the sample's MainWindow does
-            // NOT mutate Result inside Add (Result is only updated by the GUI
-            // button click). So in headless mode Result remains 0 until a
-            // separate setter exists. We assert "the call succeeds and
-            // returns a JSON number" rather than a specific value.
+            // Note: Add is pure math; the sample's MainWindow does NOT mutate
+            // Result inside Add (Result is only updated by the GUI button
+            // click). In headless mode Result remains 0; in GUI mode Result
+            // ALSO stays 0 unless the user clicks the button. We assert "the
+            // call succeeds and returns a JSON number" rather than a specific
+            // value.
             var readId = Interlocked.Increment(ref _nextRequestId);
             var readReq = new
             {
@@ -314,9 +342,7 @@ internal static class Program
                 readResp.Dispose();
             }
 
-            // -------- tools/call capture_screenshot (Phase 1.2: NoOp adapter) --------
-            // Expected: tool result has IsError=true and a structured-error
-            // text content with errorCode == "screenshot_not_supported".
+            // -------- tools/call capture_screenshot --------
             var shotId = Interlocked.Increment(ref _nextRequestId);
             var shotReq = new
             {
@@ -330,14 +356,67 @@ internal static class Program
                 },
             };
             await SendAsync(child, shotReq);
-            var shotResp = await WaitForResponseAsync(stdoutMessages, shotId, TimeSpan.FromSeconds(10));
+            var shotResp = await WaitForResponseAsync(stdoutMessages, shotId, TimeSpan.FromSeconds(15));
             if (shotResp is null)
             {
-                Console.Error.WriteLine("FAIL — no response to capture_screenshot within 10s");
+                Console.Error.WriteLine("FAIL — no response to capture_screenshot within 15s");
                 failures++;
+            }
+            else if (guiMode)
+            {
+                // GUI mode: expect a real PNG-encoded ImageContentBlock.
+                if (!TryReadToolImage(shotResp.RootElement, out var imageMimeType, out var imageBase64, out var imageError))
+                {
+                    Console.Error.WriteLine($"FAIL — capture_screenshot did not return a valid image content block. Reason: {imageError}. Raw: {shotResp.RootElement.GetRawText()}");
+                    failures++;
+                }
+                else if (imageMimeType != "image/png")
+                {
+                    Console.Error.WriteLine($"FAIL — capture_screenshot mimeType was '{imageMimeType}', expected 'image/png'.");
+                    failures++;
+                }
+                else
+                {
+                    byte[] imageBytes;
+                    try { imageBytes = Convert.FromBase64String(imageBase64); }
+                    catch (FormatException ex)
+                    {
+                        Console.Error.WriteLine($"FAIL — capture_screenshot base64 was malformed: {ex.Message}.");
+                        imageBytes = Array.Empty<byte>();
+                        failures++;
+                    }
+
+                    if (imageBytes.Length == 0)
+                    {
+                        Console.Error.WriteLine("FAIL — capture_screenshot returned a zero-length image.");
+                        failures++;
+                    }
+                    else if (!HasPngMagic(imageBytes))
+                    {
+                        Console.Error.WriteLine($"FAIL — capture_screenshot bytes do not start with the PNG magic header. First 16 bytes: {Hex(imageBytes, 16)}.");
+                        failures++;
+                    }
+                    else
+                    {
+                        // Save the captured screenshot for human sanity-check.
+                        var outPath = ResolveScreenshotOutPath();
+                        try
+                        {
+                            File.WriteAllBytes(outPath, imageBytes);
+                            Console.WriteLine($"PASS — capture_screenshot returned a valid PNG ({imageBytes.Length} bytes, mimeType={imageMimeType}). Saved to {outPath}.");
+                        }
+                        catch (Exception ex)
+                        {
+                            // Validation passed but we couldn't write the
+                            // sanity-check file; keep the PASS but note it.
+                            Console.WriteLine($"PASS — capture_screenshot returned a valid PNG ({imageBytes.Length} bytes, mimeType={imageMimeType}). [could not save to {outPath}: {ex.Message}]");
+                        }
+                    }
+                }
             }
             else
             {
+                // Headless mode: expect the documented NoOpAdapter error.
                 if (TryReadToolText(shotResp.RootElement, out var shotText) &&
                     shotText.IndexOf("screenshot_not_supported", StringComparison.Ordinal) >= 0)
                 {
@@ -348,8 +427,8 @@ internal static class Program
                     Console.Error.WriteLine($"FAIL — capture_screenshot did not surface the expected NoOpAdapter error. Raw: {shotResp.RootElement.GetRawText()}");
                     failures++;
                 }
-                shotResp.Dispose();
             }
+            shotResp?.Dispose();
         }
         finally
         {
@@ -414,12 +493,13 @@ internal static class Program
         Console.WriteLine($"stderr total: {stderrLines.Count} lines");
 
         Console.WriteLine();
+        var verdictLabel = guiMode ? "Phase 1.3 GUI handshake" : "Phase 1.2 handshake";
         if (failures == 0)
         {
-            Console.WriteLine("=== Phase 1.2 handshake: PASS ===");
+            Console.WriteLine($"=== {verdictLabel}: PASS ===");
             return 0;
         }
-        Console.Error.WriteLine($"=== Phase 1.2 handshake: FAIL — {failures} failure(s) ===");
+        Console.Error.WriteLine($"=== {verdictLabel}: FAIL — {failures} failure(s) ===");
         return 1;
     }
 
@@ -510,6 +590,91 @@ internal static class Program
             }
         }
         return false;
+    }
+
+    /// <summary>
+    /// Drill into a tools/call result and pull the first image content block.
+    /// Asserts content[0].type == "image" and pulls .mimeType / .data.
+    /// </summary>
+    private static bool TryReadToolImage(JsonElement root, out string mimeType, out string base64, out string reason)
+    {
+        mimeType = string.Empty;
+        base64 = string.Empty;
+        reason = string.Empty;
+
+        if (!root.TryGetProperty("result", out var result)) { reason = "no result"; return false; }
+        // Phase 1.3 capture_screenshot returns IsError=false implicitly. If
+        // an error block leaked into a `--gui` run we want a useful failure
+        // reason rather than "no image."
+        if (result.TryGetProperty("isError", out var err) && err.ValueKind == JsonValueKind.True)
+        {
+            if (TryReadToolText(root, out var errText))
+            {
+                reason = $"isError=true with content text: {errText}";
+            }
+            else
+            {
+                reason = "isError=true";
+            }
+            return false;
+        }
+        if (!result.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+        {
+            reason = "result has no content array";
+            return false;
+        }
+
+        foreach (var item in content.EnumerateArray())
+        {
+            if (!item.TryGetProperty("type", out var type) || type.GetString() != "image") continue;
+            if (item.TryGetProperty("mimeType", out var mt)) mimeType = mt.GetString() ?? string.Empty;
+            if (item.TryGetProperty("data", out var data)) base64 = data.GetString() ?? string.Empty;
+            if (string.IsNullOrEmpty(base64)) { reason = "image content block had no data field"; return false; }
+            return true;
+        }
+        reason = "no content[].type == image entry";
+        return false;
+    }
+
+    private static bool HasPngMagic(byte[] bytes)
+    {
+        // PNG file signature: 89 50 4E 47 0D 0A 1A 0A
+        if (bytes.Length < 8) return false;
+        return bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47
+            && bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A;
+    }
+
+    private static string Hex(byte[] bytes, int max)
+    {
+        var n = Math.Min(bytes.Length, max);
+        var sb = new StringBuilder();
+        for (var i = 0; i < n; i++)
+        {
+            if (i > 0) sb.Append(' ');
+            sb.AppendFormat("{0:X2}", bytes[i]);
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Resolve where to drop the captured PNG. Walks up from the harness's
+    /// current directory looking for a `.phase1` folder; falls back to the
+    /// CWD if not found. Always relative — keeps test output near the repo.
+    /// </summary>
+    private static string ResolveScreenshotOutPath()
+    {
+        var cwd = Directory.GetCurrentDirectory();
+        var probe = cwd;
+        for (var i = 0; i < 10 && probe is not null; i++)
+        {
+            var candidate = Path.Combine(probe, ".phase1");
+            if (Directory.Exists(candidate))
+            {
+                return Path.Combine(candidate, "screenshot-test.png");
+            }
+            probe = Path.GetDirectoryName(probe);
+        }
+        return Path.Combine(cwd, "screenshot-test.png");
     }
 
     private static string Truncate(string s, int max) =>

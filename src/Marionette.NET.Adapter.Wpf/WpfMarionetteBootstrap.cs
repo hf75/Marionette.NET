@@ -1,103 +1,49 @@
-// Marionette.NET — WPF adapter (Phase 1.2 placeholder)
+// Marionette.NET — WPF adapter compatibility shim
 //
-// Phase 1.2 owns the IUiAutomationAdapter contract; Phase 1.3 will provide
-// the production WPF implementation (Dispatcher marshalling via
-// Application.Current.Dispatcher, RenderTargetBitmap screenshot, visual-tree
-// FindByName for triggerable controls).
+// Phase 1.3 split the original Phase-1.2 stub file into:
 //
-// This file is intentionally a stub:
-//   * It exists so the assembly remains non-trivial and the IL probe still
-//     finds a unique symbol in non-stripped builds.
-//   * It implements IUiAutomationAdapter so the sample's `--mcp` GUI path can
-//     compile against the Phase 1.2 contract today, and Phase 1.3 only
-//     replaces the method bodies.
-//   * Phase 1.3 will rename / remove the static `Initialize` helper —
-//     adopters never reference it; the conditional ProjectReference in
-//     Sample.Wpf.StripeProbe.csproj is the only consumer.
+//   * `WpfUiAutomationAdapter.cs` — the real `IUiAutomationAdapter` impl.
+//   * `MarionetteWpf.cs`          — the `AttachTo(Application, …)` entry point.
+//   * `Internal/VisualTreeFinder.cs` — the named-element resolver helper.
+//
+// This file is retained because:
+//
+//   1. `Sample.Wpf.StripeProbe.csproj` references the assembly conditionally
+//      and the Phase 1.2 hand-off documented `WpfMarionetteBootstrap.CreateAdapter`
+//      as the public seam. We keep the API as an alias around the new entry
+//      points so anyone (skill-pack, future docs) reading the Phase 1.2 spec
+//      still finds it. Phase 2 may collapse it.
+//   2. The IL probe needs at least one unique top-level symbol in the adapter
+//      assembly to detect a regression in stripped Release builds; this static
+//      class provides one (`Marionette.Adapter.Wpf.WpfMarionetteBootstrap`).
 
-using System;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Windows;
 
 using Marionette.Runtime.Adapters;
 
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+
 namespace Marionette.Adapter.Wpf;
 
 /// <summary>
-/// Phase 1.2 WPF adapter stub. Implements <see cref="IUiAutomationAdapter"/>
-/// with the same fall-through behaviour as <see cref="NoOpAdapter"/> so the
-/// solution builds cleanly. Phase 1.3 replaces this with the real WPF
-/// implementation.
-/// </summary>
-public sealed class WpfUiAutomationAdapter : IUiAutomationAdapter
-{
-    /// <summary>
-    /// Construct an adapter bound to a specific WPF <see cref="Application"/>.
-    /// Phase 1.3 will use this reference for Dispatcher marshalling and
-    /// MainWindow resolution; Phase 1.2 keeps the reference but does nothing
-    /// with it.
-    /// </summary>
-    /// <param name="app">The WPF application instance, or <see langword="null"/> if not yet started.</param>
-    public WpfUiAutomationAdapter(Application? app)
-    {
-        Application = app;
-    }
-
-    /// <summary>The associated WPF <see cref="Application"/>, when one is available.</summary>
-    public Application? Application { get; }
-
-    /// <inheritdoc />
-    public Task DispatchAsync(Action action, CancellationToken ct)
-    {
-        if (action is null) throw new ArgumentNullException(nameof(action));
-        ct.ThrowIfCancellationRequested();
-        // Phase 1.3 will dispatch via Application.Current.Dispatcher.InvokeAsync.
-        action();
-        return Task.CompletedTask;
-    }
-
-    /// <inheritdoc />
-    public Task<T> DispatchAsync<T>(Func<T> func, CancellationToken ct)
-    {
-        if (func is null) throw new ArgumentNullException(nameof(func));
-        ct.ThrowIfCancellationRequested();
-        return Task.FromResult(func());
-    }
-
-    /// <inheritdoc />
-    public Task<byte[]> CaptureScreenshotAsync(string? targetName, CancellationToken ct)
-    {
-        _ = targetName;
-        _ = ct;
-        // Phase 1.3 will use RenderTargetBitmap + PngBitmapEncoder.
-        throw new NotSupportedException(
-            "WpfUiAutomationAdapter.CaptureScreenshotAsync is not implemented in Phase 1.2. " +
-            "Phase 1.3 replaces this method with a RenderTargetBitmap-based capture.");
-    }
-
-    /// <inheritdoc />
-    public Task<object?> ResolveControlAsync(string rootName, string controlName, CancellationToken ct)
-    {
-        _ = rootName;
-        _ = controlName;
-        _ = ct;
-        // Phase 1.3 will FindByName on the bound MainWindow's visual tree.
-        return Task.FromResult<object?>(null);
-    }
-}
-
-/// <summary>
-/// Compatibility shim for the Spike-C-era bootstrap. Adopters never call
-/// this directly today; it is retained so the IL probe still finds a unique
-/// symbol in non-stripped builds.
+/// Compatibility shim that exposes the Phase 1.2 <c>CreateAdapter</c> seam.
+/// New adopters should call <see cref="MarionetteWpf.AttachTo"/> instead —
+/// <c>AttachTo</c> handles host startup, lifecycle hooks, and shutdown.
 /// </summary>
 public static class WpfMarionetteBootstrap
 {
     /// <summary>
-    /// Compatibility shim. Phase 1.3 will replace this with a host-builder
-    /// extension method that registers the WPF adapter into the runtime DI
-    /// container.
+    /// Construct a <see cref="WpfUiAutomationAdapter"/> bound to the supplied
+    /// <see cref="Application"/>. Useful when an adopter wants to manage the
+    /// Marionette host lifecycle by hand (e.g. integration tests) rather than
+    /// going through <see cref="MarionetteWpf.AttachTo"/>.
     /// </summary>
-    public static WpfUiAutomationAdapter CreateAdapter(Application? app) => new(app);
+    /// <param name="app">The WPF application instance. Must not be null.</param>
+    /// <param name="logger">Optional logger; defaults to <see cref="NullLogger{T}.Instance"/>.</param>
+    /// <returns>A live adapter that can be passed to <see cref="MarionetteHost.RunAsync(string[], System.Collections.Generic.IReadOnlyList{Runtime.Manifest.RootDescriptor}, IUiAutomationAdapter?, System.Threading.CancellationToken)"/>.</returns>
+    public static IUiAutomationAdapter CreateAdapter(
+        Application app,
+        ILogger<WpfUiAutomationAdapter>? logger = null)
+        => new WpfUiAutomationAdapter(app, logger ?? NullLogger<WpfUiAutomationAdapter>.Instance);
 }

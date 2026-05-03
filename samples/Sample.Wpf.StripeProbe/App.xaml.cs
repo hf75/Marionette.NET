@@ -1,5 +1,10 @@
 using System.Windows;
 
+#if MCP_ENABLED
+using Marionette.Adapter.Wpf;
+using Marionette.Generated;
+#endif
+
 namespace Sample.Wpf.StripeProbe;
 
 public partial class App : Application
@@ -8,10 +13,14 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        // Phase 1.2: the runtime no longer needs an Application-side bootstrap
-        // call. The host's RunAsync receives the adapter instance directly via
-        // its `adapter:` parameter. Phase 1.3 will pass the WPF adapter through
-        // from Program.cs; for Phase 1.2 the GUI `--mcp` path passes
-        // `adapter: null` (NoOpAdapter fallback).
+#if MCP_ENABLED
+        // Phase 1.3: one-line wiring for the GUI `--mcp` path. Without --mcp
+        // in the args, MarionetteWpf.AttachTo / MarionetteHost.RunAsync return
+        // immediately, so this is also safe in the no-flag GUI path.
+        //
+        // The `--mcp --headless` path never reaches App — it stays in Program.Main
+        // and calls MarionetteHost.RunAsync directly with adapter:null (NoOpAdapter).
+        MarionetteWpf.AttachTo(this, GeneratedManifest.Roots, e.Args);
+#endif
     }
 }

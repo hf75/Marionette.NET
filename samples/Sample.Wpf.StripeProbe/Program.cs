@@ -1,22 +1,24 @@
-// Sample.Wpf.StripeProbe — custom entry point for Spike C / Phase 1.2
+// Sample.Wpf.StripeProbe — custom entry point for Spike C / Phase 1.2 / 1.3
 //
 // Three modes, picked from argv:
 //   (no args)                    → normal WPF GUI
-//   --mcp                        → start MCP server on stdio AND show GUI (Claude controls + user watches)
+//   --mcp                        → start MCP server on stdio AND show GUI
+//                                  (Claude controls + user watches)
 //   --mcp --headless             → start MCP server on stdio, no Application / no window
 //   --mcp-help                   → print manifest summary to stderr and exit
 //
-// Phase 1.2: the host is no longer a stub. It registers the four real MCP
-// tools (inspect_app_api, invoke_method, read_observable, capture_screenshot)
-// driven by the source-generator-emitted GeneratedManifest.Roots.
+// Phase 1.3 split:
 //
-// Adapter wiring: Phase 1.3 owns the WPF-specific IUiAutomationAdapter
-// implementation (Dispatcher marshalling, RenderTargetBitmap screenshot,
-// FindByName control resolution). For Phase 1.2 both the headless and the
-// GUI paths pass `adapter: null`; the host falls back to NoOpAdapter.
-// `capture_screenshot` therefore returns a structured "not_supported" error
-// in Phase 1.2 — that's the documented intermediate state until Phase 1.3
-// lands.
+//   * Headless paths (`--mcp --headless`, `--mcp-help`) construct NO WPF
+//     Application — they call MarionetteHost.RunAsync directly. The host
+//     installs NoOpAdapter; capture_screenshot returns the documented
+//     `screenshot_not_supported` structured error in headless mode.
+//
+//   * GUI `--mcp` path lets the regular WPF App class handle MCP wiring via
+//     `MarionetteWpf.AttachTo(this, GeneratedManifest.Roots, e.Args)` from
+//     `App.OnStartup`. The host runs on a background Task; UI thread runs the
+//     normal message loop. This is the path that Phase 1.3 makes screenshot
+//     work end-to-end.
 
 using System;
 using System.Threading.Tasks;
@@ -51,6 +53,8 @@ internal static class Program
         if (wantsMcp && wantsHeadless)
         {
             // Pure stdio MCP server. No Application, no Dispatcher, no window.
+            // Headless mode intentionally uses NoOpAdapter — there is no UI
+            // thread to dispatch onto and no visual tree to screenshot.
             try
             {
                 return Marionette.Runtime.MarionetteHost.RunAsync(
@@ -65,26 +69,12 @@ internal static class Program
             }
         }
 
+        // GUI `--mcp` path: fall through to RunGui(). App.OnStartup calls
+        // MarionetteWpf.AttachTo, which constructs the WpfUiAutomationAdapter,
+        // starts MarionetteHost.RunAsync on a background task, and hooks
+        // Application.Exit for clean shutdown.
         if (wantsMcp)
         {
-            // GUI + MCP. Run the MCP host on a background task; let WPF own
-            // the main thread. Phase 1.3 will switch this to use the WPF
-            // adapter and bind MainWindow into the manifest registry.
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await Marionette.Runtime.MarionetteHost.RunAsync(
-                        args,
-                        Marionette.Generated.GeneratedManifest.Roots,
-                        adapter: null).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine($"[stripeprobe] MCP host crashed: {ex}");
-                }
-            });
-
             return RunGui();
         }
 #endif

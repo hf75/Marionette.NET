@@ -83,3 +83,6 @@ coverage*.info
 ilprobe.log
 stdio-test.log
 *.binlog
+
+# Stdio handshake harness GUI-mode screenshot artifact (regenerated each run)
+.phase1/screenshot-test.png
