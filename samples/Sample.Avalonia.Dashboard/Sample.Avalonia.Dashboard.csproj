@@ -1,0 +1,85 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Phase 2.1 - Sample.Avalonia.Dashboard
+    The canonical Avalonia adopter-reference. More interesting than the WPF
+    TodoApp: a tiny system-dashboard with live metrics, async refresh, several
+    decorations across callable / observable / event surfaces. Wiring is
+    analogous to Sample.Wpf.TodoApp - same MSBuild contract (EnableMcpAutomation
+    gates the adapter reference + DefineConstants), same source-generator hook.
+
+    Defaults for EnableMcpAutomation come from build/Marionette.NET.props
+    (Debug => true, Release => false).
+  -->
+  <Import Project="..\..\build\Marionette.NET.props" />
+
+  <PropertyGroup>
+    <!--
+      Avalonia uses Exe (NOT WinExe). Avalonia is cross-platform; the AppBuilder
+      handles desktop initialization. TFM is net10.0 (NOT net10.0-windows) so the
+      sample runs on Windows / Linux / macOS - the same property holds for the
+      adapter. Adopters who want a Windows-only build can override TFM in their
+      own csproj.
+    -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Sample.Avalonia.Dashboard</RootNamespace>
+    <AssemblyName>Sample.Avalonia.Dashboard</AssemblyName>
+    <StartupObject>Sample.Avalonia.Dashboard.Program</StartupObject>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Compile *.axaml as Avalonia XAML resources (Avalonia 11.x convention). -->
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <!-- Always reference Abstractions; attributes survive into Release as markup. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />
+  </ItemGroup>
+
+  <!--
+    Source generator wiring. The generator is loaded as a Roslyn analyzer,
+    NOT as a runtime dependency.
+       OutputItemType="Analyzer"     - feeds the DLL into the analyzer pipeline
+       ReferenceOutputAssembly=false - prevents the DLL from being copied into
+                                       this project's output / deps.json
+    The generator emits Marionette.Generated.GeneratedManifest in this assembly
+    only when MCP_ENABLED is defined (i.e. EnableMcpAutomation=true).
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.SourceGenerator\Marionette.NET.SourceGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- Adapter (and transitively Runtime + ModelContextProtocol) only when MCP is on. -->
+  <ItemGroup Condition="'$(EnableMcpAutomation)'=='true'">
+    <ProjectReference Include="..\..\src\Marionette.NET.Adapter.Avalonia\Marionette.NET.Adapter.Avalonia.csproj" />
+  </ItemGroup>
+
+  <!-- Avalonia packages. Pin to the same 11.x stable as the adapter to avoid
+       diamond-version pulls. Avalonia.Desktop pulls native dependencies for the
+       three desktop platforms; Avalonia.Themes.Fluent ships the modern theme. -->
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.14" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.14" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.14" />
+  </ItemGroup>
+
+  <!-- Emit Marionette.g.cs to disk so adopters can see what the generator produced. -->
+  <PropertyGroup>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+
+  <!--
+    MCP_ENABLED constant comes from build/Marionette.NET.targets. Imported last
+    so it sees the resolved EnableMcpAutomation. The _SuppressWpfTrimError
+    guard inside the targets file is gated on UseWPF=true; Avalonia projects
+    skip that branch so we don't need any equivalent here.
+  -->
+  <Import Project="..\..\build\Marionette.NET.targets" />
+
+</Project>

@@ -58,6 +58,7 @@ param(
     [string[]]$Needles = @(
         'Marionette.NET.Runtime',
         'Adapter.Wpf',
+        'Adapter.Avalonia',
         'Marionette.Ai',
         'ModelContextProtocol'
     ),

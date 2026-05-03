@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Phase 2.1 - Avalonia adapter for Marionette.NET. Cross-platform: net10.0 (NOT
+      net10.0-windows). Avalonia runs on Windows / Linux / macOS, and the adapter
+      itself only consumes Avalonia.Application + Dispatcher.UIThread + the visual
+      tree, so there is no Windows-specific dependency here. Adopters whose own
+      app is Windows-only set net10.0-windows in their csproj; the Adapter does
+      not constrain them.
+    -->
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Marionette.Adapter.Avalonia</RootNamespace>
+    <AssemblyName>Marionette.NET.Adapter.Avalonia</AssemblyName>
+    <Description>Avalonia 11.x adapter for Marionette.NET. Only referenced when EnableMcpAutomation=true on an Avalonia project.</Description>
+
+    <!--
+      Trim / AOT analyzer flags. Same rationale as the WPF adapter: light up only
+      when the project is being AOT-published so the regular EnableMcpAutomation=false
+      stripped Release build stays clean of analyzer noise. Avalonia 11.x is itself
+      AOT-capable, so we don't disclaim trim warnings here - if Avalonia surfaces
+      its own IL3xxx warnings during a `dotnet publish -p:PublishAot=true` smoke
+      test, those are inherent to Avalonia, not Marionette's responsibility.
+    -->
+    <IsAotCompatible Condition="'$(PublishAot)'=='true' and $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">true</IsAotCompatible>
+    <IsTrimmable Condition="'$(PublishAot)'=='true' and $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">true</IsTrimmable>
+  </PropertyGroup>
+
+  <!-- During AOT publish flows, allow warnings through so the spike can capture them. -->
+  <PropertyGroup Condition="'$(PublishAot)'=='true'">
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Marionette.NET.Runtime\Marionette.NET.Runtime.csproj" />
+  </ItemGroup>
+
+  <!--
+    The adapter only needs the core Avalonia package (controls + threading +
+    visual primitives). Adopters' own csproj brings Avalonia.Desktop /
+    Avalonia.Themes.Fluent / etc. - the Phase 2 sample, Sample.Avalonia.Dashboard,
+    pulls those itself.
+    Pin to a known stable 11.3.x release (latest as of 2026-05) - 12.x exists but
+    we explicitly avoid it per the Phase 2.1 trapdoor list.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.14" />
+  </ItemGroup>
+
+</Project>

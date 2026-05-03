@@ -2,7 +2,7 @@
 
 The canonical reference for the Marionette.NET v1 surface. Every skill in `skill-pack/claude-code/*/SKILL.md` cites this file. Adopters using a non-Claude agent (Cursor, Cline, Aider) can read this directly.
 
-**Status:** Phase 1 (WPF). The attribute set is locked; subsequent phases add framework adapters and one new runtime tool surface (input simulation in Phase 3) without changing the core contract.
+**Status:** Phase 2.1 (WPF + Avalonia). The attribute set is locked; subsequent phases add framework adapters and one new runtime tool surface (input simulation in Phase 3) without changing the core contract.
 
 ---
 
@@ -13,6 +13,7 @@ The canonical reference for the Marionette.NET v1 surface. Every skill in `skill
 | `[McpRoot]`, `[McpCallable]`, `[McpObservable]`, `[McpTriggerable]`, `[McpEvent]`, `TriggerStrategy` | `Marionette` |
 | `Ai.Trigger`, `Ai.ScheduleTrigger`, `Ai.IsActive` | `Marionette` |
 | `MarionetteWpf.AttachTo` (WPF adapter bootstrap) | `Marionette.Adapter.Wpf` |
+| `MarionetteAvalonia.AttachTo` (Avalonia adapter bootstrap) | `Marionette.Adapter.Avalonia` |
 | `MarionetteHost.RunAsync` (headless host entry) | `Marionette.Runtime` |
 | `RootDescriptor`, `CallableDescriptor`, `ObservableDescriptor`, `TriggerableDescriptor`, `EventDescriptor`, `ParamDescriptor` | `Marionette.Runtime.Manifest` |
 | `GeneratedManifest.Roots` (source-generator output) | `Marionette.Generated` |
@@ -623,6 +624,60 @@ MarionetteWpf.AttachTo(this, roots, e.Args);
 ```
 
 `MyViewModel.Shared` is a static singleton (or DI-resolved instance) that your MainWindow's DataContext also points to. See `samples/Sample.Wpf.TodoApp/App.xaml.cs` for the working reference.
+
+### Avalonia — App.OnFrameworkInitializationCompleted
+
+Avalonia adopters use the cross-platform analogue of the WPF AttachTo. The same attribute set works (no Avalonia-specific attributes); the lifecycle hook differs:
+
+```csharp
+using Avalonia;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Markup.Xaml;
+
+#if MCP_ENABLED
+using Marionette.Adapter.Avalonia;
+using Marionette.Generated;
+#endif
+
+namespace MyApp;
+
+public partial class App : Application
+{
+    public override void Initialize() => AvaloniaXamlLoader.Load(this);
+
+    public override void OnFrameworkInitializationCompleted()
+    {
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            desktop.MainWindow = new MainWindow();
+        }
+        base.OnFrameworkInitializationCompleted();
+#if MCP_ENABLED
+        MarionetteAvalonia.AttachTo(this, GeneratedManifest.Roots);
+#endif
+    }
+}
+```
+
+**TFM choice for Avalonia adopters:** `net10.0` (NOT `net10.0-windows`). Avalonia is cross-platform — Windows, Linux, macOS all run from the same build. Adopters whose own product is Windows-only can override.
+
+**Cross-platform note:** `MarionetteAvalonia.AttachTo` works on every desktop platform Avalonia supports. The non-classic-desktop lifetimes (`ISingleViewApplicationLifetime` on mobile, `IControlledApplicationLifetime`) gracefully degrade — `Exit` event hookup is skipped, but the host still runs. Multi-window enumeration uses `IClassicDesktopStyleApplicationLifetime.Windows`.
+
+### Non-Window root binding (Avalonia)
+
+Same pattern as WPF — non-`Window` roots need an explicit factory rewrite:
+
+```csharp
+var roots = GeneratedManifest.Roots
+    .Select(r => r.TypeName == typeof(MyViewModel).FullName
+        ? r with { Create = static () => MyViewModel.Shared }
+        : r)
+    .ToList();
+
+MarionetteAvalonia.AttachTo(this, roots);
+```
+
+See `samples/Sample.Avalonia.Dashboard/App.axaml.cs` for the working reference. The Phase 2.1 trapdoor: `OnFrameworkInitializationCompleted` runs BEFORE the MainWindow has fully laid out — the AttachTo call returns immediately, and the descriptor-factory rewrite resolves on first MCP request (typically a few hundred milliseconds later, by which time the window is open). For latency-sensitive scenarios the bound resource subscriptions still see baseline values via INPC.
 
 ---
 

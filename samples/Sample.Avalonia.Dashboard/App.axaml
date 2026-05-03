@@ -1,0 +1,28 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Sample.Avalonia.Dashboard.App"
+             RequestedThemeVariant="Dark">
+
+    <Application.Styles>
+        <FluentTheme />
+    </Application.Styles>
+
+    <Application.Resources>
+        <!--
+            Dark-mode-friendly Marionette Dashboard palette. Designed to look
+            decent in screenshots regardless of OS theme.
+        -->
+        <SolidColorBrush x:Key="BgBrush"          Color="#1E1F22" />
+        <SolidColorBrush x:Key="PanelBrush"       Color="#2B2D31" />
+        <SolidColorBrush x:Key="PanelHoverBrush"  Color="#34373C" />
+        <SolidColorBrush x:Key="BorderBrush2"     Color="#3F4147" />
+        <SolidColorBrush x:Key="TextBrush"        Color="#F2F3F5" />
+        <SolidColorBrush x:Key="TextDimBrush"     Color="#B5BAC1" />
+        <SolidColorBrush x:Key="MutedBrush"       Color="#80858C" />
+        <SolidColorBrush x:Key="AccentBrush"      Color="#5865F2" />
+        <SolidColorBrush x:Key="AccentHoverBrush" Color="#4752C4" />
+        <SolidColorBrush x:Key="UpBrush"          Color="#23A559" />
+        <SolidColorBrush x:Key="DownBrush"        Color="#DA373C" />
+        <SolidColorBrush x:Key="FlatBrush"        Color="#80858C" />
+    </Application.Resources>
+</Application>

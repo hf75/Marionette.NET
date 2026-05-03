@@ -77,7 +77,7 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: StdioTest <path-to-sample.exe> [--gui] [--todoapp] [--probe]");
+            Console.Error.WriteLine("Usage: StdioTest <path-to-sample.exe> [--gui] [--todoapp] [--avalonia] [--probe]");
             return 2;
         }
 
@@ -85,11 +85,13 @@ internal static class Program
         var probeMode = false;
         var guiMode = false;
         var todoAppMode = false;
+        var avaloniaMode = false;
         for (var ai = 1; ai < args.Length; ai++)
         {
             if (args[ai] == "--probe") probeMode = true;
             else if (args[ai] == "--gui") guiMode = true;
             else if (args[ai] == "--todoapp") todoAppMode = true;
+            else if (args[ai] == "--avalonia") avaloniaMode = true;
         }
         if (!File.Exists(exePath))
         {
@@ -102,9 +104,11 @@ internal static class Program
         // where the captured PNG provides a visual sanity check that the
         // TodoListViewModel UI rendered correctly.
 
-        var phaseLabel = todoAppMode
-            ? "Phase 1.4 TodoApp stdio handshake harness"
-            : (guiMode ? "Phase 1.3 stdio + GUI screenshot harness" : "Phase 1.2 stdio handshake harness");
+        var phaseLabel = avaloniaMode
+            ? "Phase 2.1 Avalonia Dashboard stdio handshake harness"
+            : (todoAppMode
+                ? "Phase 1.4 TodoApp stdio handshake harness"
+                : (guiMode ? "Phase 1.3 stdio + GUI screenshot harness" : "Phase 1.2 stdio handshake harness"));
         Console.WriteLine($"=== {phaseLabel} ===");
         Console.WriteLine($"Child: {exePath}");
         Console.WriteLine($"Args:  --mcp{(guiMode ? string.Empty : " --headless")}");
@@ -260,7 +264,295 @@ internal static class Program
             }
 
             // -------- Sample-specific tool-call assertions --------
-            if (todoAppMode)
+            if (avaloniaMode)
+            {
+                // ============ Avalonia Dashboard Phase-2.1 assertion suite ============
+                //
+                // Mirror of the TodoApp suite, but for Sample.Avalonia.Dashboard's
+                // DashboardViewModel root. The Dashboard exposes:
+                //   * 5 [McpCallable]: UpsertMetric, RemoveMetric, ResetAll, TogglePaused, RefreshAsync
+                //   * 4 [McpObservable]: MetricCount, Total (watchable), IsPaused (watchable), LastUpdatedMetric
+                //   * 2 [McpEvent]:     MetricUpserted, PausedToggled
+                //
+                // The headless ctor pre-seeds 4 metrics (CPU/Memory/Network/Disk),
+                // so MetricCount baseline = 4. The harness asserts:
+                //   * inspect_app_api lists DashboardViewModel with all 5 callables + 4 observables.
+                //   * read_observable MetricCount returns 4 baseline.
+                //   * invoke_method UpsertMetric("CPU", 42, "%") succeeds and (since CPU exists)
+                //     does NOT grow MetricCount.
+                //   * invoke_method UpsertMetric("Battery", 87, "%") (a NEW name) does grow it to 5.
+                //   * invoke_method RefreshAsync(50) succeeds and the response actually awaits
+                //     the Task (the runtime would otherwise return before the simulated delay).
+                //   * resources/subscribe to MetricCount + UpsertMetric of a new name produces
+                //     a notifications/resources/updated.
+                //   * resources/subscribe to events/MetricUpserted + UpsertMetric produces an
+                //     event notification with args.Name == the upserted name.
+                //   * capture_screenshot returns 'screenshot_not_supported' (NoOpAdapter in --headless).
+                var inspectId = Interlocked.Increment(ref _nextRequestId);
+                var inspectReq = new
+                {
+                    jsonrpc = "2.0",
+                    id = inspectId,
+                    method = "tools/call",
+                    @params = new { name = "inspect_app_api", arguments = new { } },
+                };
+                await SendAsync(child, inspectReq);
+                var inspectResp = await WaitForResponseAsync(stdoutMessages, inspectId, TimeSpan.FromSeconds(10));
+                if (inspectResp is null)
+                {
+                    Console.Error.WriteLine("FAIL — no response to inspect_app_api within 10s");
+                    failures++;
+                }
+                else
+                {
+                    string manifestErr = "no inspect_app_api text content";
+                    bool manifestOk = TryReadToolText(inspectResp.RootElement, out var inspectText) &&
+                                      TryParseDashboardManifest(inspectText, out manifestErr);
+                    if (manifestOk)
+                    {
+                        Console.WriteLine("PASS — inspect_app_api returned DashboardViewModel manifest with all 5 callables + 4 observables + 2 events");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"FAIL — inspect_app_api manifest mismatch: {manifestErr}. Raw: {inspectResp.RootElement.GetRawText()}");
+                        failures++;
+                    }
+                    inspectResp.Dispose();
+                }
+
+                // ---- read_observable MetricCount (baseline). Headless ctor seeds 4 metrics.
+                var initialCount = await ReadObservableInt(child, stdoutMessages, "DashboardViewModel", "MetricCount");
+                if (initialCount is int baseline and >= 0)
+                {
+                    Console.WriteLine($"PASS — read_observable MetricCount initially returned {baseline}");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — read_observable MetricCount initial read failed: {initialCount?.ToString() ?? "<error>"}");
+                    failures++;
+                }
+
+                // ---- invoke_method UpsertMetric("CPU", 42, "%") — existing name, count unchanged.
+                var upCpuOk = await InvokeMethodAsync(child, stdoutMessages,
+                    "DashboardViewModel", "UpsertMetric", new { name = "CPU", value = 42.0, unit = "%" });
+                if (upCpuOk.Success)
+                {
+                    Console.WriteLine("PASS — invoke_method UpsertMetric(\"CPU\", 42, \"%\") succeeded");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — invoke_method UpsertMetric(CPU) failed: {upCpuOk.Detail}");
+                    failures++;
+                }
+
+                // ---- read_observable MetricCount unchanged (still baseline) — CPU pre-existed.
+                var afterCpuCount = await ReadObservableInt(child, stdoutMessages, "DashboardViewModel", "MetricCount");
+                if (afterCpuCount == initialCount)
+                {
+                    Console.WriteLine($"PASS — read_observable MetricCount unchanged at {afterCpuCount} after UpsertMetric on existing key");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — MetricCount changed after UpsertMetric on existing key: {afterCpuCount?.ToString() ?? "<error>"} (expected {initialCount}).");
+                    failures++;
+                }
+
+                // ---- invoke_method RefreshAsync(50) — async callable. The harness must
+                //      observe that the runtime AWAITS the Task before responding (the
+                //      response shouldn't come back before the simulated delay elapsed).
+                var refreshStart = DateTime.UtcNow;
+                var refreshOk = await InvokeMethodAsync(child, stdoutMessages,
+                    "DashboardViewModel", "RefreshAsync", new { simulatedDelayMs = 100 });
+                var refreshElapsed = DateTime.UtcNow - refreshStart;
+                if (!refreshOk.Success)
+                {
+                    Console.Error.WriteLine($"FAIL — invoke_method RefreshAsync failed: {refreshOk.Detail}");
+                    failures++;
+                }
+                else if (refreshElapsed < TimeSpan.FromMilliseconds(80))
+                {
+                    Console.Error.WriteLine($"FAIL — invoke_method RefreshAsync returned in {refreshElapsed.TotalMilliseconds:F0}ms — expected >= 80ms (the runtime should await the Task).");
+                    failures++;
+                }
+                else
+                {
+                    Console.WriteLine($"PASS — invoke_method RefreshAsync(100) succeeded after {refreshElapsed.TotalMilliseconds:F0}ms (await held)");
+                }
+
+                // ---- resources/subscribe + UpsertMetric of NEW key — expect a
+                //      notifications/resources/updated for MetricCount.
+                var metricCountUri = "marionette://DashboardViewModel/MetricCount";
+                var subId = Interlocked.Increment(ref _nextRequestId);
+                var subReq = new
+                {
+                    jsonrpc = "2.0",
+                    id = subId,
+                    method = "resources/subscribe",
+                    @params = new { uri = metricCountUri },
+                };
+                await SendAsync(child, subReq);
+                var subResp = await WaitForResponseAsync(stdoutMessages, subId, TimeSpan.FromSeconds(10));
+                bool subOk = subResp is not null && subResp.RootElement.TryGetProperty("result", out _);
+                subResp?.Dispose();
+                if (!subOk)
+                {
+                    Console.Error.WriteLine($"FAIL — resources/subscribe to {metricCountUri} did not return a result.");
+                    failures++;
+                }
+                else
+                {
+                    var notifWatcher = StartNotificationWatcher(stdoutMessages);
+                    var newKeyOk = await InvokeMethodAsync(child, stdoutMessages,
+                        "DashboardViewModel", "UpsertMetric", new { name = "Battery", value = 87.0, unit = "%" });
+                    if (!newKeyOk.Success)
+                    {
+                        Console.Error.WriteLine($"FAIL — UpsertMetric(Battery) failed: {newKeyOk.Detail}");
+                        failures++;
+                    }
+                    else
+                    {
+                        var gotUpdate = await WaitForResourceUpdate(notifWatcher, metricCountUri, TimeSpan.FromSeconds(5));
+                        if (gotUpdate)
+                        {
+                            Console.WriteLine($"PASS — resources/subscribe + UpsertMetric(Battery) produced notifications/resources/updated for {metricCountUri}");
+                        }
+                        else
+                        {
+                            Console.Error.WriteLine($"FAIL — no notifications/resources/updated received for {metricCountUri} within 5s.");
+                            failures++;
+                        }
+                    }
+                }
+
+                // ---- read_observable MetricCount after the NEW upsert — expect baseline+1.
+                var finalCount = await ReadObservableInt(child, stdoutMessages, "DashboardViewModel", "MetricCount");
+                var expectedFinal = (initialCount ?? 0) + 1;
+                if (finalCount == expectedFinal)
+                {
+                    Console.WriteLine($"PASS — read_observable MetricCount returned {finalCount} after UpsertMetric on new key (baseline + 1)");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — read_observable MetricCount = {finalCount?.ToString() ?? "<error>"}, expected {expectedFinal}.");
+                    failures++;
+                }
+
+                // ---- Phase 1.6: declarative event delivery for MetricUpserted.
+                //      Subscribe BEFORE the upsert; expect notifications/resources/updated
+                //      with args.Name == the upserted name.
+                var eventUri = "marionette://DashboardViewModel/events/MetricUpserted";
+                var evSubId = Interlocked.Increment(ref _nextRequestId);
+                var evSubReq = new
+                {
+                    jsonrpc = "2.0",
+                    id = evSubId,
+                    method = "resources/subscribe",
+                    @params = new { uri = eventUri },
+                };
+                await SendAsync(child, evSubReq);
+                var evSubResp = await WaitForResponseAsync(stdoutMessages, evSubId, TimeSpan.FromSeconds(10));
+                bool evSubOk = evSubResp is not null && evSubResp.RootElement.TryGetProperty("result", out _);
+                evSubResp?.Dispose();
+                if (!evSubOk)
+                {
+                    Console.Error.WriteLine($"FAIL — resources/subscribe to {eventUri} did not return a result.");
+                    failures++;
+                }
+                else
+                {
+                    var evWatcher = StartNotificationWatcher(stdoutMessages);
+                    var addEvOk = await InvokeMethodAsync(child, stdoutMessages,
+                        "DashboardViewModel", "UpsertMetric", new { name = "Latency", value = 42.0, unit = "ms" });
+                    if (!addEvOk.Success)
+                    {
+                        Console.Error.WriteLine($"FAIL — invoke_method UpsertMetric for event check failed: {addEvOk.Detail}");
+                        failures++;
+                    }
+                    else
+                    {
+                        var gotEvUpdate = await WaitForResourceUpdate(evWatcher, eventUri, TimeSpan.FromSeconds(5));
+                        if (!gotEvUpdate)
+                        {
+                            Console.Error.WriteLine($"FAIL — no notifications/resources/updated for {eventUri} within 5s after UpsertMetric.");
+                            failures++;
+                        }
+                        else
+                        {
+                            // Read the resource and confirm the args carry the name.
+                            var readId = Interlocked.Increment(ref _nextRequestId);
+                            var readReq = new
+                            {
+                                jsonrpc = "2.0",
+                                id = readId,
+                                method = "resources/read",
+                                @params = new { uri = eventUri },
+                            };
+                            await SendAsync(child, readReq);
+                            var readResp = await WaitForResponseAsync(stdoutMessages, readId, TimeSpan.FromSeconds(5));
+                            bool readOk = false;
+                            string readDetail = "no resources/read response";
+                            if (readResp is not null && readResp.RootElement.TryGetProperty("result", out var rr) &&
+                                rr.TryGetProperty("contents", out var cs) && cs.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var c in cs.EnumerateArray())
+                                {
+                                    if (!c.TryGetProperty("text", out var txt)) continue;
+                                    var text = txt.GetString() ?? string.Empty;
+                                    try
+                                    {
+                                        using var inner = JsonDocument.Parse(text);
+                                        if (inner.RootElement.TryGetProperty("events", out var evArr) &&
+                                            evArr.ValueKind == JsonValueKind.Array && evArr.GetArrayLength() > 0)
+                                        {
+                                            // Search for ANY event whose args.Name matches "Latency".
+                                            bool found = false;
+                                            int len = evArr.GetArrayLength();
+                                            foreach (var ev in evArr.EnumerateArray())
+                                            {
+                                                if (ev.TryGetProperty("args", out var argsEl) &&
+                                                    argsEl.TryGetProperty("Name", out var nameEl) &&
+                                                    nameEl.GetString() == "Latency")
+                                                {
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+                                            if (found)
+                                            {
+                                                readOk = true;
+                                                readDetail = $"sequence={(inner.RootElement.TryGetProperty("sequence", out var sq) ? sq.GetInt64() : -1)}, count={len}, args.Name=\"Latency\" present";
+                                            }
+                                            else
+                                            {
+                                                readDetail = "no event with args.Name='Latency' found in buffer";
+                                            }
+                                        }
+                                        else
+                                        {
+                                            readDetail = "no events array or empty";
+                                        }
+                                    }
+                                    catch (JsonException ex)
+                                    {
+                                        readDetail = $"events resource text not JSON: {ex.Message}";
+                                    }
+                                }
+                            }
+                            readResp?.Dispose();
+                            if (readOk)
+                            {
+                                Console.WriteLine($"PASS — resources/subscribe + UpsertMetric produced an event notification on {eventUri} ({readDetail})");
+                            }
+                            else
+                            {
+                                Console.Error.WriteLine($"FAIL — event resource read mismatch: {readDetail}");
+                                failures++;
+                            }
+                        }
+                    }
+                }
+            }
+            else if (todoAppMode)
             {
                 // ============ TodoApp Phase-1.4 assertion suite ============
 
@@ -788,9 +1080,11 @@ internal static class Program
         Console.WriteLine($"stderr total: {stderrLines.Count} lines");
 
         Console.WriteLine();
-        var verdictLabel = todoAppMode
-            ? "Phase 1.4 TodoApp handshake"
-            : (guiMode ? "Phase 1.3 GUI handshake" : "Phase 1.2 handshake");
+        var verdictLabel = avaloniaMode
+            ? "Phase 2.1 Avalonia Dashboard handshake"
+            : (todoAppMode
+                ? "Phase 1.4 TodoApp handshake"
+                : (guiMode ? "Phase 1.3 GUI handshake" : "Phase 1.2 handshake"));
         if (failures == 0)
         {
             Console.WriteLine($"=== {verdictLabel}: PASS ===");
@@ -861,6 +1155,83 @@ internal static class Program
                 if (!actualObservables.Contains(o))
                 {
                     error = $"missing observable '{o}'; got [{string.Join(",", actualObservables)}]";
+                    return false;
+                }
+            }
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            error = $"manifest is not valid JSON: {ex.Message}";
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Validate that the inspect_app_api response describes the Avalonia
+    /// Dashboard's expected manifest: DashboardViewModel root with five
+    /// callables (UpsertMetric, RemoveMetric, ResetAll, TogglePaused,
+    /// RefreshAsync), four observables (MetricCount, Total, IsPaused,
+    /// LastUpdatedMetric), and two events (MetricUpserted, PausedToggled).
+    /// </summary>
+    private static bool TryParseDashboardManifest(string inspectText, out string error)
+    {
+        error = string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(inspectText);
+            var root = doc.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Array)
+            {
+                error = $"expected array of roots, got {root.ValueKind}";
+                return false;
+            }
+
+            JsonElement? dashboard = null;
+            foreach (var entry in root.EnumerateArray())
+            {
+                if (entry.TryGetProperty("name", out var n) && n.GetString() == "DashboardViewModel")
+                {
+                    dashboard = entry;
+                    break;
+                }
+            }
+            if (dashboard is null)
+            {
+                error = "no root named 'DashboardViewModel' in manifest";
+                return false;
+            }
+
+            var expectedCallables = new[] { "UpsertMetric", "RemoveMetric", "ResetAll", "TogglePaused", "RefreshAsync" };
+            var expectedObservables = new[] { "MetricCount", "Total", "IsPaused", "LastUpdatedMetric" };
+            var expectedEvents = new[] { "MetricUpserted", "PausedToggled" };
+
+            var actualCallables = ExtractNames(dashboard.Value, "callables");
+            var actualObservables = ExtractNames(dashboard.Value, "observables");
+            var actualEvents = ExtractNames(dashboard.Value, "events");
+
+            foreach (var c in expectedCallables)
+            {
+                if (!actualCallables.Contains(c))
+                {
+                    error = $"missing callable '{c}'; got [{string.Join(",", actualCallables)}]";
+                    return false;
+                }
+            }
+            foreach (var o in expectedObservables)
+            {
+                if (!actualObservables.Contains(o))
+                {
+                    error = $"missing observable '{o}'; got [{string.Join(",", actualObservables)}]";
+                    return false;
+                }
+            }
+            foreach (var ev in expectedEvents)
+            {
+                if (!actualEvents.Contains(ev))
+                {
+                    error = $"missing event '{ev}'; got [{string.Join(",", actualEvents)}]";
                     return false;
                 }
             }

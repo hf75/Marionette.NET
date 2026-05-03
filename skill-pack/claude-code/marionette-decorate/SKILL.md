@@ -208,9 +208,15 @@ Run `dotnet build` against the project. The source generator emits diagnostics w
 
 Surface every diagnostic to the user. Don't silently strip attributes to make the build green.
 
-### 8. Wire the host (one-line in App.OnStartup for WPF)
+### 8. Wire the host (one-line in App.OnStartup for WPF, or App.OnFrameworkInitializationCompleted for Avalonia)
 
-The attributes alone don't start the MCP server — the host has to be wired. Show the user the canonical wiring snippet for their framework:
+The attributes alone don't start the MCP server — the host has to be wired. Detect the framework from the user's csproj first:
+
+- `<UseWPF>true</UseWPF>` -> WPF -> use `MarionetteWpf.AttachTo`.
+- `<PackageReference Include="Avalonia"` -> Avalonia -> use `MarionetteAvalonia.AttachTo`.
+- WinUI / MAUI / Uno -> not in Phase 2.1 yet.
+
+Show the user the canonical wiring snippet for their framework:
 
 **WPF:**
 
@@ -228,11 +234,31 @@ protected override void OnStartup(StartupEventArgs e)
 }
 ```
 
-For non-Window roots (custom ViewModels), see `samples/Sample.Wpf.TodoApp/App.xaml.cs` in the Marionette repo for the descriptor-factory rewrite pattern that wires the runtime's instance to the same singleton your DataContext uses.
+**Avalonia:**
+
+```csharp
+// In App.axaml.cs
+public override void OnFrameworkInitializationCompleted()
+{
+    if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        desktop.MainWindow = new MainWindow();
+    }
+    base.OnFrameworkInitializationCompleted();
+#if MCP_ENABLED
+    Marionette.Adapter.Avalonia.MarionetteAvalonia.AttachTo(
+        this,
+        Marionette.Generated.GeneratedManifest.Roots);
+#endif
+}
+```
+
+For non-Window roots (custom ViewModels), see `samples/Sample.Wpf.TodoApp/App.xaml.cs` (WPF) or `samples/Sample.Avalonia.Dashboard/App.axaml.cs` (Avalonia) in the Marionette repo for the descriptor-factory rewrite pattern that wires the runtime's instance to the same singleton your DataContext uses.
 
 Also need:
-- A `<StartupObject>` that handles `--mcp` / `--mcp --headless` flags (see `samples/Sample.Wpf.TodoApp/Program.cs` as a template).
-- `<EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>` so the SDK doesn't auto-emit a competing `Main`.
+- A `<StartupObject>` that handles `--mcp` / `--mcp --headless` flags (see `samples/Sample.Wpf.TodoApp/Program.cs` (WPF) or `samples/Sample.Avalonia.Dashboard/Program.cs` (Avalonia) as templates).
+- WPF: `<EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>` so the SDK doesn't auto-emit a competing `Main`. Avalonia uses `<OutputType>Exe</OutputType>` (NOT WinExe) and a custom `Main` that wires `BuildAvaloniaApp().StartWithClassicDesktopLifetime(args)`.
+- TFM: WPF requires `net10.0-windows`. Avalonia adopters should use `net10.0` (NOT `net10.0-windows`) because Avalonia is cross-platform.
 - The `EnableMcpAutomation` MSBuild property (defaults to Debug=on, Release=off via `build/Marionette.NET.props`).
 
 ### 9. Encourage running the test skill

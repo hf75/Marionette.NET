@@ -126,6 +126,10 @@ End the report with one bullet point acknowledging the limitation:
 - **Don't assume timing.** After an `invoke_method` returns, the observable values may not have propagated through `INotifyPropertyChanged` if the user wired the events asynchronously. Wait ~200 ms (matching the resource-update coalesce window) before re-reading observables if a re-read returns the old value.
 - **Don't run the suite against an app you didn't see decorated.** The user pointed Claude at an arbitrary EXE; honor their intent rather than asking for source-tree access. The MCP manifest is enough.
 
+## Compatible apps
+
+Phase 2.1 validated this skill against both **WPF** and **Avalonia** Marionette adopters. The MCP tool surface is framework-agnostic; the same heuristic test generation works for both.
+
 ## Reference
 
 For the runtime's tool semantics, error codes, and the Ai channel push spec:

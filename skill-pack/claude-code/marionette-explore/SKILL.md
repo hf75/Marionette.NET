@@ -108,6 +108,10 @@ Skip the "Marionette is a library that..." preamble. The user has the server con
 - Don't suggest framework-specific tool calls (e.g. "click the AddButton") unless `triggerables` is non-empty for that root. Phase 1 only ships `Strategy.Semantic`; Phase 3 adds input simulation.
 - Don't paste raw JSON in the report unless the user asks for it. Format the manifest into bullet lists.
 
+## Compatible apps
+
+Phase 2.1 validated this skill against both **WPF** and **Avalonia** Marionette adopters. The same MCP tool surface (`inspect_app_api`, `invoke_method`, `read_observable`, `capture_screenshot`) works against both frameworks unchanged - the adapter is invisible at the protocol level.
+
 ## Reference
 
 For attribute semantics and full descriptor schema, see `prompts/attributes-reference.md` in the skill-pack root. The four MCP tools the runtime exposes (`inspect_app_api`, `invoke_method`, `read_observable`, `capture_screenshot`) are documented there alongside the Ai channel push.
