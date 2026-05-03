@@ -28,16 +28,24 @@
         - Debug build           => EnableMcpAutomation=true  (MCP host present)
         - Release build / other => EnableMcpAutomation=false (stripped)
 
-      The empty-string condition only fires when nobody set the property. MSBuild
-      string-comparison expressions evaluate to the literal text "true"/"false",
-      which is what later condition tests against. Verified in Spike A.
+      The empty-string condition only fires when nobody set the property.
+      Two separate Condition lines: MSBuild assigns text VALUES, not boolean
+      expressions, so we cannot use ' = '$(Configuration)==Debug ' as the
+      RHS - that would yield the literal string "Debug==Debug", which is
+      neither "true" nor "false" and silently breaks every downstream
+      Condition test. The correct pattern is two guarded assignments
+      (Phase 1.5 fix; the prior `... ' == 'Debug'` literal-RHS form was a
+      Phase-1.a hold-over that never broke local builds because every
+      Phase-1.a-1.4 verification ran with `-p:EnableMcpAutomation=true`
+      explicitly).
 
       Adopters override this in three ways, all of which take precedence:
         1.  <PropertyGroup><EnableMcpAutomation>true</EnableMcpAutomation></PropertyGroup>
         2.  dotnet build -p:EnableMcpAutomation=true
         3.  Directory.Build.props in the solution above.
     -->
-    <EnableMcpAutomation Condition="'$(EnableMcpAutomation)'==''">$(Configuration)=='Debug'</EnableMcpAutomation>
+    <EnableMcpAutomation Condition="'$(EnableMcpAutomation)'=='' AND '$(Configuration)'=='Debug'">true</EnableMcpAutomation>
+    <EnableMcpAutomation Condition="'$(EnableMcpAutomation)'==''">false</EnableMcpAutomation>
   </PropertyGroup>
 
 </Project>

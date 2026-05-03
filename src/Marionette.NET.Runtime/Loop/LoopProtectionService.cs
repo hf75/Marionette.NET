@@ -34,11 +34,27 @@ public sealed class LoopProtectionService
     public const int DefaultMaxDepth = 5;
 
     /// <summary>
-    /// Decay window. If no hop activity is observed within this window, the
-    /// counter resets to zero so unrelated future calls don't carry over a
-    /// stale chain.
+    /// Default decay window seconds. If no hop activity is observed within
+    /// this window, the counter resets to zero so unrelated future calls
+    /// don't carry over a stale chain. Adopters override via the
+    /// <c>MARIONETTE_DECAY_SECONDS</c> environment variable (CI / tests use
+    /// this to avoid 30-second waits when validating the decay path).
     /// </summary>
-    public static readonly TimeSpan DecayWindow = TimeSpan.FromSeconds(30);
+    public const int DefaultDecaySeconds = 30;
+
+    /// <summary>
+    /// Decay window. Defaults to <see cref="DefaultDecaySeconds"/> seconds;
+    /// the parameterless ctor reads <c>MARIONETTE_DECAY_SECONDS</c>.
+    /// </summary>
+    public static readonly TimeSpan DefaultDecayWindow = TimeSpan.FromSeconds(DefaultDecaySeconds);
+
+    /// <summary>
+    /// Legacy alias kept for code that read the static. Same value as
+    /// <see cref="DefaultDecayWindow"/>; prefer the per-instance
+    /// <see cref="DecayWindow"/> property which honours the env override.
+    /// </summary>
+    [Obsolete("Prefer the instance DecayWindow property which honours MARIONETTE_DECAY_SECONDS.")]
+    public static readonly TimeSpan DecayWindowDefault = DefaultDecayWindow;
 
     private readonly object _gate = new();
     private int _hops;
@@ -50,19 +66,38 @@ public sealed class LoopProtectionService
     /// </summary>
     public int MaxDepth { get; }
 
+    /// <summary>
+    /// The configured decay window. Read at construction from
+    /// <c>MARIONETTE_DECAY_SECONDS</c> or defaulted to
+    /// <see cref="DefaultDecaySeconds"/>.
+    /// </summary>
+    public TimeSpan DecayWindow { get; }
+
     public LoopProtectionService()
-        : this(ResolveMaxDepthFromEnvironment())
+        : this(ResolveMaxDepthFromEnvironment(), ResolveDecayWindowFromEnvironment())
     {
     }
 
     /// <summary>
     /// Construct with an explicit depth (used by tests; production code uses
-    /// the parameterless ctor that reads the env var).
+    /// the parameterless ctor that reads the env var). Decay window is read
+    /// from the environment.
     /// </summary>
     public LoopProtectionService(int maxDepth)
+        : this(maxDepth, ResolveDecayWindowFromEnvironment())
+    {
+    }
+
+    /// <summary>
+    /// Construct with explicit depth + decay window (used by tests that need
+    /// to bypass the env vars entirely).
+    /// </summary>
+    public LoopProtectionService(int maxDepth, TimeSpan decayWindow)
     {
         if (maxDepth < 1) throw new ArgumentOutOfRangeException(nameof(maxDepth), "Must be >= 1.");
+        if (decayWindow <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(decayWindow), "Must be > 0.");
         MaxDepth = maxDepth;
+        DecayWindow = decayWindow;
     }
 
     /// <summary>
@@ -152,6 +187,19 @@ public sealed class LoopProtectionService
             return parsed;
         }
         return DefaultMaxDepth;
+    }
+
+    private static TimeSpan ResolveDecayWindowFromEnvironment()
+    {
+        var raw = Environment.GetEnvironmentVariable("MARIONETTE_DECAY_SECONDS");
+        if (!string.IsNullOrEmpty(raw) &&
+            double.TryParse(raw, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed) &&
+            parsed > 0)
+        {
+            return TimeSpan.FromSeconds(parsed);
+        }
+        return DefaultDecayWindow;
     }
 }
 

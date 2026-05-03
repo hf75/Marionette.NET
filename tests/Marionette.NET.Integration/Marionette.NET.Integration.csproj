@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Marionette.Integration</RootNamespace>
+    <AssemblyName>Marionette.NET.Integration</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <!--
+      Phase 1.5: End-to-End Eval Cases per MASTERPLAN Phase 1 deliverable.
+
+      Each [Fact] spawns a fresh Sample.Wpf.TodoApp.exe child in headless MCP
+      mode and drives it through stdio JSON-RPC. The fixture lifecycle
+      ensures no orphan processes survive a test failure.
+
+      We deliberately do NOT reference the runtime, source generator, or
+      sample projects directly. Tests must exercise the full external
+      contract, not internal APIs. The TodoApp exe path is resolved
+      relative to this project at runtime.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="xunit.runner.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!--
+    Build dependency on the TodoApp sample. We do NOT use a regular
+    ProjectReference because:
+      1. ProjectReference on a WinExe pulls assembly outputs into our
+         net10.0 test project, which fails because the TodoApp targets
+         net10.0-windows.
+      2. We need the TodoApp built with EnableMcpAutomation=true; a plain
+         reference inherits the test project's properties (Configuration,
+         Platform) which leaves EnableMcpAutomation unset and falls back
+         to the props-file default which evaluates to "Debug=='Debug'"
+         (a string literal, not a boolean) and ends up disabled.
+
+    Instead we register a BeforeBuild target that calls dotnet build on
+    the sample with the right property set explicitly. dotnet test still
+    builds our own assembly via the normal pipeline; this target just
+    ensures the spawned TodoApp exists and is MCP-enabled.
+  -->
+  <Target Name="BuildTodoAppForIntegrationTests" BeforeTargets="Build">
+    <Message Text="Building Sample.Wpf.TodoApp with EnableMcpAutomation=true (required by integration tests)." Importance="high" />
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\..\samples\Sample.Wpf.TodoApp\Sample.Wpf.TodoApp.csproj&quot; -c $(Configuration) -p:EnableMcpAutomation=true --nologo -v:quiet" />
+  </Target>
+
+</Project>

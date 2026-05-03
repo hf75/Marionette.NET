@@ -291,7 +291,8 @@ public static class MarionetteHost
         sb.AppendLine("  --mcp-help         print this manifest summary to stderr and exit");
         sb.AppendLine();
         sb.AppendLine("Environment:");
-        sb.AppendLine("  MARIONETTE_MAX_DEPTH  override the loop-protection depth (default 5)");
+        sb.AppendLine("  MARIONETTE_MAX_DEPTH       override the loop-protection depth (default 5)");
+        sb.AppendLine("  MARIONETTE_DECAY_SECONDS   override the loop-protection decay window seconds (default 30)");
 
         Console.Error.Write(sb.ToString());
     }
