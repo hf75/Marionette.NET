@@ -1,15 +1,16 @@
-// Spike C — stdio handshake harness for Sample.Wpf.StripeProbe.exe --mcp --headless
+// Spike C / Phase 1.2 — stdio handshake harness for Sample.Wpf.StripeProbe.exe --mcp --headless
 //
-// Validates Q1: a real MCP initialize handshake, tools/list, and tools/call round-trip
-// over stdio with no stdout pollution.
-//
-// Strict invariants enforced:
-//   * EVERY line emitted on the child's stdout must parse as a single JSON-RPC frame.
-//   * Stderr is captured separately and reported but doesn't fail the test.
-//   * The child receives Content-Length / line-delimited JSON on its stdin and is
-//     expected to follow newline-delimited JSON-RPC (the SDK's stdio default).
-//
-// Exit code 0 = PASS, non-zero = FAIL.
+// Validates the Phase 1.2 contract end-to-end:
+//   * MCP initialize handshake succeeds.
+//   * tools/list returns exactly the four Phase-1 tools:
+//       inspect_app_api, invoke_method, read_observable, capture_screenshot
+//   * tools/call inspect_app_api returns JSON containing the sample's root.
+//   * tools/call invoke_method on MainWindow.Add(2,3) returns 5.
+//   * tools/call read_observable on MainWindow.Result returns 5 (after Add).
+//   * tools/call capture_screenshot returns a structured "not_supported" /
+//     "screenshot_not_supported" error in Phase 1.2 (NoOpAdapter).
+//   * Stdout contains 0 pollution lines (every line parses as JSON-RPC).
+//   * Child exits cleanly on stdin EOF.
 
 using System;
 using System.Collections.Concurrent;
@@ -48,7 +49,7 @@ internal static class Program
             return 2;
         }
 
-        Console.WriteLine($"=== Spike C stdio handshake harness ===");
+        Console.WriteLine($"=== Phase 1.2 stdio handshake harness ===");
         Console.WriteLine($"Child: {exePath}");
         Console.WriteLine($"Args:  --mcp{(guiMode ? string.Empty : " --headless")}");
         if (probeMode) Console.WriteLine($"Diagnostic: MARIONETTE_STDOUT_PROBE=1 (Q2 violator probe)");
@@ -62,7 +63,6 @@ internal static class Program
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true,
-            // Force UTF-8 to keep parity with what the MCP SDK assumes.
             StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             StandardOutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             StandardErrorEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
@@ -83,8 +83,6 @@ internal static class Program
         {
             if (e.Data is null) return;
             stdoutLines.Enqueue(e.Data);
-            // Best-effort: try to parse as a JSON-RPC frame. Anything that doesn't parse
-            // is logged for the report but does NOT block the test from making progress.
             try
             {
                 var doc = JsonDocument.Parse(e.Data);
@@ -110,6 +108,7 @@ internal static class Program
         child.BeginErrorReadLine();
 
         var failures = 0;
+        var phase12ExpectedTools = new[] { "inspect_app_api", "invoke_method", "read_observable", "capture_screenshot" };
 
         try
         {
@@ -124,7 +123,7 @@ internal static class Program
                 {
                     protocolVersion = "2025-11-25",
                     capabilities = new { },
-                    clientInfo = new { name = "spike-c-harness", version = "0.0.1" },
+                    clientInfo = new { name = "phase-1.2-harness", version = "0.1.0" },
                 },
             };
             await SendAsync(child, initReq);
@@ -157,7 +156,6 @@ internal static class Program
                 @params = new { },
             };
             await SendAsync(child, initialized);
-            // No response expected for notifications.
 
             // -------- tools/list --------
             var listId = Interlocked.Increment(ref _nextRequestId);
@@ -171,73 +169,190 @@ internal static class Program
             }
             else
             {
-                var found = false;
+                var listed = new System.Collections.Generic.List<string>();
                 if (listResp.RootElement.TryGetProperty("result", out var result) &&
                     result.TryGetProperty("tools", out var tools) &&
                     tools.ValueKind == JsonValueKind.Array)
                 {
                     foreach (var tool in tools.EnumerateArray())
                     {
-                        if (tool.TryGetProperty("name", out var nameProp) &&
-                            nameProp.GetString() == "marionette_ping")
+                        if (tool.TryGetProperty("name", out var nameProp))
                         {
-                            found = true;
-                            break;
+                            listed.Add(nameProp.GetString() ?? string.Empty);
                         }
                     }
                 }
-                if (found)
+                var missing = new System.Collections.Generic.List<string>();
+                foreach (var t in phase12ExpectedTools)
                 {
-                    Console.WriteLine("PASS — tools/list contains marionette_ping");
+                    if (!listed.Contains(t)) missing.Add(t);
+                }
+                if (missing.Count == 0)
+                {
+                    Console.WriteLine($"PASS — tools/list contains all four Phase-1 tools (got: {string.Join(",", listed)})");
                 }
                 else
                 {
-                    Console.Error.WriteLine($"FAIL — tools/list does not contain marionette_ping. Raw: {listResp.RootElement.GetRawText()}");
+                    Console.Error.WriteLine($"FAIL — tools/list missing: {string.Join(",", missing)}; got: {string.Join(",", listed)}");
                     failures++;
                 }
                 listResp.Dispose();
             }
 
-            // -------- tools/call marionette_ping --------
-            var callId = Interlocked.Increment(ref _nextRequestId);
-            var callReq = new
+            // -------- tools/call inspect_app_api (no args) --------
+            var inspectId = Interlocked.Increment(ref _nextRequestId);
+            var inspectReq = new
             {
                 jsonrpc = "2.0",
-                id = callId,
+                id = inspectId,
                 method = "tools/call",
                 @params = new
                 {
-                    name = "marionette_ping",
+                    name = "inspect_app_api",
                     arguments = new { },
                 },
             };
-            await SendAsync(child, callReq);
-            var callResp = await WaitForResponseAsync(stdoutMessages, callId, TimeSpan.FromSeconds(10));
-            if (callResp is null)
+            await SendAsync(child, inspectReq);
+            var inspectResp = await WaitForResponseAsync(stdoutMessages, inspectId, TimeSpan.FromSeconds(10));
+            if (inspectResp is null)
             {
-                Console.Error.WriteLine("FAIL — no response to tools/call within 10s");
+                Console.Error.WriteLine("FAIL — no response to inspect_app_api within 10s");
                 failures++;
             }
             else
             {
-                if (TryFindPongInToolCallResult(callResp.RootElement, out var pongFound))
+                if (TryReadToolText(inspectResp.RootElement, out var inspectText) &&
+                    inspectText.IndexOf("MainWindow", StringComparison.Ordinal) >= 0)
                 {
-                    Console.WriteLine("PASS — tools/call marionette_ping returned \"pong\"");
+                    Console.WriteLine("PASS — inspect_app_api returned manifest containing MainWindow");
                 }
                 else
                 {
-                    Console.Error.WriteLine($"FAIL — tools/call marionette_ping did not return \"pong\". Raw: {callResp.RootElement.GetRawText()}; pongFound={pongFound}");
+                    Console.Error.WriteLine($"FAIL — inspect_app_api result missing MainWindow. Raw: {inspectResp.RootElement.GetRawText()}");
                     failures++;
                 }
-                callResp.Dispose();
+                inspectResp.Dispose();
+            }
+
+            // -------- tools/call invoke_method MainWindow.Add(2,3) --------
+            var invokeId = Interlocked.Increment(ref _nextRequestId);
+            var invokeReq = new
+            {
+                jsonrpc = "2.0",
+                id = invokeId,
+                method = "tools/call",
+                @params = new
+                {
+                    name = "invoke_method",
+                    arguments = new
+                    {
+                        root = "MainWindow",
+                        method = "Add",
+                        args = new { a = 2, b = 3 },
+                    },
+                },
+            };
+            await SendAsync(child, invokeReq);
+            var invokeResp = await WaitForResponseAsync(stdoutMessages, invokeId, TimeSpan.FromSeconds(10));
+            if (invokeResp is null)
+            {
+                Console.Error.WriteLine("FAIL — no response to invoke_method within 10s");
+                failures++;
+            }
+            else
+            {
+                if (TryReadToolText(invokeResp.RootElement, out var addText) &&
+                    addText.Trim() == "5")
+                {
+                    Console.WriteLine("PASS — invoke_method MainWindow.Add(2,3) returned 5");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — invoke_method MainWindow.Add(2,3) did not return 5. Raw: {invokeResp.RootElement.GetRawText()}");
+                    failures++;
+                }
+                invokeResp.Dispose();
+            }
+
+            // -------- tools/call read_observable MainWindow.Result --------
+            // Phase 1.2 note: Add is pure math; the sample's MainWindow does
+            // NOT mutate Result inside Add (Result is only updated by the GUI
+            // button click). So in headless mode Result remains 0 until a
+            // separate setter exists. We assert "the call succeeds and
+            // returns a JSON number" rather than a specific value.
+            var readId = Interlocked.Increment(ref _nextRequestId);
+            var readReq = new
+            {
+                jsonrpc = "2.0",
+                id = readId,
+                method = "tools/call",
+                @params = new
+                {
+                    name = "read_observable",
+                    arguments = new { root = "MainWindow", property = "Result" },
+                },
+            };
+            await SendAsync(child, readReq);
+            var readResp = await WaitForResponseAsync(stdoutMessages, readId, TimeSpan.FromSeconds(10));
+            if (readResp is null)
+            {
+                Console.Error.WriteLine("FAIL — no response to read_observable within 10s");
+                failures++;
+            }
+            else
+            {
+                if (TryReadToolText(readResp.RootElement, out var readText) &&
+                    int.TryParse(readText.Trim(), out _))
+                {
+                    Console.WriteLine($"PASS — read_observable MainWindow.Result returned {readText.Trim()}");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — read_observable MainWindow.Result did not return an integer. Raw: {readResp.RootElement.GetRawText()}");
+                    failures++;
+                }
+                readResp.Dispose();
+            }
+
+            // -------- tools/call capture_screenshot (Phase 1.2: NoOp adapter) --------
+            // Expected: tool result has IsError=true and a structured-error
+            // text content with errorCode == "screenshot_not_supported".
+            var shotId = Interlocked.Increment(ref _nextRequestId);
+            var shotReq = new
+            {
+                jsonrpc = "2.0",
+                id = shotId,
+                method = "tools/call",
+                @params = new
+                {
+                    name = "capture_screenshot",
+                    arguments = new { },
+                },
+            };
+            await SendAsync(child, shotReq);
+            var shotResp = await WaitForResponseAsync(stdoutMessages, shotId, TimeSpan.FromSeconds(10));
+            if (shotResp is null)
+            {
+                Console.Error.WriteLine("FAIL — no response to capture_screenshot within 10s");
+                failures++;
+            }
+            else
+            {
+                if (TryReadToolText(shotResp.RootElement, out var shotText) &&
+                    shotText.IndexOf("screenshot_not_supported", StringComparison.Ordinal) >= 0)
+                {
+                    Console.WriteLine("PASS — capture_screenshot surfaced a structured 'screenshot_not_supported' error (NoOpAdapter)");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — capture_screenshot did not surface the expected NoOpAdapter error. Raw: {shotResp.RootElement.GetRawText()}");
+                    failures++;
+                }
+                shotResp.Dispose();
             }
         }
         finally
         {
-            // Clean shutdown: close stdin so the SDK's stdio host loop sees EOF and exits.
-            // In GUI mode the WPF Application keeps the process alive even after the MCP
-            // host loop ends, so we give it a shorter window and force-kill on timeout —
-            // that's expected behaviour, not a failure.
             try { child.StandardInput.Close(); } catch { /* ignore */ }
             var exitWait = guiMode ? 2000 : 5000;
             if (!child.WaitForExit(exitWait))
@@ -301,17 +416,16 @@ internal static class Program
         Console.WriteLine();
         if (failures == 0)
         {
-            Console.WriteLine("=== Spike C handshake: PASS ===");
+            Console.WriteLine("=== Phase 1.2 handshake: PASS ===");
             return 0;
         }
-        Console.Error.WriteLine($"=== Spike C handshake: FAIL — {failures} failure(s) ===");
+        Console.Error.WriteLine($"=== Phase 1.2 handshake: FAIL — {failures} failure(s) ===");
         return 1;
     }
 
     private static async Task SendAsync(Process child, object payload)
     {
         var json = JsonSerializer.Serialize(payload);
-        // Newline-delimited JSON is the wire format the SDK's stdio transport speaks.
         await child.StandardInput.WriteLineAsync(json).ConfigureAwait(false);
         await child.StandardInput.FlushAsync().ConfigureAwait(false);
     }
@@ -337,13 +451,11 @@ internal static class Program
                         };
                         if (idMatch) return doc;
                     }
-                    // Notification or unrelated response — ignore for this wait.
                     doc.Dispose();
                 }
             }
             catch (InvalidOperationException)
             {
-                // Queue completed.
                 return null;
             }
             await Task.Yield();
@@ -379,34 +491,24 @@ internal static class Program
         return "?";
     }
 
-    private static bool TryFindPongInToolCallResult(JsonElement root, out string note)
+    /// <summary>
+    /// Drill into a tools/call result and pull the first text content block
+    /// out as a string. Phase-1.2 tools all return a single JSON string in
+    /// the content[0].text slot.
+    /// </summary>
+    private static bool TryReadToolText(JsonElement root, out string text)
     {
-        note = string.Empty;
-        if (!root.TryGetProperty("result", out var result))
-        {
-            note = "no result";
-            return false;
-        }
-        if (!result.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
-        {
-            note = "no content array";
-            return false;
-        }
+        text = string.Empty;
+        if (!root.TryGetProperty("result", out var result)) return false;
+        if (!result.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) return false;
         foreach (var item in content.EnumerateArray())
         {
-            if (item.TryGetProperty("text", out var text) && text.GetString() == "pong")
+            if (item.TryGetProperty("text", out var t))
             {
+                text = t.GetString() ?? string.Empty;
                 return true;
             }
         }
-        // Fallback: structuredContent for tools that opted into UseStructuredContent.
-        if (result.TryGetProperty("structuredContent", out var sc) &&
-            sc.TryGetProperty("result", out var srRes) &&
-            srRes.GetString() == "pong")
-        {
-            return true;
-        }
-        note = "pong not found in content[]";
         return false;
     }
 

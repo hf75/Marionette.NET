@@ -36,6 +36,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using Marionette.SourceGenerator.Model;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Marionette.SourceGenerator;
@@ -67,15 +68,29 @@ public sealed class ManifestGenerator : IIncrementalGenerator
         var assemblyName = context.CompilationProvider
             .Select(static (c, _) => c.AssemblyName ?? "Unknown");
 
+        // ----- Source D: MCP_ENABLED gate -----
+        // Phase 1.2 requirement: when the user csproj does not define
+        // MCP_ENABLED (i.e. EnableMcpAutomation=false in build/Marionette.NET.targets),
+        // the generator emits NOTHING. This keeps stripped Release builds at
+        // zero generator output and preserves the IL-stripping promise from
+        // Phase 0 Spike A. Diagnostics still flow because they are useful in
+        // any configuration; only the .g.cs source emission is gated.
+        var mcpEnabled = context.ParseOptionsProvider
+            .Select(static (po, _) =>
+                po is CSharpParseOptions csOpts &&
+                csOpts.PreprocessorSymbolNames.Contains("MCP_ENABLED"));
+
         // ----- Combine into a single ManifestModel -----
         var combined = rootCandidates.Collect()
             .Combine(orphanCallables.Collect())
             .Combine(assemblyName)
+            .Combine(mcpEnabled)
             .Select(static (tuple, _) =>
             {
-                var rootsAndDiags = tuple.Left.Left;
-                var orphans = tuple.Left.Right;
-                var asmName = tuple.Right;
+                var rootsAndDiags = tuple.Left.Left.Left;
+                var orphans = tuple.Left.Left.Right;
+                var asmName = tuple.Left.Right;
+                var mcpOn = tuple.Right;
 
                 var diags = ImmutableArray.CreateBuilder<DiagnosticInfo>();
                 var roots = ImmutableArray.CreateBuilder<RootModel>();
@@ -90,25 +105,37 @@ public sealed class ManifestGenerator : IIncrementalGenerator
                     diags.Add(orphan);
                 }
 
-                return new ManifestModel(
-                    AssemblyName: asmName,
-                    Roots: roots.ToImmutable().ToEquatableArray(),
-                    Diagnostics: diags.ToImmutable().ToEquatableArray());
+                return (Model: new ManifestModel(
+                            AssemblyName: asmName,
+                            Roots: roots.ToImmutable().ToEquatableArray(),
+                            Diagnostics: diags.ToImmutable().ToEquatableArray()),
+                        McpEnabled: mcpOn);
             });
 
         // ----- Output -----
-        context.RegisterSourceOutput(combined, static (spc, model) =>
+        context.RegisterSourceOutput(combined, static (spc, tuple) =>
         {
-            // Replay diagnostics on every run so they show in the IDE.
+            var model = tuple.Model;
+            var mcpEnabled = tuple.McpEnabled;
+
+            // Replay diagnostics on every run so they show in the IDE
+            // regardless of MCP_ENABLED — adopters need to see MAR001/002/…
+            // squigglies even when the runtime is stripped out.
             foreach (var d in model.Diagnostics.AsEnumerable())
             {
                 spc.ReportDiagnostic(Validator.ToRoslynDiagnostic(d));
             }
 
-            // Always emit Marionette.g.cs so the runtime's
-            // `Marionette.Generated.GeneratedManifest` symbol is reachable
-            // even when the user assembly has no [McpRoot] yet. The empty
-            // manifest is harmless and avoids a brittle runtime fallback.
+            // Phase 1.2 gate: only emit Marionette.g.cs when the user csproj
+            // has defined MCP_ENABLED (typically via
+            // build/Marionette.NET.targets when EnableMcpAutomation=true). In
+            // stripped builds the runtime is not referenced, the descriptor
+            // types are not reachable, and emitting them here would fail to
+            // compile. Skipping the emission entirely keeps stripped builds
+            // at zero generator output and preserves Phase 0's IL-stripping
+            // promise.
+            if (!mcpEnabled) return;
+
             var src = Emitter.EmitManifest(model);
             spc.AddSource("Marionette.g.cs", src);
         });

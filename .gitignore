@@ -78,3 +78,8 @@ coverage*.info
 .phase0/**/bin/
 .phase0/**/obj/
 .phase0/*.log
+
+# Build/Run-IlProbe.ps1 output (regenerated on every invocation)
+ilprobe.log
+stdio-test.log
+*.binlog

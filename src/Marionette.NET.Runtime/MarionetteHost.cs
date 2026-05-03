@@ -1,112 +1,313 @@
-// Marionette.NET — Runtime host (Spike C wiring)
+// Marionette.NET — Phase 1.2 runtime host
 //
-// Real stdio MCP server bootstrap. The contract is strict: stdout is reserved for
-// JSON-RPC frames and nothing else. All logging, diagnostics, and any other
-// "console output" must go to stderr or be silenced.
+// Replaces the Spike-C stub. The host:
 //
-// To detect violators (so we don't ship a quiet bug into Phase 1) we install a
-// guard TextWriter as Console.Out before the MCP transport is wired up. The
-// transport hands stdout to itself via Console.OpenStandardOutput(), so it is
-// unaffected — every other code path that writes via Console.Write* is caught.
+//   1. Installs StdoutGuardWriter on Console.Out BEFORE any other code
+//      (including the WPF Application ctor) writes a byte. The guard counts
+//      stdout violations and forwards a one-line warning to stderr.
+//   2. Parses CLI flags: --mcp, --mcp --headless, --mcp-help.
+//      In any other case (no --mcp), returns 0 immediately so the caller's
+//      regular GUI bootstrap runs.
+//   3. Builds an empty Application host (CreateEmptyApplicationBuilder, NOT
+//      CreateApplicationBuilder — the latter wires a stdout Console logger
+//      that corrupts JSON-RPC frames).
+//   4. Registers the runtime services:
+//        IUiAutomationAdapter      (caller-supplied or NoOpAdapter)
+//        ManifestRegistry          (built from caller-supplied roots)
+//        LoopProtectionService     (singleton, env-overridable depth)
+//        ChannelEmitter            (installs Marionette.Ai hooks)
+//        WatchableResourceProvider (manages resources/list, /read, /subscribe)
+//   5. Wires the MCP server:
+//        WithStdioServerTransport  (stdout reserved for JSON-RPC)
+//        WithTools<MarionetteTools> (the four Phase-1 tools)
+//        WithListResourcesHandler / WithReadResourceHandler /
+//          WithSubscribeToResourcesHandler / WithUnsubscribeFromResourcesHandler
+//        Capabilities.Resources.Subscribe = true
+//   6. Runs the host until stdin closes.
+//
+// This file is the only Phase-1.2 wiring point — it's intentionally a single
+// composition root. Everything else is plain DI services with explicit
+// dependencies. AOT-clean: no MakeGenericMethod, no reflective tool registration
+// (WithTools<T> is generic-typed), no unguarded reflection.
 
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+
+using Marionette.Runtime.Adapters;
+using Marionette.Runtime.Channel;
+using Marionette.Runtime.Loop;
+using Marionette.Runtime.Manifest;
+using Marionette.Runtime.Resources;
+using Marionette.Runtime.Tools;
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
+
 namespace Marionette.Runtime;
 
 /// <summary>
-/// Marionette.NET runtime entry point. Spike C: minimal but real stdio MCP server
-/// using <c>ModelContextProtocol</c> 1.2.0. Phase 1 will replace the trivial
-/// <see cref="PingTool"/> with the full ManifestRegistry-driven dispatch.
+/// Marionette.NET runtime entry point. Adopters call
+/// <see cref="RunAsync(string[], IReadOnlyList{RootDescriptor}, IUiAutomationAdapter?, CancellationToken)"/>
+/// from their <c>Main</c> after parsing argv; the host does the rest.
 /// </summary>
 public static class MarionetteHost
 {
     /// <summary>
-    /// Run the Marionette stdio MCP server until the client disconnects.
+    /// Entry point used by Marionette-enabled applications.
     /// </summary>
-    /// <param name="args">CLI args, currently unused but kept for forward compat.</param>
-    public static async Task RunAsync(string[] args)
+    /// <param name="args">CLI args from <c>Main</c>. The host inspects <c>--mcp</c>, <c>--headless</c>, and <c>--mcp-help</c>.</param>
+    /// <param name="roots">
+    /// The source-generator-emitted root list, typically
+    /// <c>Marionette.Generated.GeneratedManifest.Roots</c>.
+    /// </param>
+    /// <param name="adapter">
+    /// Optional UI automation adapter. When <see langword="null"/>, the host
+    /// installs a <see cref="NoOpAdapter"/>. The Phase 1.3 WPF adapter will
+    /// be passed in here from the sample's <c>Program.cs</c>.
+    /// </param>
+    /// <param name="ct">Cancellation token bound to the host lifetime.</param>
+    /// <returns>
+    /// <c>0</c> on success or when the call is a no-op (no <c>--mcp</c> flag);
+    /// non-zero on host startup failure.
+    /// </returns>
+    public static async Task<int> RunAsync(
+        string[] args,
+        IReadOnlyList<RootDescriptor> roots,
+        IUiAutomationAdapter? adapter = null,
+        CancellationToken ct = default)
     {
-        _ = args;
+        if (args is null) throw new ArgumentNullException(nameof(args));
+        if (roots is null) throw new ArgumentNullException(nameof(roots));
 
-        // Step 1 — clamp Console.Out *before* anything else has a chance to write.
-        // We retain a private handle on the real stdout so the MCP transport can
-        // still drive JSON-RPC frames via Console.OpenStandardOutput(); see
-        // https://github.com/modelcontextprotocol/csharp-sdk for the contract.
+        // ---- Parse CLI ---------------------------------------------------
+        var (wantsMcp, wantsHelp, _) = ParseFlags(args);
+
+        if (!wantsMcp && !wantsHelp)
+        {
+            // Caller's GUI / non-MCP path is what runs; we have nothing to do.
+            return 0;
+        }
+
+        if (wantsHelp)
+        {
+            WriteHelpToStderr(roots);
+            return 0;
+        }
+
+        // ---- Stdout guard (BEFORE any further code emits a byte) ---------
+        // A real stdout handle is grabbed for the SDK's transport via
+        // Console.OpenStandardOutput() inside WithStdioServerTransport — that
+        // call bypasses our SetOut hook (which is exactly what we want).
         var realStdoutForTransport = Console.OpenStandardOutput();
         var stdoutGuard = new StdoutGuardWriter(Console.Error);
         Console.SetOut(stdoutGuard);
 
-        // Step 2 — empty application builder. CreateApplicationBuilder would
-        // register the default Console logging provider (which writes to stdout)
-        // and would surface as garbage in the JSON-RPC stream. The empty
-        // variant gives us a blank slate.
+        // ---- Build host --------------------------------------------------
         var builder = Host.CreateEmptyApplicationBuilder(settings: null);
 
-        // Step 3 — logging to stderr ONLY. Any provider that writes to stdout
-        // would corrupt the protocol. We register a tiny custom logger that
-        // unconditionally writes to Console.Error, plus a high-enough default
-        // filter so noisy framework messages don't spam the channel.
         builder.Logging.AddProvider(new StderrLoggerProvider());
         builder.Logging.SetMinimumLevel(LogLevel.Warning);
-        // The MCP SDK logs at Information for protocol traces; let it through if a user wants it.
         builder.Logging.AddFilter("ModelContextProtocol", LogLevel.Information);
         builder.Logging.AddFilter("Marionette", LogLevel.Information);
 
-        // Step 4 — wire the MCP server. WithStdioServerTransport reserves stdout
-        // for JSON-RPC. WithTools<PingTool> is the explicit-registration API we
-        // chose over WithToolsFromAssembly (Spike B noted the latter is reflection-
-        // heavy and not AOT-clean; the generic-typed call lets the compiler track
-        // the type and is the canonical path for our SourceGen integration later).
-        builder.Services
+        // Adapter — caller-supplied or no-op fallback.
+        var effectiveAdapter = adapter ?? new NoOpAdapter();
+        builder.Services.AddSingleton(effectiveAdapter);
+
+        // Manifest registry — single source of truth for descriptor metadata
+        // and live root instances.
+        var registry = new ManifestRegistry(roots);
+        builder.Services.AddSingleton(registry);
+
+        // Loop-protection: env-overridable, picked up at construction.
+        builder.Services.AddSingleton<LoopProtectionService>();
+
+        // Channel emitter (Ai.Trigger / Ai.ScheduleTrigger → notifications).
+        builder.Services.AddSingleton<ChannelEmitter>();
+
+        // Watchable resources.
+        builder.Services.AddSingleton<WatchableResourceProvider>();
+
+        // ---- MCP server wiring ------------------------------------------
+        var mcpBuilder = builder.Services
             .AddMcpServer(opts =>
             {
                 opts.ServerInfo = new ModelContextProtocol.Protocol.Implementation
                 {
                     Name = "Marionette.NET",
-                    Version = "0.0.1-spike-c",
+                    Version = ThisAssemblyVersion(),
                 };
+
+                // Advertise resource subscription capability so Claude knows
+                // it can call resources/subscribe and expect updated pushes.
+                opts.Capabilities ??= new ServerCapabilities();
+                opts.Capabilities.Resources ??= new ResourcesCapability();
+                opts.Capabilities.Resources.Subscribe = true;
             })
             .WithStdioServerTransport()
-            .WithTools<PingTool>();
+            // Generic-typed tool registration is the AOT-friendly path
+            // (PHASE0_FINDINGS implication 6 + Spike B). The four Phase-1 tools
+            // live as static methods on MarionetteTools.
+            .WithTools<MarionetteTools>()
+            // Resource handlers — each forwards into WatchableResourceProvider.
+            .WithListResourcesHandler(static async (ctx, ct) =>
+            {
+                var provider = ctx.Services!.GetRequiredService<WatchableResourceProvider>();
+                return await Task.FromResult(provider.List());
+            })
+            .WithReadResourceHandler(static async (ctx, ct) =>
+            {
+                var provider = ctx.Services!.GetRequiredService<WatchableResourceProvider>();
+                var uri = ctx.Params?.Uri ?? string.Empty;
+                return await provider.ReadAsync(uri, ct).ConfigureAwait(false);
+            })
+            .WithSubscribeToResourcesHandler(static async (ctx, ct) =>
+            {
+                var provider = ctx.Services!.GetRequiredService<WatchableResourceProvider>();
+                var uri = ctx.Params?.Uri ?? string.Empty;
+                provider.Subscribe(uri);
+                return await Task.FromResult(new EmptyResult());
+            })
+            .WithUnsubscribeFromResourcesHandler(static async (ctx, ct) =>
+            {
+                var provider = ctx.Services!.GetRequiredService<WatchableResourceProvider>();
+                var uri = ctx.Params?.Uri ?? string.Empty;
+                provider.Unsubscribe(uri);
+                return await Task.FromResult(new EmptyResult());
+            });
 
-        // Hand a logger to the guard so it can self-report violations once
-        // logging is up, instead of fire-and-forget Console.Error.WriteLine.
+        _ = mcpBuilder; // builder mutates services; the variable suppresses CS0219 if MCP API changes.
+
+        // ---- Build, attach, run -----------------------------------------
         var host = builder.Build();
-        stdoutGuard.AttachLogger(host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Marionette.StdoutGuard"));
+        var sp = host.Services;
+
+        // Surface diagnostics for any root whose factory threw at startup.
+        var startupLogger = sp.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("Marionette.Runtime.MarionetteHost");
+        foreach (var r in registry.Roots)
+        {
+            if (r.Instance is null && r.CreateError is not null)
+            {
+                startupLogger.LogWarning(
+                    "Root '{Root}' factory threw at startup: {Error}. The runtime will surface a structured " +
+                    "error when this root is referenced via invoke_method or read_observable.",
+                    r.Descriptor.Name, r.CreateError);
+            }
+        }
+
+        // Bind ChannelEmitter + ResourceProvider to the live MCP server. The
+        // McpServer instance is registered by AddMcpServer — we pull it via DI.
+        var server = sp.GetRequiredService<McpServer>();
+        sp.GetRequiredService<ChannelEmitter>().Bind(server);
+        sp.GetRequiredService<WatchableResourceProvider>().Bind(server);
+
+        stdoutGuard.AttachLogger(startupLogger);
 
         try
         {
-            await host.RunAsync().ConfigureAwait(false);
+            await host.RunAsync(ct).ConfigureAwait(false);
         }
         finally
         {
-            // If anything wrote to the guard during the run, surface a final
-            // count to stderr so the report has a number to point at.
+            // Best-effort hook teardown.
+            try { await sp.GetRequiredService<ChannelEmitter>().DisposeAsync().ConfigureAwait(false); }
+            catch { /* ignore — shutdown path */ }
+            try { await sp.GetRequiredService<WatchableResourceProvider>().DisposeAsync().ConfigureAwait(false); }
+            catch { /* ignore — shutdown path */ }
+
             var leaked = stdoutGuard.LeakedByteCount;
             if (leaked > 0)
             {
-                Console.Error.WriteLine($"[marionette] STDOUT GUARD: caught {leaked} bytes of would-be stdout pollution during the run.");
+                Console.Error.WriteLine(
+                    $"[marionette] STDOUT GUARD: caught {leaked} bytes of would-be stdout pollution during the run.");
             }
-            // The guard does not own realStdoutForTransport; nothing to dispose here.
             _ = realStdoutForTransport;
         }
+
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // CLI parsing + help
+    // -------------------------------------------------------------------------
+
+    private static (bool wantsMcp, bool wantsHelp, bool wantsHeadless) ParseFlags(string[] args)
+    {
+        bool mcp = false, help = false, headless = false;
+        foreach (var a in args)
+        {
+            if (string.Equals(a, "--mcp", StringComparison.Ordinal)) mcp = true;
+            else if (string.Equals(a, "--mcp-help", StringComparison.Ordinal)) help = true;
+            else if (string.Equals(a, "--headless", StringComparison.Ordinal)) headless = true;
+        }
+        return (mcp, help, headless);
+    }
+
+    private static void WriteHelpToStderr(IReadOnlyList<RootDescriptor> roots)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("Marionette.NET — manifest");
+        sb.AppendLine("=========================");
+        sb.AppendLine("This .exe ships with the following [McpRoot]-decorated entrypoints:");
+        sb.AppendLine();
+        if (roots.Count == 0)
+        {
+            sb.AppendLine("(no roots — the host will start but expose only the four meta-tools)");
+        }
+        foreach (var r in roots)
+        {
+            sb.AppendLine($"  root: {r.Name}  ({r.TypeName})");
+            foreach (var c in r.Callables)
+            {
+                var ps = string.Join(", ",
+                    c.Parameters.Select(p => $"{p.ClrTypeName} {p.Name}{(p.IsRequired ? string.Empty : "?")}"));
+                sb.AppendLine($"    invoke   {r.Name}.{c.Name}({ps})  — {c.Description}");
+            }
+            foreach (var o in r.Observables)
+            {
+                var w = o.Watchable ? "watchable" : "read-only";
+                sb.AppendLine($"    observe  {r.Name}.{o.Name}: {o.ClrTypeName}  ({w})  — {o.Description}");
+            }
+            foreach (var t in r.Triggerables)
+            {
+                sb.AppendLine($"    trigger  {r.Name}.{t.Name}: {t.ControlTypeName}  ({t.Strategy})  — {t.Description}");
+            }
+            sb.AppendLine();
+        }
+        sb.AppendLine("CLI flags:");
+        sb.AppendLine("  --mcp              run as a stdio MCP server alongside the GUI (Phase 1.2)");
+        sb.AppendLine("  --mcp --headless   run as a stdio MCP server with no GUI (Frozen-Mode style)");
+        sb.AppendLine("  --mcp-help         print this manifest summary to stderr and exit");
+        sb.AppendLine();
+        sb.AppendLine("Environment:");
+        sb.AppendLine("  MARIONETTE_MAX_DEPTH  override the loop-protection depth (default 5)");
+
+        Console.Error.Write(sb.ToString());
+    }
+
+    private static string ThisAssemblyVersion()
+    {
+        var asm = typeof(MarionetteHost).Assembly;
+        var ver = asm.GetName().Version;
+        return ver?.ToString(3) ?? "0.0.1";
     }
 }
 
 /// <summary>
-/// A <see cref="TextWriter"/> that swallows any writes intended for stdout, counts
-/// them, and forwards a one-line warning to stderr (or a logger once one is
-/// available). Used as the diagnostic guard during Spike C — Phase 1 will drop
-/// the byte counter once the source-gen analyzer rejects offending call sites
-/// at compile time.
+/// A <see cref="TextWriter"/> that swallows any writes intended for stdout,
+/// counts them, and forwards a one-line warning to stderr (or a logger once
+/// one is available). Permanent fixture per PHASE0_FINDINGS implication 6.
 /// </summary>
 internal sealed class StdoutGuardWriter : TextWriter
 {
@@ -157,8 +358,6 @@ internal sealed class StdoutGuardWriter : TextWriter
 
     private void Warn(string what)
     {
-        // First violation: log it loudly. Subsequent violations: stay quiet so
-        // we don't drown the stderr channel.
         if (Interlocked.Exchange(ref _warned, 1) == 0)
         {
             var msg = $"[marionette] STDOUT GUARD: caught a write to Console.Out (\"{Truncate(what, 80)}\"). " +
@@ -181,8 +380,9 @@ internal sealed class StdoutGuardWriter : TextWriter
 
 /// <summary>
 /// Tiny <see cref="ILoggerProvider"/> that forwards every log entry to
-/// <see cref="Console.Error"/>. We do not register the default Console provider
-/// (which writes to stdout) — that would be fatal for a stdio MCP server.
+/// <see cref="Console.Error"/>. We do not register the default Console
+/// provider (which writes to stdout) — that would be fatal for a stdio MCP
+/// server.
 /// </summary>
 internal sealed class StderrLoggerProvider : ILoggerProvider
 {

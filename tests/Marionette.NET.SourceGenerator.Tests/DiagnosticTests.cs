@@ -145,4 +145,44 @@ public class DiagnosticTests
         Assert.False(result.HasCompilationErrors,
             string.Join("\n", result.CompilationDiagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => $"{d.Id}: {d.GetMessage()}")));
     }
+
+    // -------------------------------------------------------------------------
+    // Phase 1.2 gating: MCP_ENABLED off → no source emitted, but diagnostics
+    // still flow so squigglies still appear in the IDE.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void McpDisabled_EmitsNoSource_ButReplaysDiagnostics()
+    {
+        var source = """
+            using Marionette;
+            namespace Demo;
+
+            [McpRoot]
+            public class GoodRoot
+            {
+                [McpCallable("Adds")]
+                public int Add(int a, int b) => a + b;
+
+                [McpObservable("Last")]
+                public int Last { get; private set; }
+            }
+
+            [McpRoot]
+            public static class StaticRoot
+            {
+                public static int X(int a) => a;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, mcpEnabled: false);
+
+        // No Marionette.g.cs was emitted (the generated text is empty).
+        Assert.Equal(string.Empty, result.GeneratedText);
+
+        // But MAR001 (static root) still surfaces as a Roslyn diagnostic so
+        // adopters get the squiggly even in stripped builds.
+        Assert.Contains(result.GeneratorDiagnostics,
+            d => d.Id == "MAR001" && d.Severity == DiagnosticSeverity.Error);
+    }
 }

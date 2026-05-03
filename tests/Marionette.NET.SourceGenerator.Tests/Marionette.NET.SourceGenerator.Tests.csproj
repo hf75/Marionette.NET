@@ -32,6 +32,14 @@
       so the compilation needs them on its reference list.
     -->
     <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />
+    <!--
+      Phase 1.2: the source generator references Marionette.Runtime.Manifest
+      descriptor types from Runtime by `using` directive. Test compilations
+      of generator output therefore need Runtime on the reference list to
+      resolve those types. This is a TEST-ONLY reference; the generator
+      itself never references Runtime (it stays a netstandard2.0 analyzer).
+    -->
+    <ProjectReference Include="..\..\src\Marionette.NET.Runtime\Marionette.NET.Runtime.csproj" />
   </ItemGroup>
 
   <!--

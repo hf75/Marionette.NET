@@ -7,6 +7,8 @@
 // tools and resources without runtime reflection over user assemblies.
 #nullable enable
 
+using Marionette.Runtime.Manifest;
+
 namespace Marionette.Generated;
 
 /// <summary>
@@ -114,53 +116,3 @@ public static class GeneratedManifest
         ),
     };
 }
-
-/// <summary>
-/// Describes a single [McpRoot]-decorated class.
-/// </summary>
-public sealed record RootDescriptor(
-    string Name,
-    string TypeName,
-    global::System.Func<object>? Create,
-    global::System.Collections.Generic.IReadOnlyList<CallableDescriptor> Callables,
-    global::System.Collections.Generic.IReadOnlyList<ObservableDescriptor> Observables,
-    global::System.Collections.Generic.IReadOnlyList<TriggerableDescriptor> Triggerables);
-
-/// <summary>
-/// Describes a single [McpCallable] method. <see cref="Invoke"/> is a
-/// strongly-typed dispatcher emitted by the source generator (no reflection).
-/// For void methods it returns null; for Task / Task&lt;T&gt; methods it returns the
-/// task instance and the runtime awaits it.
-/// </summary>
-public sealed record CallableDescriptor(
-    string Name,
-    string Description,
-    bool OffUiThread,
-    int TimeoutSeconds,
-    bool IsAsync,
-    global::System.Collections.Generic.IReadOnlyList<ParamDescriptor> Parameters,
-    global::System.Func<object, global::System.Collections.Generic.IReadOnlyDictionary<string, object?>, object?> Invoke);
-
-/// <summary>One parameter on a CallableDescriptor.</summary>
-public sealed record ParamDescriptor(
-    string Name,
-    string ClrTypeName,
-    bool IsRequired,
-    object? DefaultValue);
-
-/// <summary>Describes a single [McpObservable] property.</summary>
-public sealed record ObservableDescriptor(
-    string Name,
-    string Description,
-    bool Watchable,
-    int PollingIntervalMs,
-    string ClrTypeName,
-    global::System.Func<object, object?> Read);
-
-/// <summary>Describes a single [McpTriggerable] property.</summary>
-public sealed record TriggerableDescriptor(
-    string Name,
-    string Description,
-    global::Marionette.TriggerStrategy Strategy,
-    string ControlTypeName,
-    global::System.Func<object, object?> ResolveControl);

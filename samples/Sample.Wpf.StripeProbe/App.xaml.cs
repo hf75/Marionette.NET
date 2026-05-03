@@ -8,11 +8,10 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-#if MCP_ENABLED
-        // The Adapter reference is only present when MCP_ENABLED is defined,
-        // so this call must be inside an #if block — otherwise the compiler
-        // would need the type even in stripped builds.
-        Marionette.Adapter.Wpf.WpfMarionetteBootstrap.Initialize(this);
-#endif
+        // Phase 1.2: the runtime no longer needs an Application-side bootstrap
+        // call. The host's RunAsync receives the adapter instance directly via
+        // its `adapter:` parameter. Phase 1.3 will pass the WPF adapter through
+        // from Program.cs; for Phase 1.2 the GUI `--mcp` path passes
+        // `adapter: null` (NoOpAdapter fallback).
     }
 }

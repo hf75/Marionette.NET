@@ -44,12 +44,17 @@ internal static class Emitter
         sb.Append(Header);
         sb.AppendLine("#nullable enable");
         sb.AppendLine();
+        // Phase 1.2 ownership change: descriptor record types live in
+        // Marionette.NET.Runtime under `Marionette.Runtime.Manifest`. The
+        // generator references them via `using` instead of emitting per-assembly
+        // copies. See src/Marionette.NET.Runtime/Manifest/Descriptors.cs for the
+        // full rationale.
+        sb.AppendLine("using Marionette.Runtime.Manifest;");
+        sb.AppendLine();
         sb.AppendLine("namespace Marionette.Generated;");
         sb.AppendLine();
 
         EmitGeneratedManifestClass(sb, model);
-        sb.AppendLine();
-        EmitDescriptorTypes(sb);
 
         return sb.ToString();
     }
@@ -357,63 +362,12 @@ internal static class Emitter
     }
 
     // -------------------------------------------------------------------------
-    // Descriptor record types — emitted inline so each user assembly is
-    // self-contained. The runtime's IManifestProvider discovery binds via the
-    // well-known `Marionette.Generated.GeneratedManifest` type name.
+    // Phase 1.2: descriptor record types live in Marionette.NET.Runtime under
+    // the `Marionette.Runtime.Manifest` namespace. The generator no longer
+    // emits them inline; it `using`-imports them at the top of Marionette.g.cs
+    // and references them by short name. See the EmitManifest header comment
+    // and Phase 1.2's manifest-ownership decision in .phase1/1c-runtime.md.
     // -------------------------------------------------------------------------
-
-    private static void EmitDescriptorTypes(StringBuilder sb)
-    {
-        sb.AppendLine("/// <summary>");
-        sb.AppendLine("/// Describes a single [McpRoot]-decorated class.");
-        sb.AppendLine("/// </summary>");
-        sb.AppendLine("public sealed record RootDescriptor(");
-        sb.AppendLine("    string Name,");
-        sb.AppendLine("    string TypeName,");
-        sb.AppendLine("    global::System.Func<object>? Create,");
-        sb.AppendLine("    global::System.Collections.Generic.IReadOnlyList<CallableDescriptor> Callables,");
-        sb.AppendLine("    global::System.Collections.Generic.IReadOnlyList<ObservableDescriptor> Observables,");
-        sb.AppendLine("    global::System.Collections.Generic.IReadOnlyList<TriggerableDescriptor> Triggerables);");
-        sb.AppendLine();
-        sb.AppendLine("/// <summary>");
-        sb.AppendLine("/// Describes a single [McpCallable] method. <see cref=\"Invoke\"/> is a");
-        sb.AppendLine("/// strongly-typed dispatcher emitted by the source generator (no reflection).");
-        sb.AppendLine("/// For void methods it returns null; for Task / Task&lt;T&gt; methods it returns the");
-        sb.AppendLine("/// task instance and the runtime awaits it.");
-        sb.AppendLine("/// </summary>");
-        sb.AppendLine("public sealed record CallableDescriptor(");
-        sb.AppendLine("    string Name,");
-        sb.AppendLine("    string Description,");
-        sb.AppendLine("    bool OffUiThread,");
-        sb.AppendLine("    int TimeoutSeconds,");
-        sb.AppendLine("    bool IsAsync,");
-        sb.AppendLine("    global::System.Collections.Generic.IReadOnlyList<ParamDescriptor> Parameters,");
-        sb.AppendLine("    global::System.Func<object, global::System.Collections.Generic.IReadOnlyDictionary<string, object?>, object?> Invoke);");
-        sb.AppendLine();
-        sb.AppendLine("/// <summary>One parameter on a CallableDescriptor.</summary>");
-        sb.AppendLine("public sealed record ParamDescriptor(");
-        sb.AppendLine("    string Name,");
-        sb.AppendLine("    string ClrTypeName,");
-        sb.AppendLine("    bool IsRequired,");
-        sb.AppendLine("    object? DefaultValue);");
-        sb.AppendLine();
-        sb.AppendLine("/// <summary>Describes a single [McpObservable] property.</summary>");
-        sb.AppendLine("public sealed record ObservableDescriptor(");
-        sb.AppendLine("    string Name,");
-        sb.AppendLine("    string Description,");
-        sb.AppendLine("    bool Watchable,");
-        sb.AppendLine("    int PollingIntervalMs,");
-        sb.AppendLine("    string ClrTypeName,");
-        sb.AppendLine("    global::System.Func<object, object?> Read);");
-        sb.AppendLine();
-        sb.AppendLine("/// <summary>Describes a single [McpTriggerable] property.</summary>");
-        sb.AppendLine("public sealed record TriggerableDescriptor(");
-        sb.AppendLine("    string Name,");
-        sb.AppendLine("    string Description,");
-        sb.AppendLine("    global::Marionette.TriggerStrategy Strategy,");
-        sb.AppendLine("    string ControlTypeName,");
-        sb.AppendLine("    global::System.Func<object, object?> ResolveControl);");
-    }
 
     // -------------------------------------------------------------------------
     // Helpers

@@ -25,9 +25,27 @@ internal static class GeneratorRunner
     /// <summary>
     /// Runs the Marionette ManifestGenerator over the given C# source string.
     /// </summary>
-    public static GeneratorRunResult Run(string source, string assemblyName = "TestAssembly")
+    /// <param name="source">The C# source code to feed into the generator.</param>
+    /// <param name="assemblyName">Logical assembly name for the synthetic compilation.</param>
+    /// <param name="mcpEnabled">
+    /// Phase 1.2: emission is gated on the MCP_ENABLED preprocessor symbol.
+    /// Tests default to <c>true</c> (the typical adopter Debug build) because
+    /// that's what the snapshot/diagnostic tests exercise. Set <c>false</c>
+    /// to verify the no-emit-on-stripped-build path.
+    /// </param>
+    public static GeneratorRunResult Run(string source, string assemblyName = "TestAssembly", bool mcpEnabled = true)
     {
-        var syntaxTree = CSharpSyntaxTree.ParseText(source);
+        // Phase 1.2: thread MCP_ENABLED through the parse options so the
+        // generator's gate fires correctly. Without this, the generator
+        // bails out (correct stripped behaviour) and the snapshot/diag tests
+        // can't observe its output.
+        var parseOptions = new CSharpParseOptions(LanguageVersion.Latest);
+        if (mcpEnabled)
+        {
+            parseOptions = parseOptions.WithPreprocessorSymbols("MCP_ENABLED");
+        }
+
+        var syntaxTree = CSharpSyntaxTree.ParseText(source, options: parseOptions);
 
         // Build the reference set: every assembly we expect the user code to
         // be able to talk about. Marionette.NET.Abstractions is the critical
@@ -45,6 +63,12 @@ internal static class GeneratorRunner
             MetadataReference.CreateFromFile(typeof(System.Collections.Generic.IReadOnlyDictionary<,>).Assembly.Location),
             // Marionette attributes.
             MetadataReference.CreateFromFile(typeof(global::Marionette.McpRootAttribute).Assembly.Location),
+            // Phase 1.2: the generated Marionette.g.cs references descriptor
+            // record types from Marionette.Runtime.Manifest. The synthetic test
+            // compilation that consumes the generated source needs Runtime on
+            // its reference list to resolve them — otherwise the post-gen
+            // compilation diagnostics flag `RootDescriptor` etc. as missing.
+            MetadataReference.CreateFromFile(typeof(global::Marionette.Runtime.Manifest.RootDescriptor).Assembly.Location),
         };
 
         // The implicit references for .NET 10 — System.Runtime + others. The
@@ -73,7 +97,7 @@ internal static class GeneratorRunner
         var generator = new ManifestGenerator();
         var driver = CSharpGeneratorDriver
             .Create(generator)
-            .WithUpdatedParseOptions(new CSharpParseOptions(LanguageVersion.Latest));
+            .WithUpdatedParseOptions(parseOptions);
 
         var updatedDriver = driver.RunGeneratorsAndUpdateCompilation(
             compilation,
