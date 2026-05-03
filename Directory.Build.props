@@ -1,0 +1,22 @@
+<Project>
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <ProduceReferenceAssembly>true</ProduceReferenceAssembly>
+    <Company>Marionette.NET</Company>
+    <Authors>Marionette.NET contributors</Authors>
+    <Copyright>Copyright (c) 2026 Marionette.NET contributors</Copyright>
+    <NeutralLanguage>en-US</NeutralLanguage>
+    <!--
+      During Spike A nothing ships, so we leave version bookkeeping minimal.
+      Phase 1 will introduce versioning + central package management.
+    -->
+    <Version>0.0.1-spike</Version>
+  </PropertyGroup>
+
+</Project>

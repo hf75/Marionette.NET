@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PublishAot;IsAotCompatible;PublishTrimmed;IsTrimmable">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <!--
+      IsTrimmable / IsAotCompatible only apply on net8.0+ (the analyzer packs ship there). Setting
+      either on netstandard2.0 produces NETSDK1212 / NETSDK1210. Once we multi-target (Phase 1)
+      these flip on for the modern TFM only. For Spike A this still proves the stripping concept
+      because the user app is net10.0-windows and trims/AOTs on its side.
+    -->
+    <IsTrimmable Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">true</IsTrimmable>
+    <IsAotCompatible Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">true</IsAotCompatible>
+    <RootNamespace>Marionette</RootNamespace>
+    <AssemblyName>Marionette.NET.Abstractions</AssemblyName>
+    <Description>Attribute and stub surface for Marionette.NET. Always referenced; carries no runtime code.</Description>
+  </PropertyGroup>
+
+  <!--
+    Spike B: when an upstream project publishes AOT or with trimming, MSBuild propagates the
+    PublishAot / PublishTrimmed / IsAotCompatible / IsTrimmable globals into this project too.
+    netstandard2.0 cannot be AOT-published (NETSDK1207) and trimming requires .NET Core 3.0+
+    (NETSDK1124). The TreatAsLocalProperty list on the Project element above lets these locals win
+    over the globals. We force them off here so the parent app can still AOT-publish; the
+    netstandard2.0 assembly is consumed as-is by the trimmer/AOT compiler at the user-app level.
+    Phase 1 will multi-target (`netstandard2.0;net10.0`) and flip these on for the modern TFM,
+    which removes the need for this override.
+  -->
+  <PropertyGroup>
+    <PublishAot>false</PublishAot>
+    <IsAotCompatible>false</IsAotCompatible>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+</Project>

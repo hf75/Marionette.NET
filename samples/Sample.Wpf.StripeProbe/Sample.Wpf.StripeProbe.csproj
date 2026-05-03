@@ -1,0 +1,73 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Sample.Wpf.StripeProbe</RootNamespace>
+    <AssemblyName>Sample.Wpf.StripeProbe</AssemblyName>
+    <!--
+      Spike C: we provide our own [STAThread] static Main(string[]) in Program.cs so the
+      same .exe can run as either a normal WPF app, an MCP server with GUI ('mcp'), or an
+      MCP server without any GUI / Application instance ('mcp headless'). The default
+      generated Main from App.xaml unconditionally constructs the Application + StartupUri,
+      which is wrong for headless mode (would try to spin up the Dispatcher and any window).
+    -->
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <StartupObject>Sample.Wpf.StripeProbe.Program</StartupObject>
+  </PropertyGroup>
+
+  <!--
+    With EnableDefaultApplicationDefinition=false the SDK auto-promotes App.xaml to a Page
+    rather than ApplicationDefinition, so the code-behind partial class compiles but the
+    WPF targets do not synthesize a static Main into App.g.cs. Our own [STAThread] Main
+    lives in Program.cs and is selected via the StartupObject property above.
+  -->
+
+  <!--
+    AOT publish settings (Spike B). Only active when -p:PublishAot=true is passed on the publish command;
+    a normal `dotnet build` is unaffected so the Spike A baseline keeps passing.
+
+    Notes:
+      * Self-contained + RID are required for AOT.
+      * TreatWarningsAsErrors is relaxed during AOT publish so we can SEE trim/AOT warnings (otherwise
+        the build aborts before they print).
+      * _SuppressWpfTrimError is the SDK-internal escape valve for NETSDK1168 ("WPF is not supported
+        or recommended when trimming is enabled"). The error is hard-coded in
+        Microsoft.NET.Sdk/targets/Microsoft.NET.RuntimeIdentifierInference.targets and can only be
+        bypassed via this flag. Keeping it scoped to PublishAot=true means non-AOT builds still see
+        the guidance.
+  -->
+  <PropertyGroup Condition="'$(PublishAot)'=='true'">
+    <SelfContained>true</SelfContained>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <_SuppressWpfTrimError>true</_SuppressWpfTrimError>
+  </PropertyGroup>
+
+  <!--
+    Default rule (overridable from the command line via -p:EnableMcpAutomation=...):
+      Debug    => on
+      Release  => off
+    The empty-string guard is what lets `-p:EnableMcpAutomation=true|false` win over the default.
+    MSBuild evaluates "$(Configuration)=='Debug'" as a string comparison and assigns the boolean
+    result ("true"/"false") into the property — verified in Spike A.
+  -->
+  <PropertyGroup>
+    <EnableMcpAutomation Condition="'$(EnableMcpAutomation)'==''">$(Configuration)=='Debug'</EnableMcpAutomation>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(EnableMcpAutomation)'=='true'">
+    <DefineConstants>$(DefineConstants);MCP_ENABLED</DefineConstants>
+  </PropertyGroup>
+
+  <!-- Always reference Abstractions: attributes survive into Release as documentation/markup. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />
+  </ItemGroup>
+
+  <!-- Adapter (and transitively Runtime + ModelContextProtocol) only when MCP is on. -->
+  <ItemGroup Condition="'$(EnableMcpAutomation)'=='true'">
+    <ProjectReference Include="..\..\src\Marionette.NET.Adapter.Wpf\Marionette.NET.Adapter.Wpf.csproj" />
+  </ItemGroup>
+
+</Project>

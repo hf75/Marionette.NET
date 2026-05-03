@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Marionette.Adapter.Wpf</RootNamespace>
+    <AssemblyName>Marionette.NET.Adapter.Wpf</AssemblyName>
+    <Description>WPF adapter for Marionette.NET. Only referenced when EnableMcpAutomation=true on a WPF project.</Description>
+    <!--
+      Trim / AOT analyzer flags. Same rationale as Runtime: Spike-B-only, lights up only during AOT publish
+      so the Spike A baseline build stays clean.
+    -->
+    <IsAotCompatible Condition="'$(PublishAot)'=='true' and $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">true</IsAotCompatible>
+  </PropertyGroup>
+
+  <!-- During AOT publish flows, allow warnings through so the spike can capture them. -->
+  <PropertyGroup Condition="'$(PublishAot)'=='true'">
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Marionette.NET.Runtime\Marionette.NET.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>

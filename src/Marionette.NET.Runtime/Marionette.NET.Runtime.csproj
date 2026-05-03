@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Marionette.Runtime</RootNamespace>
+    <AssemblyName>Marionette.NET.Runtime</AssemblyName>
+    <Description>MCP host + manifest registry for Marionette.NET. Only referenced when EnableMcpAutomation=true.</Description>
+    <!--
+      Trim / AOT analyzer flags. Gated on net8.0+ for parity with Abstractions. Phase 1 will turn this
+      into a hard contract; Spike B uses it to surface diagnostics from ModelContextProtocol's reflection
+      paths during AOT publish. We do NOT enable it during regular library build because Directory.Build.props
+      sets TreatWarningsAsErrors=true and the MCP-NuGet path is known-not-AOT-clean (Spike D).
+    -->
+    <IsAotCompatible Condition="'$(PublishAot)'=='true' and $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">true</IsAotCompatible>
+  </PropertyGroup>
+
+  <!-- During AOT publish flows, allow warnings through so the spike can capture them. -->
+  <PropertyGroup Condition="'$(PublishAot)'=='true'">
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Spike D landed on 1.2.0; the runtime references it now so a missing package would surface here,
+      not later. Spike C wires this up into a real stdio MCP server.
+
+      Microsoft.Extensions.Hosting is needed for Host.CreateEmptyApplicationBuilder, which gives us a
+      blank slate without the default Console logging provider that would corrupt the JSON-RPC stream.
+      We use the .NET 10.0.x release line to match the TargetFramework.
+    -->
+    <PackageReference Include="ModelContextProtocol" Version="1.2.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.1" />
+  </ItemGroup>
+
+</Project>

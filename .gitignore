@@ -65,3 +65,12 @@ coverage*.info
 # MCP / Marionette local state
 .marionette/
 *.marionette.log
+
+# Phase-0 spike build artifacts (keep .md reports + probe/test source code tracked)
+.phase0/probe-off/
+.phase0/probe-on/
+.phase0/aot-off/
+.phase0/aot-on/
+.phase0/**/bin/
+.phase0/**/obj/
+.phase0/*.log
