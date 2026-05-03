@@ -1,0 +1,293 @@
+# Marionette.NET — Continuous Integration
+#
+# Two jobs run in parallel on every push to main / phase-* / feat/* / fix/*
+# branches and on every pull_request event:
+#
+#   build-and-test       — gates the three Phase-0 promises:
+#                            * Solution builds clean in Debug + Release.
+#                            * StripeProbe Release with EnableMcpAutomation=false
+#                              contains zero Runtime/Adapter.Wpf/Ai/MCP symbols
+#                              (Spike A — IL stripping promise).
+#                            * StripeProbe Debug with =true completes a real MCP
+#                              initialize -> tools/list -> tools/call handshake
+#                              over stdio with zero stdout pollution
+#                              (Spike C — stdio MCP host).
+#
+#   aot-publish-smoke    — gates the AOT readiness claim:
+#                            * Stripped + full AOT publishes both succeed on a
+#                              runner with the C++ desktop workload available
+#                              (Spike B's environmental block does not apply
+#                              on windows-latest).
+#                            * The stripped .exe at least launches without
+#                              crashing immediately.
+#
+# Background and rationale live in:
+#   PHASE0_FINDINGS.md
+#   .phase0/spike-a.md  (IL probe details)
+#   .phase0/spike-b.md  (AOT publish prerequisites)
+#   .phase0/spike-c.md  (stdio handshake harness)
+#
+# Scope intentionally tight: this is a Phase-1 CI bootstrap, not a release pipeline.
+# NuGet packing, signing, GitHub Pages, and badge generation are deferred to Phase 7.
+#
+# All work runs on windows-latest because Phase 1's only adapter is Adapter.Wpf,
+# which requires Windows. Adapter.Avalonia / WinUI / Uno / MAUI may want a matrix
+# expansion when they land in Phases 2-5.
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'phase-*'
+      - 'feat/*'
+      - 'fix/*'
+  pull_request:
+
+# Cancel any in-flight run on the same ref when a new commit lands. PR head
+# branches get their own group; pushes to main cancel previous main runs.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only token. CI does not pack or push anything — Phase 7 will widen this
+# when releases start.
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  # Matches the SDK pinned in global.json (10.0.202 with rollForward=latestFeature).
+  # Spike B verified the Microsoft-hosted windows-latest image ships the "Desktop
+  # development with C++" workload, which Native AOT requires.
+  DOTNET_VERSION: '10.0.x'
+
+jobs:
+
+  build-and-test:
+    name: Build, IL probe, stdio handshake
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          # global.json pins the exact patch line. setup-dotnet honours global.json
+          # when present; the dotnet-version above is the floor.
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          # Keyed on every csproj plus Directory.Build.props. Directory.Packages.props
+          # is included in the hash even though it doesn't exist yet — it will once
+          # Phase 1 introduces central package management, and the cache key is
+          # forward-compatible.
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props', '**/Directory.Build.props', '**/global.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore solution
+        run: dotnet restore Marionette.NET.sln
+
+      - name: Build solution (Debug)
+        # Asserts that the masterplan's Debug-defaults (EnableMcpAutomation=true on
+        # the sample) build cleanly. TWAE is true in Directory.Build.props, so any
+        # compile warning in any project will fail this step.
+        run: dotnet build Marionette.NET.sln -c Debug --no-restore
+
+      - name: Build solution (Release)
+        # Asserts that the masterplan's Release-defaults (EnableMcpAutomation=false
+        # on the sample) build cleanly.
+        run: dotnet build Marionette.NET.sln -c Release --no-restore
+
+      - name: Build StripeProbe Release with EnableMcpAutomation=false
+        # Explicit check: the strip-mode build path produces a clean compile.
+        # Cleaning bin/obj first ensures the inspected output is not stale incremental
+        # output (Spike A learned this the hard way).
+        run: |
+          if (Test-Path samples\Sample.Wpf.StripeProbe\bin)  { Remove-Item -Recurse -Force samples\Sample.Wpf.StripeProbe\bin }
+          if (Test-Path samples\Sample.Wpf.StripeProbe\obj)  { Remove-Item -Recurse -Force samples\Sample.Wpf.StripeProbe\obj }
+          dotnet build samples\Sample.Wpf.StripeProbe\Sample.Wpf.StripeProbe.csproj -c Release -p:EnableMcpAutomation=false
+        shell: pwsh
+
+      - name: Build StripeProbe Release with EnableMcpAutomation=true
+        # The MCP-on Release path also has to build cleanly — used for full-flight
+        # integration scenarios (Frozen-Mode, Phase-1 Always-On Production).
+        run: |
+          if (Test-Path samples\Sample.Wpf.StripeProbe\bin)  { Remove-Item -Recurse -Force samples\Sample.Wpf.StripeProbe\bin }
+          if (Test-Path samples\Sample.Wpf.StripeProbe\obj)  { Remove-Item -Recurse -Force samples\Sample.Wpf.StripeProbe\obj }
+          dotnet build samples\Sample.Wpf.StripeProbe\Sample.Wpf.StripeProbe.csproj -c Release -p:EnableMcpAutomation=true
+        shell: pwsh
+
+      - name: Build IL probe (.phase0/ProbeIl)
+        # Out-of-solution by design (Phase-0 utility). Release for runtime speed.
+        run: dotnet build .phase0\ProbeIl\ProbeIl.csproj -c Release
+
+      - name: Build stdio handshake harness (.phase0/StdioTest)
+        # Out-of-solution by design. Debug is fine — this is a probe.
+        run: dotnet build .phase0\StdioTest\StdioTest.csproj -c Debug
+
+      - name: Build StripeProbe (Release, =false) for IL probe
+        # Re-build the stripped Release output cleanly. Earlier steps may have
+        # stomped on bin/obj with the =true variant.
+        run: |
+          if (Test-Path samples\Sample.Wpf.StripeProbe\bin)  { Remove-Item -Recurse -Force samples\Sample.Wpf.StripeProbe\bin }
+          if (Test-Path samples\Sample.Wpf.StripeProbe\obj)  { Remove-Item -Recurse -Force samples\Sample.Wpf.StripeProbe\obj }
+          dotnet build samples\Sample.Wpf.StripeProbe\Sample.Wpf.StripeProbe.csproj -c Release -p:EnableMcpAutomation=false
+        shell: pwsh
+
+      - name: IL stripping regression check
+        # Spike A's pass criterion: zero hits for any of the four needles in the
+        # stripped sample DLL. We target Sample.Wpf.StripeProbe.dll directly rather
+        # than the whole bin folder because the Marionette.Ai TypeDef legitimately
+        # lives in Marionette.NET.Abstractions.dll, which always ships. The strip
+        # check is about the SAMPLE assembly's symbols, not the always-shipped
+        # attribute assembly.
+        run: |
+          pwsh -NoProfile -File build\Run-IlProbe.ps1 `
+              -ProbeDll .phase0\ProbeIl\bin\Release\net10.0\ProbeIl.dll `
+              -Target   samples\Sample.Wpf.StripeProbe\bin\Release\net10.0-windows\Sample.Wpf.StripeProbe.dll `
+              -LogPath  ilprobe.log
+        shell: pwsh
+
+      - name: Build StripeProbe (Debug, =true) for stdio handshake
+        # The stdio harness needs the MCP-on build. Debug is what Spike C uses.
+        run: |
+          if (Test-Path samples\Sample.Wpf.StripeProbe\bin)  { Remove-Item -Recurse -Force samples\Sample.Wpf.StripeProbe\bin }
+          if (Test-Path samples\Sample.Wpf.StripeProbe\obj)  { Remove-Item -Recurse -Force samples\Sample.Wpf.StripeProbe\obj }
+          dotnet build samples\Sample.Wpf.StripeProbe\Sample.Wpf.StripeProbe.csproj -c Debug -p:EnableMcpAutomation=true
+        shell: pwsh
+
+      - name: Stdio MCP handshake test (Spike C harness)
+        # The harness exits 0 on PASS, 1 on FAIL. Path must be absolute (Spike C
+        # learned that ProcessStartInfo.FileName resolves against the OS, not the
+        # .NET process's CWD).
+        run: |
+          $exe = Resolve-Path samples\Sample.Wpf.StripeProbe\bin\Debug\net10.0-windows\Sample.Wpf.StripeProbe.exe
+          dotnet .phase0\StdioTest\bin\Debug\net10.0\StdioTest.dll "$exe" 2>&1 | Tee-Object -FilePath stdio-test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        shell: pwsh
+
+      - name: Upload diagnostic logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-${{ github.run_id }}
+          path: |
+            ilprobe.log
+            stdio-test.log
+            **/*.binlog
+            **/MSBuild_*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  aot-publish-smoke:
+    name: AOT publish smoke test
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props', '**/Directory.Build.props', '**/global.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore solution
+        run: dotnet restore Marionette.NET.sln
+
+      - name: AOT publish — stripped (EnableMcpAutomation=false)
+        # Spike B verified the csproj is correctly wired: _SuppressWpfTrimError + the
+        # AOT property group will produce a working publish on a runner with the
+        # C++ desktop workload (which windows-latest provides). Capture analyzer
+        # output to a binary log so failures can be replayed offline.
+        run: |
+          dotnet publish samples\Sample.Wpf.StripeProbe\Sample.Wpf.StripeProbe.csproj `
+              -c Release `
+              -r win-x64 `
+              -p:PublishAot=true `
+              -p:EnableMcpAutomation=false `
+              -warnaserror:false `
+              -o publish-aot-off `
+              -bl:aot-off.binlog
+        shell: pwsh
+
+      - name: AOT publish — full (EnableMcpAutomation=true)
+        # Spike B noted that this path emits IL2xxx/IL3xxx warnings from the
+        # ModelContextProtocol reflection paths and Microsoft.Extensions.Hosting.
+        # Per the masterplan and Phase-0 findings, warnings are tolerated for now
+        # but captured for review. -warnaserror:false ensures the build proceeds
+        # and the binlog preserves the full analyzer output.
+        run: |
+          dotnet publish samples\Sample.Wpf.StripeProbe\Sample.Wpf.StripeProbe.csproj `
+              -c Release `
+              -r win-x64 `
+              -p:PublishAot=true `
+              -p:EnableMcpAutomation=true `
+              -warnaserror:false `
+              -o publish-aot-on `
+              -bl:aot-on.binlog
+        shell: pwsh
+
+      - name: Smoke-test stripped AOT binary
+        # WPF Application.Run keeps the process alive; the test is just "did it
+        # crash on launch within 3 seconds". Stop-Process forces a clean exit so
+        # the runner can move on.
+        run: |
+          $exe = Resolve-Path publish-aot-off\Sample.Wpf.StripeProbe.exe
+          Write-Host "Launching $exe ..."
+          $proc = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+          if ($proc.HasExited) {
+              Write-Host "Process exited with code $($proc.ExitCode) before timeout — FAIL."
+              exit 1
+          }
+          Write-Host "Process still alive after 3s — PASS. Killing pid $($proc.Id)."
+          Stop-Process -Id $proc.Id -Force
+          Start-Sleep -Seconds 1
+        shell: pwsh
+
+      - name: Smoke-test AOT-on binary via stdio handshake
+        # Build the StdioTest harness against the AOT-published exe. The harness
+        # accepts a path argument so we can point it at either the JIT'd or the
+        # AOT'd binary. The AOT-on build's --mcp --headless mode is what we want
+        # to verify — spinning up the MCP server end-to-end with native code.
+        run: |
+          dotnet build .phase0\StdioTest\StdioTest.csproj -c Debug
+          $exe = Resolve-Path publish-aot-on\Sample.Wpf.StripeProbe.exe
+          dotnet .phase0\StdioTest\bin\Debug\net10.0\StdioTest.dll "$exe" 2>&1 | Tee-Object -FilePath stdio-aot.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        shell: pwsh
+
+      - name: Upload publish artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-aot-logs-${{ github.run_id }}
+          path: |
+            aot-off.binlog
+            aot-on.binlog
+            stdio-aot.log
+            publish-aot-off/**/*
+            publish-aot-on/**/*
+          if-no-files-found: ignore
+          retention-days: 14
