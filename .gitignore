@@ -84,5 +84,6 @@ ilprobe.log
 stdio-test.log
 *.binlog
 
-# Stdio handshake harness GUI-mode screenshot artifact (regenerated each run)
-.phase1/screenshot-test.png
+# Phase-1 test artifacts (logs + screenshots regenerated on every run; reports stay tracked)
+.phase1/*.log
+.phase1/*.png

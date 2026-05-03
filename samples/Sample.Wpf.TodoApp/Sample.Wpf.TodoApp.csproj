@@ -1,0 +1,71 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Phase 1.4 — Sample.Wpf.TodoApp
+    The canonical "instrument an existing app" reference for adopters. Wiring is
+    identical to Sample.Wpf.StripeProbe (so adopters who copy the StripeProbe
+    pattern see the same shape here), but the ViewModel surface is richer:
+    five [McpCallable] methods, four [McpObservable] properties, INPC for
+    push-mode watchable updates.
+
+    Defaults for EnableMcpAutomation come from build/Marionette.NET.props
+    (Debug => true, Release => false).
+  -->
+  <Import Project="..\..\build\Marionette.NET.props" />
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Sample.Wpf.TodoApp</RootNamespace>
+    <AssemblyName>Sample.Wpf.TodoApp</AssemblyName>
+    <!--
+      Custom [STAThread] Main lives in Program.cs so the same .exe runs as a
+      regular WPF GUI, an MCP server with GUI (mcp flag), or a headless MCP
+      server (mcp + headless flags). EnableDefaultApplicationDefinition=false
+      prevents the SDK from auto-emitting Main into App.g.cs.
+    -->
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <StartupObject>Sample.Wpf.TodoApp.Program</StartupObject>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!-- Always reference Abstractions; attributes survive into Release as markup. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />
+  </ItemGroup>
+
+  <!--
+    Source generator wiring. The generator is loaded as a Roslyn analyzer,
+    NOT as a runtime dependency.
+       OutputItemType="Analyzer"     - feeds the DLL into the analyzer pipeline
+       ReferenceOutputAssembly=false - prevents the DLL from being copied into
+                                       this project's output / deps.json
+    The generator emits Marionette.Generated.GeneratedManifest in this assembly
+    only when MCP_ENABLED is defined (i.e. EnableMcpAutomation=true).
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.SourceGenerator\Marionette.NET.SourceGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- Adapter (and transitively Runtime + ModelContextProtocol) only when MCP is on. -->
+  <ItemGroup Condition="'$(EnableMcpAutomation)'=='true'">
+    <ProjectReference Include="..\..\src\Marionette.NET.Adapter.Wpf\Marionette.NET.Adapter.Wpf.csproj" />
+  </ItemGroup>
+
+  <!-- Emit Marionette.g.cs to disk so adopters can see what the generator produced. -->
+  <PropertyGroup>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+
+  <!--
+    MCP_ENABLED constant + _SuppressWpfTrimError come from build/Marionette.NET.targets.
+    Imported last so it sees the resolved EnableMcpAutomation, UseWPF, PublishAot.
+  -->
+  <Import Project="..\..\build\Marionette.NET.targets" />
+
+</Project>
