@@ -1,0 +1,62 @@
+<!--
+  ============================================================================
+  Marionette.NET — auto-imported targets
+  ============================================================================
+
+  This file is imported automatically when an SDK-style project references the
+  `Marionette.NET` NuGet package. (NuGet's convention copies any `build/<id>.props`
+  / `build/<id>.targets` into the consuming project's MSBuild graph at the end
+  of evaluation, so values like `Configuration` and `UseWPF` are visible.) During
+  Phase 1.a it is hand-imported by the Phase-0 sample; once the meta-package
+  ships in Phase 7 this hand-import goes away.
+
+  Purpose: translate the user-facing property `EnableMcpAutomation` into the
+  compiler / SDK switches that actually control behaviour:
+
+    1.  When EnableMcpAutomation=true, define MCP_ENABLED so:
+          - [Conditional("MCP_ENABLED")] call sites on Marionette.Ai are kept,
+          - the user app can `#if MCP_ENABLED` around adapter init code.
+
+    2.  When EnableMcpAutomation=true AND the project is a WPF AOT-publish
+        target, set the SDK-internal `_SuppressWpfTrimError` flag. Without it
+        NETSDK1168 hard-fails the publish with "WPF is not supported or
+        recommended when trimming is enabled". The flag is documented in
+        Microsoft.NET.Sdk's RuntimeIdentifierInference.targets as the only
+        supported escape valve. See PHASE0_FINDINGS.md implication 3.
+
+  All MSBuild here is conditional on `EnableMcpAutomation` so a stripped build
+  never picks up MCP_ENABLED, even if the file is imported.
+  ============================================================================
+-->
+<Project>
+
+  <!--
+    Step 1: define MCP_ENABLED when MCP is on. Concatenating onto $(DefineConstants)
+    via the standard ;-separator is the canonical pattern; SDKs and external
+    targets that contribute their own constants compose cleanly with this.
+  -->
+  <PropertyGroup Condition="'$(EnableMcpAutomation)'=='true'">
+    <DefineConstants>$(DefineConstants);MCP_ENABLED</DefineConstants>
+  </PropertyGroup>
+
+  <!--
+    Step 2: WPF + AOT publish escape valve.
+
+    NETSDK1168 is hard-coded in Microsoft.NET.RuntimeIdentifierInference.targets
+    and fires whenever UseWPF=true && PublishTrimmed=true (PublishAot implies
+    PublishTrimmed). _SuppressWpfTrimError=true is the only documented bypass.
+
+    We scope this to:
+      - EnableMcpAutomation=true (a stripped build doesn't ship Adapter.Wpf, so
+        the WPF+AOT combination is moot there; preserving NETSDK1168 keeps the
+        helpful error visible if someone misconfigures a stripped publish)
+      - UseWPF=true and PublishAot=true (don't suppress on non-AOT WPF builds —
+        no error fires there anyway)
+
+    Adopters who target Avalonia / WinUI / etc. simply skip this branch.
+  -->
+  <PropertyGroup Condition="'$(EnableMcpAutomation)'=='true' and '$(UseWPF)'=='true' and '$(PublishAot)'=='true'">
+    <_SuppressWpfTrimError>true</_SuppressWpfTrimError>
+  </PropertyGroup>
+
+</Project>

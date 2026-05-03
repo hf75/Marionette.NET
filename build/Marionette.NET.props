@@ -1,0 +1,43 @@
+<!--
+  ============================================================================
+  Marionette.NET — auto-imported props
+  ============================================================================
+
+  This file is imported automatically when an SDK-style project references the
+  `Marionette.NET` NuGet package. (NuGet's convention copies any `build/<id>.props`
+  / `build/<id>.targets` into the consuming project's MSBuild graph.) During
+  Phase 1.a it is hand-imported by the Phase-0 sample; once the meta-package
+  ships in Phase 7 this hand-import goes away.
+
+  Purpose: set sensible defaults *before* the consuming project's PropertyGroup
+  evaluates, so users can override any Marionette.NET property in a regular
+  <PropertyGroup> in their .csproj.
+
+  Properties defined here:
+    EnableMcpAutomation  Defaults to `true` for Debug, `false` for Release.
+                         An explicit value (set in the project, on the command
+                         line via `-p:EnableMcpAutomation=...`, or by a parent
+                         Directory.Build.props) wins.
+  ============================================================================
+-->
+<Project>
+
+  <PropertyGroup>
+    <!--
+      Default rule:
+        - Debug build           => EnableMcpAutomation=true  (MCP host present)
+        - Release build / other => EnableMcpAutomation=false (stripped)
+
+      The empty-string condition only fires when nobody set the property. MSBuild
+      string-comparison expressions evaluate to the literal text "true"/"false",
+      which is what later condition tests against. Verified in Spike A.
+
+      Adopters override this in three ways, all of which take precedence:
+        1.  <PropertyGroup><EnableMcpAutomation>true</EnableMcpAutomation></PropertyGroup>
+        2.  dotnet build -p:EnableMcpAutomation=true
+        3.  Directory.Build.props in the solution above.
+    -->
+    <EnableMcpAutomation Condition="'$(EnableMcpAutomation)'==''">$(Configuration)=='Debug'</EnableMcpAutomation>
+  </PropertyGroup>
+
+</Project>
