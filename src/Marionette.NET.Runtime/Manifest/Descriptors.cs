@@ -61,13 +61,15 @@ namespace Marionette.Runtime.Manifest;
 /// <param name="Callables">All <c>[McpCallable]</c> methods found on the root.</param>
 /// <param name="Observables">All <c>[McpObservable]</c> properties found on the root.</param>
 /// <param name="Triggerables">All <c>[McpTriggerable]</c> properties found on the root.</param>
+/// <param name="Events">All <c>[McpEvent]</c> events found on the root (Phase 1.6).</param>
 public sealed record RootDescriptor(
     string Name,
     string TypeName,
     Func<object>? Create,
     IReadOnlyList<CallableDescriptor> Callables,
     IReadOnlyList<ObservableDescriptor> Observables,
-    IReadOnlyList<TriggerableDescriptor> Triggerables);
+    IReadOnlyList<TriggerableDescriptor> Triggerables,
+    IReadOnlyList<EventDescriptor> Events);
 
 /// <summary>
 /// Describes a single <c>[McpCallable]</c> method. <see cref="Invoke"/> is a
@@ -148,3 +150,40 @@ public sealed record TriggerableDescriptor(
     global::Marionette.TriggerStrategy Strategy,
     string ControlTypeName,
     Func<object, object?> ResolveControl);
+
+/// <summary>
+/// Describes a single <c>[McpEvent]</c>-decorated C# event (Phase 1.6). The
+/// <see cref="Subscribe"/> delegate is a strongly-typed bridge emitted by the
+/// source generator — no reflection, AOT-clean.
+/// </summary>
+/// <param name="Name">Event name as declared in user code.</param>
+/// <param name="Description">Human-readable description shown to the LLM in the manifest.</param>
+/// <param name="ArgsTypeName">
+/// Fully-qualified CLR type name of the event-args type (e.g.
+/// <c>"Sample.Wpf.TodoApp.TodoAddedEventArgs"</c>) or <c>"System.EventArgs"</c>
+/// when the delegate is the non-generic <see cref="System.EventHandler"/>.
+/// </param>
+/// <param name="ArgsJsonSchema">
+/// Single-line JSON schema describing the args type's public properties. Built
+/// at compile time by the source generator's <c>JsonSchemaWriter</c> helper.
+/// For <c>EventHandler</c> with no args type, the schema is
+/// <c>{"type":"object","properties":{}}</c>.
+/// </param>
+/// <param name="MinIntervalMs">Minimum interval between accepted fires; fires faster than this are dropped.</param>
+/// <param name="MaxQueueSize">Bounded ring-buffer capacity; oldest entries evicted on overflow.</param>
+/// <param name="CoalesceWindowMs">Window during which multiple fires collapse to a single client notification.</param>
+/// <param name="Subscribe">
+/// Compile-time emitted subscription delegate. Receives the live root instance
+/// and a callback the runtime calls on every fire (with the EventArgs as the
+/// argument). Returns an <see cref="IDisposable"/> the runtime disposes at
+/// shutdown to detach the handler.
+/// </param>
+public sealed record EventDescriptor(
+    string Name,
+    string Description,
+    string ArgsTypeName,
+    string ArgsJsonSchema,
+    int MinIntervalMs,
+    int MaxQueueSize,
+    int CoalesceWindowMs,
+    Func<object, Action<object?>, IDisposable> Subscribe);

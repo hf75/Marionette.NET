@@ -26,6 +26,7 @@
 // so a burst of "AddTodo, AddTodo, AddTodo" in rapid succession collapses to a
 // single notifications/resources/updated push, not three.
 
+using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
@@ -34,6 +35,28 @@ using System.Runtime.CompilerServices;
 using Marionette;
 
 namespace Sample.Wpf.TodoApp;
+
+/// <summary>
+/// EventArgs payload for <see cref="TodoListViewModel.TodoAdded"/>. A sealed
+/// class (not a record — C# does not allow records to inherit from a
+/// non-record base, and EventArgs is a non-record class) with two read-only
+/// primitive properties. This is exactly the shape the JSON schema generator
+/// handles cleanly.
+/// </summary>
+public sealed class TodoAddedEventArgs : EventArgs
+{
+    public TodoAddedEventArgs(string title, DateTime addedAt)
+    {
+        Title = title;
+        AddedAt = addedAt;
+    }
+
+    /// <summary>Title of the newly added TODO.</summary>
+    public string Title { get; }
+
+    /// <summary>UTC timestamp when the TODO was added.</summary>
+    public DateTime AddedAt { get; }
+}
 
 /// <summary>
 /// View-model backing the MainWindow's TODO list. Decorated as the app's
@@ -132,10 +155,15 @@ public sealed class TodoListViewModel : INotifyPropertyChanged
         // TotalCount confirms the no-op.
         if (string.IsNullOrWhiteSpace(title)) return;
 
-        _items.Add(new TodoItem(title.Trim()));
+        var trimmed = title.Trim();
+        _items.Add(new TodoItem(trimmed));
         // CollectionChanged fires the count refreshes; OnLastAddedTitleChanged
         // fires LastAddedTitle's PropertyChanged.
         RaisePropertyChanged(nameof(LastAddedTitle));
+        // Phase 1.6: declarative event delivery. Subscribers to
+        // marionette://TodoListViewModel/events/TodoAdded receive a
+        // notification with a TodoAddedEventArgs payload.
+        TodoAdded?.Invoke(this, new TodoAddedEventArgs(trimmed, DateTime.UtcNow));
     }
 
     /// <summary>
@@ -226,6 +254,19 @@ public sealed class TodoListViewModel : INotifyPropertyChanged
     /// </summary>
     [McpObservable("Most recently added todo title or null if empty.")]
     public string? LastAddedTitle => _items.LastOrDefault()?.Title;
+
+    // -------------------------------------------------------------------------
+    // [McpEvent] surface — Phase 1.6
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Fired whenever <see cref="AddTodo"/> appends a new TODO. Subscribers to
+    /// the resource <c>marionette://TodoListViewModel/events/TodoAdded</c>
+    /// receive a notification each time. The args carry the title and the UTC
+    /// timestamp of the addition.
+    /// </summary>
+    [McpEvent("A new TODO was added to the list.")]
+    public event EventHandler<TodoAddedEventArgs>? TodoAdded;
 
     // -------------------------------------------------------------------------
     // INotifyPropertyChanged plumbing + collection-change wiring

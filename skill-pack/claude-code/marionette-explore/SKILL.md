@@ -5,7 +5,7 @@ description: Discover what a running Marionette.NET-instrumented .NET desktop ap
 
 # Marionette: Explore an Instrumented App
 
-You have a Marionette.NET MCP server connected (transport: stdio). The user wants a guided tour of the app's exposed surface — every `[McpRoot]` class, every `[McpCallable]` method, every `[McpObservable]` property, every `[McpTriggerable]` button. Be concrete: name the methods, name the observables, suggest exact tool calls.
+You have a Marionette.NET MCP server connected (transport: stdio). The user wants a guided tour of the app's exposed surface — every `[McpRoot]` class, every `[McpCallable]` method, every `[McpObservable]` property, every `[McpTriggerable]` button, every `[McpEvent]` event. Be concrete: name the methods, name the observables, suggest exact tool calls.
 
 ## Trigger conditions
 
@@ -30,7 +30,8 @@ This returns a JSON array of every `[McpRoot]`-decorated class in the app. Each 
   "instanceAvailable": true,
   "callables": [...],
   "observables": [...],
-  "triggerables": [...]
+  "triggerables": [...],
+  "events": [...]
 }
 ```
 
@@ -57,6 +58,11 @@ Root: TodoListViewModel  (Sample.Wpf.TodoApp.TodoListViewModel)
     - LastAddedTitle: string             — Most-recently-added title
 
   Triggerables: (none)
+
+  Events (1):
+    - TodoAdded(args: TodoAddedEventArgs { Title: string, AddedAt: date-time })
+        watch URI: marionette://TodoListViewModel/events/TodoAdded
+        — A new TODO was added to the list (queue=100, coalesce=100ms)
 ```
 
 For watchable observables, append the resource URI on a separate line so the user sees the subscribe target:
@@ -64,6 +70,8 @@ For watchable observables, append the resource URI on a separate line so the use
 ```
     - TotalCount  watch URI: marionette://TodoListViewModel/TotalCount
 ```
+
+For each event, render the args type as a single-line schema summary using the `argsSchema.properties` field. Include the `resourceUri` on a separate line. Highlight the throttling values when they're non-default (`MinIntervalMs > 0` or non-100ms `CoalesceWindowMs`). Suggest subscribing when an event looks like a meaningful domain transition the user would want to react to.
 
 ### 3. If the user passed `--screenshot` (or said "and take a screenshot"), call `capture_screenshot`
 
@@ -78,6 +86,7 @@ End the report with 2-4 bullet-pointed suggestions tailored to what you saw. Use
 
 - "Try calling a method: `invoke_method` with `root: 'TodoListViewModel', method: 'AddTodo', args: { title: 'Buy milk' }`"
 - "Watch a count: subscribe to `marionette://TodoListViewModel/TotalCount` (you'll get pushed updates when the list changes)"
+- "Watch an event: subscribe to `marionette://TodoListViewModel/events/TodoAdded` and react when the args show a new title"
 - "Take a screenshot: `capture_screenshot()` — captures the current MainWindow"
 - "Filter the manifest: `inspect_app_api(rootName: 'TodoListViewModel')` to scope to one root"
 

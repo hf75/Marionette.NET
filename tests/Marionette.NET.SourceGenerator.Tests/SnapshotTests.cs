@@ -68,6 +68,60 @@ public class SnapshotTests
         Snapshot.Verify(Normalize(result.GeneratedText), "GoldenInput_EmitsExpectedManifest");
     }
 
+    [Fact]
+    public void GoldenEventInput_EmitsExpectedManifest()
+    {
+        // Phase 1.6 snapshot: a root with both event shapes (EventHandler and
+        // EventHandler<T>), a callable, plus a watchable observable, plus an
+        // event with custom throttling. Verifies the EventDescriptor emit
+        // including the schema string and the Subscribe lambda, for both the
+        // typed-args path and the no-args path.
+        var source = """
+            using System;
+            using Marionette;
+
+            namespace Demo;
+
+            public sealed class ItemAddedEventArgs : EventArgs
+            {
+                public ItemAddedEventArgs(string itemName, int count, DateTime addedAt)
+                {
+                    ItemName = itemName;
+                    Count = count;
+                    AddedAt = addedAt;
+                }
+                public string ItemName { get; }
+                public int Count { get; }
+                public DateTime AddedAt { get; }
+            }
+
+            [McpRoot("evroot")]
+            public class EventRoot
+            {
+                [McpCallable("Add an item.")]
+                public void AddItem(string name) { }
+
+                [McpObservable("Total item count.", Watchable = true)]
+                public int Count { get; private set; }
+
+                [McpEvent("An item was added.")]
+                public event EventHandler<ItemAddedEventArgs>? ItemAdded;
+
+                [McpEvent("Generic refresh signal.", MinIntervalMs = 50, MaxQueueSize = 250, CoalesceWindowMs = 200)]
+                public event EventHandler? Refreshed;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        Snapshot.Verify(Normalize(result.GeneratedText), "GoldenEventInput_EmitsExpectedManifest");
+    }
+
     private static string Normalize(string s) => s.Replace("\r\n", "\n");
 
     private static string FormatDiagnostics(System.Collections.Generic.IEnumerable<Microsoft.CodeAnalysis.Diagnostic> diags)

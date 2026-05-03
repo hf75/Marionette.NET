@@ -35,6 +35,7 @@ internal static class Validator
     public const string McpCallableAttribute = "Marionette.McpCallableAttribute";
     public const string McpObservableAttribute = "Marionette.McpObservableAttribute";
     public const string McpTriggerableAttribute = "Marionette.McpTriggerableAttribute";
+    public const string McpEventAttribute = "Marionette.McpEventAttribute";
 
     /// <summary>
     /// Validate a candidate root class, harvesting its members. Returns null
@@ -69,10 +70,11 @@ internal static class Validator
         bool hasParameterlessCtor = typeSymbol.InstanceConstructors
             .Any(c => c.DeclaredAccessibility == Accessibility.Public && c.Parameters.Length == 0);
 
-        // ---- Collect callables, observables, triggerables ----
+        // ---- Collect callables, observables, triggerables, events ----
         var callables = ImmutableArray.CreateBuilder<CallableModel>();
         var observables = ImmutableArray.CreateBuilder<ObservableModel>();
         var triggerables = ImmutableArray.CreateBuilder<TriggerableModel>();
+        var events = ImmutableArray.CreateBuilder<EventModel>();
 
         foreach (var member in typeSymbol.GetMembers())
         {
@@ -92,11 +94,16 @@ internal static class Validator
                     var triggerable = ValidateTriggerable(triggerableProp, diags);
                     if (triggerable is not null) triggerables.Add(triggerable);
                     break;
+
+                case IEventSymbol ev when HasAttribute(ev, McpEventAttribute):
+                    var evt = ValidateEvent(ev, diags);
+                    if (evt is not null) events.Add(evt);
+                    break;
             }
         }
 
         // ---- MAR008: root has no entrypoints ----
-        if (callables.Count == 0 && observables.Count == 0 && triggerables.Count == 0)
+        if (callables.Count == 0 && observables.Count == 0 && triggerables.Count == 0 && events.Count == 0)
         {
             diags.Add(MakeDiagnostic(
                 Diagnostics.RootHasNoMembers,
@@ -119,7 +126,8 @@ internal static class Validator
             HasParameterlessCtor: hasParameterlessCtor,
             Callables: callables.ToImmutable().ToEquatableArray(),
             Observables: observables.ToImmutable().ToEquatableArray(),
-            Triggerables: triggerables.ToImmutable().ToEquatableArray());
+            Triggerables: triggerables.ToImmutable().ToEquatableArray(),
+            Events: events.ToImmutable().ToEquatableArray());
     }
 
     // -------------------------------------------------------------------------
@@ -283,6 +291,111 @@ internal static class Validator
             Description: description,
             Strategy: strategy,
             ControlTypeFullName: prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+    }
+
+    // -------------------------------------------------------------------------
+    // EventModel
+    // -------------------------------------------------------------------------
+
+    private static EventModel? ValidateEvent(
+        IEventSymbol ev,
+        ImmutableArray<DiagnosticInfo>.Builder diags)
+    {
+        // ---- MAR010: must be EventHandler or EventHandler<T> ----
+        // We accept the standard EventHandler (no T) AND any closed
+        // EventHandler<TArgs>. The delegate type's display string carries the
+        // full info; matching by OriginalDefinition keeps us tolerant of
+        // T-binding edge-cases.
+        var (isStandard, hasArgs, argsType) = ClassifyEventDelegate(ev.Type);
+        if (!isStandard)
+        {
+            diags.Add(MakeDiagnostic(
+                Diagnostics.McpEventUnsupportedDelegate,
+                ev.Locations.FirstOrDefault(),
+                ev.ToDisplayString(),
+                ev.Type.ToDisplayString()));
+            return null;
+        }
+
+        // Pull [McpEvent("description", MinIntervalMs=?, MaxQueueSize=?, CoalesceWindowMs=?)] data.
+        var attr = ev.GetAttributes()
+            .First(a => a.AttributeClass?.ToDisplayString() == McpEventAttribute);
+
+        var description = attr.ConstructorArguments.Length > 0
+            ? attr.ConstructorArguments[0].Value as string ?? string.Empty
+            : string.Empty;
+
+        int minIntervalMs = TryGetNamedInt(attr, "MinIntervalMs", 0);
+        int maxQueueSize = TryGetNamedInt(attr, "MaxQueueSize", 100);
+        int coalesceWindowMs = TryGetNamedInt(attr, "CoalesceWindowMs", 100);
+
+        // ---- MAR012: throttling sanity ----
+        if (maxQueueSize <= 0 || coalesceWindowMs < 0)
+        {
+            diags.Add(MakeDiagnostic(
+                Diagnostics.McpEventInvalidThrottling,
+                ev.Locations.FirstOrDefault(),
+                ev.ToDisplayString(),
+                maxQueueSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                coalesceWindowMs.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            // Fall back to defaults rather than dropping the event entirely.
+            if (maxQueueSize <= 0) maxQueueSize = 100;
+            if (coalesceWindowMs < 0) coalesceWindowMs = 100;
+        }
+
+        var argsTypeFullName = hasArgs
+            ? argsType!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+            : "global::System.EventArgs";
+
+        // The schema is built from the args type's public properties. For the
+        // base `EventArgs` (no public payload), we still emit a stable
+        // empty-object schema rather than the "complex type" placeholder.
+        var schema = hasArgs
+            ? JsonSchemaWriter.WriteSchema(argsType)
+            : JsonSchemaWriter.EmptyObjectSchema();
+
+        return new EventModel(
+            EventName: ev.Name,
+            Description: description,
+            HasArgsType: hasArgs,
+            ArgsTypeFullName: argsTypeFullName,
+            ArgsJsonSchema: schema,
+            MinIntervalMs: minIntervalMs,
+            MaxQueueSize: maxQueueSize,
+            CoalesceWindowMs: coalesceWindowMs);
+    }
+
+    /// <summary>
+    /// Classify an event's delegate type as
+    /// <c>(isStandardEventHandler, hasArgsType, argsType?)</c>:
+    /// <list type="bullet">
+    /// <item><c>System.EventHandler</c> -> <c>(true, false, null)</c></item>
+    /// <item><c>System.EventHandler&lt;T&gt;</c> -> <c>(true, true, T)</c></item>
+    /// <item>anything else -> <c>(false, false, null)</c></item>
+    /// </list>
+    /// Tolerates <c>IErrorTypeSymbol</c> by treating it as unknown rather than
+    /// crashing.
+    /// </summary>
+    private static (bool IsStandard, bool HasArgs, ITypeSymbol? ArgsType) ClassifyEventDelegate(ITypeSymbol delegateType)
+    {
+        if (delegateType is IErrorTypeSymbol) return (false, false, null);
+
+        // Strip nullable annotation so `event EventHandler? Foo` matches the
+        // same path as `event EventHandler Foo`. ToDisplayString() preserves
+        // the `?` annotation otherwise, breaking the equality check.
+        var unannotated = delegateType.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+        var fq = unannotated.ToDisplayString();
+        if (fq == "System.EventHandler") return (true, false, null);
+
+        if (unannotated is INamedTypeSymbol named && named.IsGenericType)
+        {
+            var def = named.OriginalDefinition.ToDisplayString();
+            if (def == "System.EventHandler<TEventArgs>" && named.TypeArguments.Length == 1)
+            {
+                return (true, true, named.TypeArguments[0]);
+            }
+        }
+        return (false, false, null);
     }
 
     // -------------------------------------------------------------------------

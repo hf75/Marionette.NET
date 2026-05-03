@@ -142,7 +142,7 @@ Write-Host ''
 $harnessExit = $LASTEXITCODE
 
 if ($harnessExit -eq 0) {
-    Write-Pass "Headless harness verdict: PASS (9/9 checks)"
+    Write-Pass "Headless harness verdict: PASS (10/10 checks incl. event delivery)"
 } else {
     Write-Fail "Headless harness verdict: FAIL (exit $harnessExit)"
 }
@@ -202,6 +202,7 @@ if ($failures -eq 0) {
     Write-Host '  - invoke_method AddTodo("buy milk") succeeded.' -ForegroundColor Gray
     Write-Host '  - read_observable TotalCount went 0 -> 1.' -ForegroundColor Gray
     Write-Host '  - resources/subscribe pushed notifications/resources/updated.' -ForegroundColor Gray
+    Write-Host '  - [McpEvent] TodoAdded fired and the event resource carried the args.' -ForegroundColor Gray
     if ($Gui) {
         Write-Host '  - capture_screenshot returned a valid PNG.' -ForegroundColor Gray
     }

@@ -527,6 +527,30 @@ public sealed class MarionetteTools
             ["controlType"] = t.ControlTypeName,
         }).ToArray());
 
+        // Phase 1.6: events. The descriptor's ArgsJsonSchema is a single-line
+        // JSON string at compile time; we parse it back here so inspect_app_api
+        // returns a nested JSON object instead of a string-of-JSON.
+        obj["events"] = new JsonArray(d.Events.Select(e =>
+        {
+            JsonNode? schemaNode = null;
+            if (!string.IsNullOrEmpty(e.ArgsJsonSchema))
+            {
+                try { schemaNode = JsonNode.Parse(e.ArgsJsonSchema); }
+                catch (JsonException) { schemaNode = JsonValue.Create(e.ArgsJsonSchema); }
+            }
+            return (JsonNode?)new JsonObject
+            {
+                ["name"] = e.Name,
+                ["description"] = e.Description,
+                ["argsType"] = e.ArgsTypeName,
+                ["argsSchema"] = schemaNode,
+                ["resourceUri"] = $"marionette://{d.Name}/events/{e.Name}",
+                ["minIntervalMs"] = e.MinIntervalMs,
+                ["maxQueueSize"] = e.MaxQueueSize,
+                ["coalesceWindowMs"] = e.CoalesceWindowMs,
+            };
+        }).ToArray());
+
         return obj;
     }
 

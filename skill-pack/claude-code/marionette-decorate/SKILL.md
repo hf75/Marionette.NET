@@ -1,6 +1,6 @@
 ---
 name: marionette-decorate
-description: Add Marionette.NET MCP-control attributes to an existing .NET desktop application's source code. Use this skill whenever the user asks to "make this Marionette-controllable", "add MCP attributes", "decorate this for Claude", "expose this app to Claude", "wire up Marionette in my app", or otherwise wants their existing C# WPF / Avalonia / WinUI / MAUI / Uno project to become driveable from an LLM. The skill identifies likely root classes, suggests [McpCallable] / [McpObservable] / [McpTriggerable] placements, edits the source files, and verifies the project still builds.
+description: Add Marionette.NET MCP-control attributes to an existing .NET desktop application's source code. Use this skill whenever the user asks to "make this Marionette-controllable", "add MCP attributes", "decorate this for Claude", "expose this app to Claude", "wire up Marionette in my app", or otherwise wants their existing C# WPF / Avalonia / WinUI / MAUI / Uno project to become driveable from an LLM. The skill identifies likely root classes, suggests [McpCallable] / [McpObservable] / [McpTriggerable] / [McpEvent] placements, edits the source files, and verifies the project still builds.
 ---
 
 # Marionette: Decorate an Existing App
@@ -100,6 +100,47 @@ Avoid `[McpObservable]` on:
 - **Properties with side-effects** (the getter mutates state). The runtime may read the property speculatively (initial baseline + change-detection re-reads); side effects in a getter become visible churn.
 - **High-frequency properties** (FPS counters, mouse position, animation progress). Watchable observables aren't designed for >10 Hz updates; the 200 ms coalesce window will still flood the channel.
 
+### 5a. Suggest `[McpEvent]` placements (Phase 1.6)
+
+Walk every `public event` on each candidate root. Suggest `[McpEvent]` when ALL these are true:
+
+- The delegate is `EventHandler` or `EventHandler<TArgs>` (other shapes produce error MAR010).
+- The event represents a **meaningful domain transition** the LLM should react to: "form submitted", "model changed", "validation failed", "long-running task completed", "user logged in".
+- Firing rate is bounded (or you set `MinIntervalMs` to throttle it).
+
+```csharp
+[McpEvent("A new TODO was added to the list.")]
+public event EventHandler<TodoAddedEventArgs>? TodoAdded;
+
+[McpEvent("Validation completed.", MinIntervalMs = 100)]
+public event EventHandler<ValidationCompletedEventArgs>? ValidationCompleted;
+```
+
+For args types, prefer **sealed classes inheriting from `EventArgs`** with read-only properties of primitives + nested records:
+
+```csharp
+public sealed class TodoAddedEventArgs : EventArgs
+{
+    public TodoAddedEventArgs(string title, DateTime addedAt)
+    { Title = title; AddedAt = addedAt; }
+    public string Title { get; }
+    public DateTime AddedAt { get; }
+}
+```
+
+Records cannot inherit from `EventArgs` (CS8864 — "records can only inherit from object or another record"). Use a plain sealed class.
+
+**Throttling examples:**
+- Mouse-move at 50ms min interval (~20 fps): `MinIntervalMs = 50`.
+- Bursty file-watcher events, want one notification/sec: `CoalesceWindowMs = 1000`.
+- Backpressure-bounded log streams: `MaxQueueSize = 50`.
+
+**Don't decorate:**
+- `Disposed` / `Closed` / framework lifecycle events.
+- Events on third-party objects you don't own (the runtime can't detach reliably on shutdown).
+- Very-high-frequency events without `MinIntervalMs` (the buffer fills before the LLM reads).
+- Generic events whose args are heavy object graphs — the schema generator falls back to `{"description": "complex type"}`.
+
 ### 5. Suggest `[McpTriggerable]` placements
 
 Triggerables are properties that EXPOSE a UI control (`Button`, `ButtonBase`, anything with a public `Click` event). Use them when the canonical user interaction with that control is the click, e.g.:
@@ -148,7 +189,7 @@ Then call `OnPropertyChanged(nameof(Count))` from every method that mutates the 
 
 ### 7. Verify the project still builds
 
-Run `dotnet build` against the project. The source generator emits diagnostics with the `MAR001`–`MAR008` prefix:
+Run `dotnet build` against the project. The source generator emits diagnostics with the `MAR001`–`MAR012` prefix:
 
 | ID | Severity | Meaning | Common fix |
 |---|---|---|---|
@@ -159,7 +200,11 @@ Run `dotnet build` against the project. The source generator emits diagnostics w
 | MAR005 | Error | `[McpObservable]` property has setter but no getter | Add a getter or remove the attribute |
 | MAR006 | Warning | `[McpObservable]` property/getter is non-public | Make property + getter `public` |
 | MAR007 | Error | `[McpTriggerable]` not a Button/ButtonBase and exposes no public `Click` event | Pick a different control type or remove |
-| MAR008 | Info | `[McpRoot]` class declares no MCP entrypoints | Add at least one `[McpCallable]`/`[McpObservable]`/`[McpTriggerable]` (or remove `[McpRoot]`) |
+| MAR008 | Info | `[McpRoot]` class declares no MCP entrypoints | Add at least one `[McpCallable]`/`[McpObservable]`/`[McpTriggerable]`/`[McpEvent]` (or remove `[McpRoot]`) |
+| MAR009 | Error | `[McpEvent]` on a non-event member | Move attribute to a C# event declaration |
+| MAR010 | Error | `[McpEvent]` event delegate is not `EventHandler` or `EventHandler<T>` | Change delegate type or remove attribute |
+| MAR011 | Warning | `[McpEvent]` event's class lacks `[McpRoot]` | Add `[McpRoot]` to the class |
+| MAR012 | Warning | `[McpEvent]` throttling parameter out of range | Use `MaxQueueSize > 0` and `CoalesceWindowMs >= 0` |
 
 Surface every diagnostic to the user. Don't silently strip attributes to make the build green.
 

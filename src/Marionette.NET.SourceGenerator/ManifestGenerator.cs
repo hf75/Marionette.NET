@@ -64,6 +64,21 @@ public sealed class ManifestGenerator : IIncrementalGenerator
             .Where(static d => d is not null)
             .Select(static (d, _) => d!);
 
+        // ----- Source B2: orphan events (MAR011) -----
+        // An event with [McpEvent] whose declaring class lacks [McpRoot].
+        // Mirrors the orphan-callable shape; ForAttributeWithMetadataName works
+        // against EventFieldDeclarationSyntax (field-style events) and
+        // EventDeclarationSyntax (custom add/remove); we accept both.
+        var orphanEvents = context.SyntaxProvider.ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: Validator.McpEventAttribute,
+                predicate: static (node, _) =>
+                    node is EventFieldDeclarationSyntax ||
+                    node is EventDeclarationSyntax ||
+                    node is VariableDeclaratorSyntax,
+                transform: static (ctx, _) => TransformOrphanEvent(ctx))
+            .Where(static d => d is not null)
+            .Select(static (d, _) => d!);
+
         // ----- Source C: assembly name -----
         var assemblyName = context.CompilationProvider
             .Select(static (c, _) => c.AssemblyName ?? "Unknown");
@@ -83,12 +98,14 @@ public sealed class ManifestGenerator : IIncrementalGenerator
         // ----- Combine into a single ManifestModel -----
         var combined = rootCandidates.Collect()
             .Combine(orphanCallables.Collect())
+            .Combine(orphanEvents.Collect())
             .Combine(assemblyName)
             .Combine(mcpEnabled)
             .Select(static (tuple, _) =>
             {
-                var rootsAndDiags = tuple.Left.Left.Left;
-                var orphans = tuple.Left.Left.Right;
+                var rootsAndDiags = tuple.Left.Left.Left.Left;
+                var orphans = tuple.Left.Left.Left.Right;
+                var orphanEvts = tuple.Left.Left.Right;
                 var asmName = tuple.Left.Right;
                 var mcpOn = tuple.Right;
 
@@ -101,6 +118,10 @@ public sealed class ManifestGenerator : IIncrementalGenerator
                     diags.AddRange(rootDiags.AsEnumerable());
                 }
                 foreach (var orphan in orphans)
+                {
+                    diags.Add(orphan);
+                }
+                foreach (var orphan in orphanEvts)
                 {
                     diags.Add(orphan);
                 }
@@ -179,5 +200,27 @@ public sealed class ManifestGenerator : IIncrementalGenerator
             Diagnostics.CallableOnUnrootedClass,
             method.Locations.FirstOrDefault(),
             method.ToDisplayString());
+    }
+
+    /// <summary>
+    /// Detect [McpEvent] events whose declaring class lacks [McpRoot]
+    /// (MAR011 warning) — mirror of <see cref="TransformOrphanCallable"/>.
+    /// </summary>
+    private static DiagnosticInfo? TransformOrphanEvent(
+        GeneratorAttributeSyntaxContext ctx)
+    {
+        if (ctx.TargetSymbol is not IEventSymbol ev) return null;
+        var containing = ev.ContainingType;
+        if (containing is null) return null;
+
+        foreach (var attr in containing.GetAttributes())
+        {
+            if (attr.AttributeClass?.ToDisplayString() == Validator.McpRootAttribute) return null;
+        }
+
+        return Validator.MakeDiagnostic(
+            Diagnostics.McpEventOnUnrootedClass,
+            ev.Locations.FirstOrDefault(),
+            ev.ToDisplayString());
     }
 }

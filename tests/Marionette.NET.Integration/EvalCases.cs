@@ -47,6 +47,7 @@ public class EvalCases
     };
 
     private const string TotalCountUri = "marionette://TodoListViewModel/TotalCount";
+    private const string TodoAddedEventUri = "marionette://TodoListViewModel/events/TodoAdded";
 
     // -------------------------------------------------------------------------
     // EC-1: Discovery is complete
@@ -231,6 +232,83 @@ public class EvalCases
         var afterDecay = await fx.InvokeMethodAsync(
             "TodoListViewModel", "AddTodo", new { title = "after-decay" });
         AssertCallableSuccess(afterDecay, "Post-decay AddTodo");
+    }
+
+    // -------------------------------------------------------------------------
+    // EC-6: Events deliver via resource notifications (Phase 1.6)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task EC6_Events_DeliverViaResourceNotifications()
+    {
+        using var fx = new TodoAppFixture();
+        await fx.InitializeAsync();
+
+        // Subscribe BEFORE invoking AddTodo. Otherwise the first fire has no
+        // subscriber and we miss the notification.
+        var subscribed = await fx.SubscribeAsync(TodoAddedEventUri);
+        Assert.True(subscribed,
+            $"EC-6: resources/subscribe to {TodoAddedEventUri} did not return a result.");
+
+        // First AddTodo("EC6 item") -> success (void => "null").
+        var add1 = await fx.InvokeMethodAsync(
+            "TodoListViewModel", "AddTodo", new { title = "EC6 item" });
+        AssertCallableSuccess(add1, "AddTodo(\"EC6 item\")");
+
+        // Wait for the event notification.
+        var got1 = await fx.WaitForResourceUpdateAsync(TodoAddedEventUri, TimeSpan.FromSeconds(5));
+        Assert.True(got1,
+            $"EC-6: timeout waiting for notifications/resources/updated on {TodoAddedEventUri} " +
+            "after first AddTodo (expected within 5s).");
+
+        // resources/read -> assert sequence >= 1 and events[0].args.Title.
+        var read1 = await fx.ReadResourceAsync(TodoAddedEventUri);
+        Assert.NotNull(read1);
+        using (var doc1 = JsonDocument.Parse(read1!))
+        {
+            Assert.True(doc1.RootElement.TryGetProperty("sequence", out var seq1) &&
+                        seq1.TryGetInt64(out var s1) && s1 >= 1,
+                $"EC-6: expected sequence >= 1 after first AddTodo. Got: {read1}");
+            Assert.True(doc1.RootElement.TryGetProperty("events", out var evArr1) &&
+                        evArr1.ValueKind == JsonValueKind.Array && evArr1.GetArrayLength() >= 1,
+                $"EC-6: expected at least one event after first AddTodo. Got: {read1}");
+            var first = evArr1[0];
+            Assert.True(first.TryGetProperty("args", out var args1) &&
+                        args1.TryGetProperty("Title", out var title1) &&
+                        title1.GetString() == "EC6 item",
+                $"EC-6: events[0].args.Title should be 'EC6 item'. Got: {read1}");
+        }
+
+        // Second AddTodo -> another notification, sequence increments, second
+        // event present.
+        var add2 = await fx.InvokeMethodAsync(
+            "TodoListViewModel", "AddTodo", new { title = "EC6 second" });
+        AssertCallableSuccess(add2, "AddTodo(\"EC6 second\")");
+
+        var got2 = await fx.WaitForResourceUpdateAsync(TodoAddedEventUri, TimeSpan.FromSeconds(5));
+        Assert.True(got2,
+            $"EC-6: timeout waiting for notifications/resources/updated on {TodoAddedEventUri} " +
+            "after second AddTodo (expected within 5s).");
+
+        var read2 = await fx.ReadResourceAsync(TodoAddedEventUri);
+        Assert.NotNull(read2);
+        using (var doc2 = JsonDocument.Parse(read2!))
+        {
+            Assert.True(doc2.RootElement.TryGetProperty("sequence", out var seq2) &&
+                        seq2.TryGetInt64(out var s2) && s2 >= 2,
+                $"EC-6: expected sequence >= 2 after second AddTodo. Got: {read2}");
+            Assert.True(doc2.RootElement.TryGetProperty("events", out var evArr2) &&
+                        evArr2.ValueKind == JsonValueKind.Array && evArr2.GetArrayLength() >= 2,
+                $"EC-6: expected at least two events after second AddTodo. Got: {read2}");
+            // The ring buffer is in arrival order; the second event sits at
+            // index 1 unless oldest entries were evicted, which can't happen
+            // with the 100-entry default after only two fires.
+            var second = evArr2[1];
+            Assert.True(second.TryGetProperty("args", out var args2) &&
+                        args2.TryGetProperty("Title", out var title2) &&
+                        title2.GetString() == "EC6 second",
+                $"EC-6: events[1].args.Title should be 'EC6 second'. Got: {read2}");
+        }
     }
 
     // -------------------------------------------------------------------------

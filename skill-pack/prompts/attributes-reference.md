@@ -10,18 +10,18 @@ The canonical reference for the Marionette.NET v1 surface. Every skill in `skill
 
 | Symbol | Namespace |
 |---|---|
-| `[McpRoot]`, `[McpCallable]`, `[McpObservable]`, `[McpTriggerable]`, `TriggerStrategy` | `Marionette` |
+| `[McpRoot]`, `[McpCallable]`, `[McpObservable]`, `[McpTriggerable]`, `[McpEvent]`, `TriggerStrategy` | `Marionette` |
 | `Ai.Trigger`, `Ai.ScheduleTrigger`, `Ai.IsActive` | `Marionette` |
 | `MarionetteWpf.AttachTo` (WPF adapter bootstrap) | `Marionette.Adapter.Wpf` |
 | `MarionetteHost.RunAsync` (headless host entry) | `Marionette.Runtime` |
-| `RootDescriptor`, `CallableDescriptor`, `ObservableDescriptor`, `TriggerableDescriptor`, `ParamDescriptor` | `Marionette.Runtime.Manifest` |
+| `RootDescriptor`, `CallableDescriptor`, `ObservableDescriptor`, `TriggerableDescriptor`, `EventDescriptor`, `ParamDescriptor` | `Marionette.Runtime.Manifest` |
 | `GeneratedManifest.Roots` (source-generator output) | `Marionette.Generated` |
 
 Always `using Marionette;` in user code. The other namespaces are only relevant to the wiring snippet in `App.OnStartup` (or equivalent).
 
 ---
 
-## The four attributes
+## The five attributes
 
 ### `[McpRoot]` — class
 
@@ -38,7 +38,7 @@ public sealed class AppSettings { ... }
 **Constraints (source-generator-enforced):**
 
 - Class only. Static, generic, and non-class types produce error MAR001.
-- The class needs at least one `[McpCallable]` / `[McpObservable]` / `[McpTriggerable]`, otherwise the generator emits info MAR008 and registers a placeholder root that does nothing.
+- The class needs at least one `[McpCallable]` / `[McpObservable]` / `[McpTriggerable]` / `[McpEvent]`, otherwise the generator emits info MAR008 and registers a placeholder root that does nothing.
 - The runtime calls the class's parameterless ctor at startup unless the host is given a pre-bound instance. If there is no public parameterless ctor, the descriptor's factory is `null` and the runtime surfaces `root_unavailable` until an adapter binds an instance.
 
 **Naming guidance:**
@@ -153,6 +153,101 @@ For derived properties (`PendingCount = TotalCount - CompletedCount`), fire `Pro
 - Decorate getters that throw (the LLM gets `read_failed`; useless signal).
 - Decorate properties with side-effects in the getter (the runtime may read speculatively for change-detection).
 - Decorate high-frequency state (FPS, mouse position). The 200 ms coalesce can't keep up with > 10 Hz updates.
+
+---
+
+### `[McpEvent]` — C# event (Phase 1.6)
+
+Marks a C# event for declarative MCP delivery. The runtime subscribes once at startup; every fire lands in a per-event ring buffer and produces a coalesced `notifications/resources/updated` on `marionette://<root>/events/<event>`. Subscribers read the resource to pick up the full payload (`{sequence, dropped, events:[{sequence, timestampUtc, args}, ...]}`).
+
+```csharp
+public sealed class TodoAddedEventArgs : EventArgs
+{
+    public TodoAddedEventArgs(string title, DateTime addedAt)
+    { Title = title; AddedAt = addedAt; }
+    public string Title { get; }
+    public DateTime AddedAt { get; }
+}
+
+[McpEvent("A new TODO was added.")]
+public event EventHandler<TodoAddedEventArgs>? TodoAdded;
+
+[McpEvent("Generic refresh ping.")]
+public event EventHandler? Refreshed;
+
+[McpEvent("Mouse moved over the canvas.",
+          MinIntervalMs = 50,            // accept at most 20 fires/second
+          MaxQueueSize = 200,            // ring buffer size
+          CoalesceWindowMs = 100)]       // one notification per 100 ms
+public event EventHandler<CursorEventArgs>? CursorMoved;
+```
+
+**Properties:**
+
+| Property | Type | Default | Meaning |
+|---|---|---|---|
+| `Description` (ctor) | `string` | required | LLM-facing description |
+| `MinIntervalMs` | `int` | `0` | Drop fires arriving faster than this (per-event drop counter exposed) |
+| `MaxQueueSize` | `int` | `100` | Bounded ring buffer; oldest entries evicted on overflow |
+| `CoalesceWindowMs` | `int` | `100` | Window during which fires collapse to a single client notification |
+
+**Constraints (source-generator-enforced):**
+
+- Delegate must be `EventHandler` or `EventHandler<TArgs>` (error MAR010 for any other shape, e.g. `Action<T>` or custom delegates).
+- Containing class must have `[McpRoot]` (warning MAR011 otherwise).
+- `MaxQueueSize <= 0` or `CoalesceWindowMs < 0` produces warning MAR012; defaults are substituted.
+
+**Args type guidance:**
+
+- Use a sealed class (with primary ctor or properties) inheriting from `EventArgs`. Records cannot inherit `EventArgs` because `EventArgs` is a non-record class.
+- Public, get-only properties of primitives + nested records work cleanly. The schema generator walks them, depth-bounded at 3.
+- `DateTime` and `DateTimeOffset` surface as `{"type":"string","format":"date-time"}`. `Guid` and `TimeSpan` as `{"type":"string"}`.
+- `IEnumerable<T>` of primitives works (`{"type":"array","items":...}`); avoid `IEnumerable<complex>` chains because they explode the schema and fight STJ serialization.
+- For unsupported / cyclic shapes, the generator emits `{"description":"complex type"}`.
+
+**Coalesce + ring buffer semantics:**
+
+- The buffer captures every fire (up to `MaxQueueSize`). Adopters can rely on this for completeness — no event is lost up to the buffer cap.
+- The notification is debounced: a burst of fires within `CoalesceWindowMs` produces one `notifications/resources/updated`. Subscribers read the resource once per window and receive the whole burst at once.
+- `MinIntervalMs > 0` rate-limits per-event fires arriving from user code. Drops increment a per-event counter exposed in the resource snapshot's `dropped` field.
+
+**Throttling examples:**
+
+- Mouse-move at 60 Hz, want at most 20 fires/sec: `MinIntervalMs = 50`.
+- Bursty file-changed events from a watcher, only react once per second: `CoalesceWindowMs = 1000`.
+- High-throughput logging where backpressure matters more than completeness: `MaxQueueSize = 50`.
+
+**Inspect_app_api shape:** events surface in the manifest under each root's `events: [...]`:
+
+```json
+{
+  "name": "TodoAdded",
+  "description": "A new TODO was added.",
+  "argsType": "Sample.Wpf.TodoApp.TodoAddedEventArgs",
+  "argsSchema": {
+    "type": "object",
+    "properties": {
+      "AddedAt": { "type": "string", "format": "date-time" },
+      "Title":   { "type": "string" }
+    }
+  },
+  "resourceUri": "marionette://TodoListViewModel/events/TodoAdded",
+  "minIntervalMs": 0,
+  "maxQueueSize": 100,
+  "coalesceWindowMs": 100
+}
+```
+
+**Don't:**
+
+- Decorate `Disposed` / `Closed` events of objects you don't own — adopters lose the ability to detach handlers cleanly.
+- Decorate framework events you don't control (e.g. `INotifyPropertyChanged.PropertyChanged` on a third-party VM). Adopt the [McpObservable(Watchable=true)] pattern instead.
+- Decorate very-high-frequency events (60 Hz mouse moves, animation ticks) without setting `MinIntervalMs` — the ring buffer fills in milliseconds and old data is evicted before the LLM can read it.
+- Decorate events whose args type is a class you also mutate (treat args as an immutable snapshot).
+
+**Stripping:**
+
+`[McpEvent]` is a sealed marker attribute, metadata-only. The source-generator-emitted descriptor and runtime hookup vanish from stripped Release builds. There is zero call-site cost when `EnableMcpAutomation=false`.
 
 ---
 
@@ -285,7 +380,25 @@ Each root entry:
       "resourceUri": "marionette://TodoListViewModel/TotalCount"
     }
   ],
-  "triggerables": []
+  "triggerables": [],
+  "events": [
+    {
+      "name": "TodoAdded",
+      "description": "A new TODO was added.",
+      "argsType": "Sample.Wpf.TodoApp.TodoAddedEventArgs",
+      "argsSchema": {
+        "type": "object",
+        "properties": {
+          "AddedAt": { "type": "string", "format": "date-time" },
+          "Title":   { "type": "string" }
+        }
+      },
+      "resourceUri": "marionette://TodoListViewModel/events/TodoAdded",
+      "minIntervalMs": 0,
+      "maxQueueSize": 100,
+      "coalesceWindowMs": 100
+    }
+  ]
 }
 ```
 

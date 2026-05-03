@@ -112,7 +112,8 @@ public static class GeneratedManifest
                     ClrTypeName: "int",
                     Read: static (instance) => ((global::Demo.Calculator)instance).OperationCount),
             },
-            Triggerables: global::System.Array.Empty<TriggerableDescriptor>()
+            Triggerables: global::System.Array.Empty<TriggerableDescriptor>(),
+            Events: global::System.Array.Empty<EventDescriptor>()
         ),
     };
 }

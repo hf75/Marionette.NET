@@ -43,7 +43,8 @@ internal sealed record RootModel(
     bool HasParameterlessCtor,     // controls whether we emit `() => new T()` or `null`
     EquatableArray<CallableModel> Callables,
     EquatableArray<ObservableModel> Observables,
-    EquatableArray<TriggerableModel> Triggerables);
+    EquatableArray<TriggerableModel> Triggerables,
+    EquatableArray<EventModel> Events);
 
 /// <summary>
 /// One [McpCallable] method. The generator emits an Invoke lambda that boxes
@@ -89,6 +90,22 @@ internal sealed record TriggerableModel(
     string Description,
     int Strategy,                  // raw enum value (Semantic=0, EventSystem=1, InputSystem=2)
     string ControlTypeFullName);
+
+/// <summary>
+/// One [McpEvent] event (Phase 1.6). Carries the delegate shape information
+/// (HasArgsType + ArgsTypeFullName) so the emitter can write either an
+/// <c>EventHandler</c> or <c>EventHandler&lt;T&gt;</c> typed bridge, plus the
+/// pre-computed JSON schema string for the args type's public properties.
+/// </summary>
+internal sealed record EventModel(
+    string EventName,
+    string Description,
+    bool HasArgsType,                      // false => EventHandler, true => EventHandler<T>
+    string ArgsTypeFullName,               // "global::System.EventArgs" when HasArgsType is false
+    string ArgsJsonSchema,                 // single-line JSON, deterministic
+    int MinIntervalMs,
+    int MaxQueueSize,
+    int CoalesceWindowMs);
 
 /// <summary>
 /// Carries enough information to reconstruct a Roslyn Diagnostic at the

@@ -116,8 +116,58 @@ internal static class Diagnostics
     public static readonly DiagnosticDescriptor RootHasNoMembers = new(
         id: "MAR008",
         title: "[McpRoot] declares no MCP entrypoints",
-        messageFormat: "Root '{0}' exposes no [McpCallable]/[McpObservable]/[McpTriggerable] members; the manifest entry will be empty",
+        messageFormat: "Root '{0}' exposes no [McpCallable]/[McpObservable]/[McpTriggerable]/[McpEvent] members; the manifest entry will be empty",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Info,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR009: <c>[McpEvent]</c> on a non-event member. The C# compiler also
+    /// rejects attribute targets, but if the analyzer somehow sees one anyway
+    /// we surface a clean error rather than swallowing it.
+    /// </summary>
+    public static readonly DiagnosticDescriptor McpEventOnNonEventMember = new(
+        id: "MAR009",
+        title: "[McpEvent] only applies to C# event members",
+        messageFormat: "[McpEvent] on '{0}' is ignored — the attribute targets only C# event declarations",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR010: <c>[McpEvent]</c> applied to an event whose delegate is not
+    /// <c>EventHandler</c> or <c>EventHandler&lt;T&gt;</c>. Phase 1 supports
+    /// only the standard EventHandler family.
+    /// </summary>
+    public static readonly DiagnosticDescriptor McpEventUnsupportedDelegate = new(
+        id: "MAR010",
+        title: "[McpEvent] requires EventHandler or EventHandler<T>",
+        messageFormat: "[McpEvent] '{0}' has delegate type '{1}' — Phase 1 supports only System.EventHandler or System.EventHandler<TArgs>",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR011: an <c>[McpEvent]</c> event whose declaring class lacks
+    /// <c>[McpRoot]</c> is silently ignored. Mirror of <see cref="CallableOnUnrootedClass"/>.
+    /// </summary>
+    public static readonly DiagnosticDescriptor McpEventOnUnrootedClass = new(
+        id: "MAR011",
+        title: "[McpEvent] on un-rooted class is ignored",
+        messageFormat: "[McpEvent] on '{0}' is ignored — the declaring class must be decorated with [McpRoot] for the generator to emit an event descriptor",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR012: invalid throttling parameters on <c>[McpEvent]</c>. Defaults
+    /// are substituted; the build is not blocked.
+    /// </summary>
+    public static readonly DiagnosticDescriptor McpEventInvalidThrottling = new(
+        id: "MAR012",
+        title: "[McpEvent] throttling parameter out of range",
+        messageFormat: "[McpEvent] '{0}' has invalid throttling: MaxQueueSize={1}, CoalesceWindowMs={2}. MaxQueueSize must be > 0 and CoalesceWindowMs must be >= 0; defaults will be used.",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true);
 }

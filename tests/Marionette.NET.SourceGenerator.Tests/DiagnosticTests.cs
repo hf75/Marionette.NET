@@ -147,6 +147,119 @@ public class DiagnosticTests
     }
 
     // -------------------------------------------------------------------------
+    // Phase 1.6: [McpEvent] diagnostics
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void MAR010_McpEventOnNonStandardDelegate_IsRejected()
+    {
+        // [McpEvent] on an event whose delegate is Action<T> rather than
+        // EventHandler<T>. Phase 1 only supports the standard EventHandler
+        // family; the validator rejects with MAR010.
+        var source = """
+            using System;
+            using Marionette;
+            namespace Demo;
+
+            public sealed class FooArgs { public string X { get; init; } = ""; }
+
+            [McpRoot]
+            public class Root
+            {
+                [McpEvent("custom delegate")]
+                public event Action<FooArgs>? Bad;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source);
+
+        Assert.Contains(result.GeneratorDiagnostics,
+            d => d.Id == "MAR010" && d.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void MAR011_McpEventOnUnRootedClass_EmitsWarning()
+    {
+        // [McpEvent] on an event whose declaring class lacks [McpRoot].
+        // Mirror of MAR003 — silently ignored, warning emitted.
+        var source = """
+            using System;
+            using Marionette;
+            namespace Demo;
+
+            // No [McpRoot] here.
+            public class Stray
+            {
+                [McpEvent("orphan")]
+                public event EventHandler? Pinged;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source);
+
+        Assert.Contains(result.GeneratorDiagnostics,
+            d => d.Id == "MAR011" && d.Severity == DiagnosticSeverity.Warning);
+    }
+
+    [Fact]
+    public void MAR012_McpEventInvalidThrottling_EmitsWarning()
+    {
+        // [McpEvent] with MaxQueueSize <= 0 should produce MAR012 and fall
+        // back to defaults (the descriptor is still emitted).
+        var source = """
+            using System;
+            using Marionette;
+            namespace Demo;
+
+            [McpRoot]
+            public class Root
+            {
+                [McpEvent("bad sizes", MaxQueueSize = 0, CoalesceWindowMs = -1)]
+                public event EventHandler? Pinged;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source);
+
+        Assert.Contains(result.GeneratorDiagnostics,
+            d => d.Id == "MAR012" && d.Severity == DiagnosticSeverity.Warning);
+        Assert.False(result.HasGeneratorErrors,
+            "MAR012 must be a warning, not an error — the descriptor still emits with defaults.");
+    }
+
+    [Fact]
+    public void WellFormedEvents_ProduceNoErrors()
+    {
+        var source = """
+            using System;
+            using Marionette;
+            namespace Demo;
+
+            public sealed class FooArgs : EventArgs
+            {
+                public string Name { get; init; } = "";
+            }
+
+            [McpRoot]
+            public class Root
+            {
+                [McpEvent("a thing happened")]
+                public event EventHandler<FooArgs>? Happened;
+
+                [McpEvent("a generic ping")]
+                public event EventHandler? Pinged;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source);
+
+        Assert.False(result.HasGeneratorErrors,
+            string.Join("\n", result.GeneratorDiagnostics.Select(d => $"{d.Id}: {d.GetMessage()}")));
+        Assert.False(result.HasCompilationErrors,
+            string.Join("\n", result.CompilationDiagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => $"{d.Id}: {d.GetMessage()}")));
+    }
+
+    // -------------------------------------------------------------------------
     // Phase 1.2 gating: MCP_ENABLED off → no source emitted, but diagnostics
     // still flow so squigglies still appear in the IDE.
     // -------------------------------------------------------------------------

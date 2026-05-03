@@ -277,6 +277,102 @@ public sealed class McpTriggerableAttribute : Attribute
 }
 
 /// <summary>
+/// Marks a C# event as deliverable through Marionette's MCP automation surface.
+/// The runtime subscribes to the event at startup and forwards every fire (with
+/// the serialized <c>EventArgs</c>) to clients that have subscribed to the
+/// matching <c>marionette://&lt;root&gt;/events/&lt;event&gt;</c> resource via
+/// <c>resources/subscribe</c>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The C# event delegate must be either <see cref="System.EventHandler"/> or
+/// <see cref="System.EventHandler{TEventArgs}"/> for Phase 1. Other delegate
+/// shapes are rejected by the source generator (diagnostic <c>MAR010</c>).
+/// </para>
+/// <para>
+/// When the delegate carries a <c>TEventArgs</c>, the source generator walks
+/// the type's public properties and emits a JSON schema describing the args
+/// shape. The schema is exposed through <c>inspect_app_api</c> so the LLM can
+/// understand what data each fire carries.
+/// </para>
+/// <para>
+/// <b>Stripping:</b> the attribute itself is metadata-only and survives in
+/// stripped builds (consistent with the rest of Marionette's attribute set).
+/// The source-generator-emitted descriptor and the runtime hookup vanish when
+/// <c>MCP_ENABLED</c> is not defined — there is zero call-site cost in
+/// stripped Release builds.
+/// </para>
+/// <para>
+/// <b>Throttling and coalescing:</b> the runtime stores every fire in a per-event
+/// ring buffer (<see cref="MaxQueueSize"/>) so adopters do not lose events.
+/// Notifications to the client are debounced by <see cref="CoalesceWindowMs"/>
+/// — a burst of fires produces a single <c>notifications/resources/updated</c>
+/// per window, and the client re-reads the resource to pick up every entry.
+/// <see cref="MinIntervalMs"/> drops fires that arrive faster than the
+/// configured rate (with a per-event drop counter).
+/// </para>
+/// <para>
+/// Example:
+/// <code>
+/// public sealed record TodoAddedEventArgs(string Title, DateTime AddedAt) : EventArgs;
+///
+/// [McpEvent("A new TODO was added.")]
+/// public event EventHandler&lt;TodoAddedEventArgs&gt;? TodoAdded;
+///
+/// [McpEvent("Generic refresh ping.")]
+/// public event EventHandler? Refreshed;
+///
+/// [McpEvent("Mouse moved over the canvas.", MinIntervalMs = 50, MaxQueueSize = 200, CoalesceWindowMs = 100)]
+/// public event EventHandler&lt;CursorEventArgs&gt;? CursorMoved;
+/// </code>
+/// </para>
+/// </remarks>
+[AttributeUsage(AttributeTargets.Event, AllowMultiple = false, Inherited = false)]
+public sealed class McpEventAttribute : Attribute
+{
+    /// <summary>
+    /// Initializes a new <see cref="McpEventAttribute"/> with the LLM-facing
+    /// description text.
+    /// </summary>
+    /// <param name="description">
+    /// Human-readable description shown to the LLM in the manifest. Should
+    /// state what the event represents in a single sentence.
+    /// </param>
+    public McpEventAttribute(string description)
+    {
+        Description = description;
+    }
+
+    /// <summary>
+    /// Human-readable description shown to the LLM in the manifest.
+    /// </summary>
+    public string Description { get; }
+
+    /// <summary>
+    /// Minimum interval between accepted fires, in milliseconds. Fires that
+    /// arrive faster than this are dropped (a per-event drop counter is
+    /// surfaced in the resource payload). Default <c>0</c> = no throttle.
+    /// </summary>
+    public int MinIntervalMs { get; init; }
+
+    /// <summary>
+    /// Maximum number of recent fires retained in the runtime ring buffer for
+    /// this event. Older entries are evicted when the buffer fills. Default
+    /// <c>100</c>.
+    /// </summary>
+    public int MaxQueueSize { get; init; } = 100;
+
+    /// <summary>
+    /// Coalescing window for client notifications, in milliseconds. A burst of
+    /// fires within this window produces a single
+    /// <c>notifications/resources/updated</c> push; the ring buffer still
+    /// retains every event so the client can read them all on the next
+    /// <c>resources/read</c>. Default <c>100</c>.
+    /// </summary>
+    public int CoalesceWindowMs { get; init; } = 100;
+}
+
+/// <summary>
 /// Strategies a Marionette adapter may use to fire an
 /// <see cref="McpTriggerableAttribute"/>-decorated control's primary
 /// interaction.

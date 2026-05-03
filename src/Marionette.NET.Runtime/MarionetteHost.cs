@@ -41,6 +41,7 @@ using System.Threading.Tasks;
 
 using Marionette.Runtime.Adapters;
 using Marionette.Runtime.Channel;
+using Marionette.Runtime.Events;
 using Marionette.Runtime.Loop;
 using Marionette.Runtime.Manifest;
 using Marionette.Runtime.Resources;
@@ -138,6 +139,10 @@ public static class MarionetteHost
         // Watchable resources.
         builder.Services.AddSingleton<WatchableResourceProvider>();
 
+        // Phase 1.6: event log + per-event resource provider.
+        builder.Services.AddSingleton<EventLogService>();
+        builder.Services.AddSingleton<EventResourceProvider>();
+
         // ---- MCP server wiring ------------------------------------------
         var mcpBuilder = builder.Services
             .AddMcpServer(opts =>
@@ -159,30 +164,58 @@ public static class MarionetteHost
             // (PHASE0_FINDINGS implication 6 + Spike B). The four Phase-1 tools
             // live as static methods on MarionetteTools.
             .WithTools<MarionetteTools>()
-            // Resource handlers — each forwards into WatchableResourceProvider.
+            // Resource handlers — Phase 1.6 dispatches between the watchable
+            // observable provider and the event provider based on URI shape.
+            // Both providers are singletons; the host fans out list/read/
+            // subscribe/unsubscribe to whichever owns the URI.
             .WithListResourcesHandler(static async (ctx, ct) =>
             {
-                var provider = ctx.Services!.GetRequiredService<WatchableResourceProvider>();
-                return await Task.FromResult(provider.List());
+                var watchable = ctx.Services!.GetRequiredService<WatchableResourceProvider>();
+                var events = ctx.Services!.GetRequiredService<EventResourceProvider>();
+                var combined = new ListResourcesResult();
+                var list = new List<Resource>();
+                list.AddRange(watchable.List().Resources);
+                list.AddRange(events.List());
+                combined.Resources = list;
+                return await Task.FromResult(combined);
             })
             .WithReadResourceHandler(static async (ctx, ct) =>
             {
-                var provider = ctx.Services!.GetRequiredService<WatchableResourceProvider>();
+                var watchable = ctx.Services!.GetRequiredService<WatchableResourceProvider>();
+                var events = ctx.Services!.GetRequiredService<EventResourceProvider>();
                 var uri = ctx.Params?.Uri ?? string.Empty;
-                return await provider.ReadAsync(uri, ct).ConfigureAwait(false);
+                if (events.TryHandle(uri))
+                    return await events.ReadAsync(uri, ct).ConfigureAwait(false);
+                return await watchable.ReadAsync(uri, ct).ConfigureAwait(false);
             })
             .WithSubscribeToResourcesHandler(static async (ctx, ct) =>
             {
-                var provider = ctx.Services!.GetRequiredService<WatchableResourceProvider>();
+                var watchable = ctx.Services!.GetRequiredService<WatchableResourceProvider>();
+                var events = ctx.Services!.GetRequiredService<EventResourceProvider>();
                 var uri = ctx.Params?.Uri ?? string.Empty;
-                provider.Subscribe(uri);
+                if (events.TryHandle(uri))
+                {
+                    events.Subscribe(uri);
+                }
+                else
+                {
+                    watchable.Subscribe(uri);
+                }
                 return await Task.FromResult(new EmptyResult());
             })
             .WithUnsubscribeFromResourcesHandler(static async (ctx, ct) =>
             {
-                var provider = ctx.Services!.GetRequiredService<WatchableResourceProvider>();
+                var watchable = ctx.Services!.GetRequiredService<WatchableResourceProvider>();
+                var events = ctx.Services!.GetRequiredService<EventResourceProvider>();
                 var uri = ctx.Params?.Uri ?? string.Empty;
-                provider.Unsubscribe(uri);
+                if (events.TryHandle(uri))
+                {
+                    events.Unsubscribe(uri);
+                }
+                else
+                {
+                    watchable.Unsubscribe(uri);
+                }
                 return await Task.FromResult(new EmptyResult());
             });
 
@@ -206,11 +239,18 @@ public static class MarionetteHost
             }
         }
 
-        // Bind ChannelEmitter + ResourceProvider to the live MCP server. The
+        // Bind ChannelEmitter + Resource providers to the live MCP server. The
         // McpServer instance is registered by AddMcpServer — we pull it via DI.
         var server = sp.GetRequiredService<McpServer>();
         sp.GetRequiredService<ChannelEmitter>().Bind(server);
         sp.GetRequiredService<WatchableResourceProvider>().Bind(server);
+
+        // Phase 1.6: start the event log + bind the per-event resource
+        // provider to the server. Start() hooks every [McpEvent] on every
+        // root; Stop() in the finally block detaches.
+        var eventLog = sp.GetRequiredService<EventLogService>();
+        eventLog.Start();
+        sp.GetRequiredService<EventResourceProvider>().Bind(server);
 
         stdoutGuard.AttachLogger(startupLogger);
 
@@ -224,6 +264,12 @@ public static class MarionetteHost
             try { await sp.GetRequiredService<ChannelEmitter>().DisposeAsync().ConfigureAwait(false); }
             catch { /* ignore — shutdown path */ }
             try { await sp.GetRequiredService<WatchableResourceProvider>().DisposeAsync().ConfigureAwait(false); }
+            catch { /* ignore — shutdown path */ }
+            // Phase 1.6: detach every [McpEvent] handler so root instances
+            // are not GC-rooted by the runtime.
+            try { await sp.GetRequiredService<EventResourceProvider>().DisposeAsync().ConfigureAwait(false); }
+            catch { /* ignore — shutdown path */ }
+            try { sp.GetRequiredService<EventLogService>().Dispose(); }
             catch { /* ignore — shutdown path */ }
 
             var leaked = stdoutGuard.LeakedByteCount;
@@ -282,6 +328,10 @@ public static class MarionetteHost
             foreach (var t in r.Triggerables)
             {
                 sb.AppendLine($"    trigger  {r.Name}.{t.Name}: {t.ControlTypeName}  ({t.Strategy})  — {t.Description}");
+            }
+            foreach (var e in r.Events)
+            {
+                sb.AppendLine($"    event    {r.Name}.{e.Name}: {e.ArgsTypeName}  (queue={e.MaxQueueSize}, coalesce={e.CoalesceWindowMs}ms, minInterval={e.MinIntervalMs}ms)  — {e.Description}");
             }
             sb.AppendLine();
         }

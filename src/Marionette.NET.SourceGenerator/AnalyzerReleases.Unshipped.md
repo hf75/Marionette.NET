@@ -13,3 +13,7 @@ MAR005  | Marionette.Generator | Error    | [McpObservable] requires a public ge
 MAR006  | Marionette.Generator | Warning  | [McpObservable] property should be public.
 MAR007  | Marionette.Generator | Error    | [McpTriggerable] only supports controls with a Click event in Phase 1.
 MAR008  | Marionette.Generator | Info     | [McpRoot] declares no MCP entrypoints.
+MAR009  | Marionette.Generator | Error    | [McpEvent] only applies to C# event members.
+MAR010  | Marionette.Generator | Error    | [McpEvent] requires EventHandler or EventHandler<T>.
+MAR011  | Marionette.Generator | Warning  | [McpEvent] on un-rooted class is ignored.
+MAR012  | Marionette.Generator | Warning  | [McpEvent] throttling parameter out of range.

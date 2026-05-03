@@ -131,6 +131,7 @@ internal static class Emitter
         EmitCallables(sb, root);
         EmitObservables(sb, root);
         EmitTriggerables(sb, root);
+        EmitEvents(sb, root);
 
         sb.AppendLine("        ),");
     }
@@ -339,7 +340,7 @@ internal static class Emitter
     {
         if (root.Triggerables.Length == 0)
         {
-            sb.AppendLine("            Triggerables: global::System.Array.Empty<TriggerableDescriptor>()");
+            sb.AppendLine("            Triggerables: global::System.Array.Empty<TriggerableDescriptor>(),");
             return;
         }
 
@@ -358,7 +359,74 @@ internal static class Emitter
             sb.Append(trig.PropertyName);
             sb.AppendLine("),");
         }
+        sb.AppendLine("            },");
+    }
+
+    // -------------------------------------------------------------------------
+    // Events (Phase 1.6)
+    // -------------------------------------------------------------------------
+
+    private static void EmitEvents(StringBuilder sb, RootModel root)
+    {
+        if (root.Events.Length == 0)
+        {
+            sb.AppendLine("            Events: global::System.Array.Empty<EventDescriptor>()");
+            return;
+        }
+
+        sb.AppendLine("            Events: new EventDescriptor[]");
+        sb.AppendLine("            {");
+        foreach (var ev in root.Events.AsEnumerable())
+        {
+            EmitEventDescriptor(sb, root, ev);
+        }
         sb.AppendLine("            }");
+    }
+
+    private static void EmitEventDescriptor(StringBuilder sb, RootModel root, EventModel ev)
+    {
+        sb.AppendLine("                new EventDescriptor(");
+        sb.Append("                    Name: \""); sb.Append(EscapeString(ev.EventName)); sb.AppendLine("\",");
+        sb.Append("                    Description: \""); sb.Append(EscapeString(ev.Description)); sb.AppendLine("\",");
+        sb.Append("                    ArgsTypeName: \""); sb.Append(EscapeString(StripGlobalPrefix(ev.ArgsTypeFullName))); sb.AppendLine("\",");
+        sb.Append("                    ArgsJsonSchema: \""); sb.Append(EscapeString(ev.ArgsJsonSchema)); sb.AppendLine("\",");
+        sb.Append("                    MinIntervalMs: "); sb.Append(ev.MinIntervalMs.ToString(CultureInfo.InvariantCulture)); sb.AppendLine(",");
+        sb.Append("                    MaxQueueSize: "); sb.Append(ev.MaxQueueSize.ToString(CultureInfo.InvariantCulture)); sb.AppendLine(",");
+        sb.Append("                    CoalesceWindowMs: "); sb.Append(ev.CoalesceWindowMs.ToString(CultureInfo.InvariantCulture)); sb.AppendLine(",");
+
+        // Subscribe lambda — strongly typed at compile time. Two shapes:
+        //   * EventHandler<TArgs>: hooks `(s, e) => callback(e)` and detaches
+        //     on dispose.
+        //   * EventHandler (no T): hooks `(s, e) => callback(e)` against the
+        //     non-generic EventHandler signature; e is EventArgs.
+        sb.AppendLine("                    Subscribe: static (instance, callback) =>");
+        sb.AppendLine("                    {");
+        sb.Append("                        var typed = ("); sb.Append(root.TypeFullName); sb.AppendLine(")instance;");
+
+        if (ev.HasArgsType)
+        {
+            sb.Append("                        global::System.EventHandler<");
+            sb.Append(ev.ArgsTypeFullName);
+            sb.AppendLine("> handler = (s, e) => callback(e);");
+            sb.Append("                        typed.");
+            sb.Append(ev.EventName);
+            sb.AppendLine(" += handler;");
+            sb.Append("                        return new global::Marionette.NET.Runtime.Internal.HandlerDisposable(() => typed.");
+            sb.Append(ev.EventName);
+            sb.AppendLine(" -= handler);");
+        }
+        else
+        {
+            sb.AppendLine("                        global::System.EventHandler handler = (s, e) => callback(e);");
+            sb.Append("                        typed.");
+            sb.Append(ev.EventName);
+            sb.AppendLine(" += handler;");
+            sb.Append("                        return new global::Marionette.NET.Runtime.Internal.HandlerDisposable(() => typed.");
+            sb.Append(ev.EventName);
+            sb.AppendLine(" -= handler);");
+        }
+
+        sb.AppendLine("                    }),");
     }
 
     // -------------------------------------------------------------------------

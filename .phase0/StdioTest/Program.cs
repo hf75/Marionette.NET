@@ -395,6 +395,126 @@ internal static class Program
                         }
                     }
                 }
+
+                // ---- Phase 1.6: declarative event delivery. Subscribe to the
+                //      TodoAdded event, fire AddTodo, expect a
+                //      notifications/resources/updated for the events URI, then
+                //      read the resource and assert events[0].args.Title is the
+                //      title we just added.
+                var eventUri = "marionette://TodoListViewModel/events/TodoAdded";
+                var evSubId = Interlocked.Increment(ref _nextRequestId);
+                var evSubReq = new
+                {
+                    jsonrpc = "2.0",
+                    id = evSubId,
+                    method = "resources/subscribe",
+                    @params = new { uri = eventUri },
+                };
+                await SendAsync(child, evSubReq);
+                var evSubResp = await WaitForResponseAsync(stdoutMessages, evSubId, TimeSpan.FromSeconds(10));
+                bool evSubOk = evSubResp is not null && evSubResp.RootElement.TryGetProperty("result", out _);
+                evSubResp?.Dispose();
+                if (!evSubOk)
+                {
+                    Console.Error.WriteLine($"FAIL — resources/subscribe to {eventUri} did not return a result.");
+                    failures++;
+                }
+                else
+                {
+                    var evWatcher = StartNotificationWatcher(stdoutMessages);
+                    var addEvOk = await InvokeMethodAsync(child, stdoutMessages,
+                        "TodoListViewModel", "AddTodo", new { title = "learn marionette" });
+                    if (!addEvOk.Success)
+                    {
+                        Console.Error.WriteLine($"FAIL — invoke_method AddTodo for event check failed: {addEvOk.Detail}");
+                        failures++;
+                    }
+                    else
+                    {
+                        var gotEvUpdate = await WaitForResourceUpdate(evWatcher, eventUri, TimeSpan.FromSeconds(5));
+                        if (!gotEvUpdate)
+                        {
+                            Console.Error.WriteLine($"FAIL — no notifications/resources/updated for {eventUri} within 5s after AddTodo.");
+                            failures++;
+                        }
+                        else
+                        {
+                            // Read the resource and confirm the args carry the title.
+                            var readId = Interlocked.Increment(ref _nextRequestId);
+                            var readReq = new
+                            {
+                                jsonrpc = "2.0",
+                                id = readId,
+                                method = "resources/read",
+                                @params = new { uri = eventUri },
+                            };
+                            await SendAsync(child, readReq);
+                            var readResp = await WaitForResponseAsync(stdoutMessages, readId, TimeSpan.FromSeconds(5));
+                            bool readOk = false;
+                            string readDetail = "no resources/read response";
+                            if (readResp is not null && readResp.RootElement.TryGetProperty("result", out var rr) &&
+                                rr.TryGetProperty("contents", out var cs) && cs.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var c in cs.EnumerateArray())
+                                {
+                                    if (!c.TryGetProperty("text", out var txt)) continue;
+                                    var text = txt.GetString() ?? string.Empty;
+                                    try
+                                    {
+                                        using var inner = JsonDocument.Parse(text);
+                                        if (inner.RootElement.TryGetProperty("events", out var evArr) &&
+                                            evArr.ValueKind == JsonValueKind.Array && evArr.GetArrayLength() > 0)
+                                        {
+                                            // Search for ANY event whose args.Title matches the
+                                            // title we just added. The buffer holds every fire
+                                            // (including the prior subscribe-test AddTodos), so
+                                            // we cannot assume index 0 is the latest one.
+                                            bool found = false;
+                                            int len = evArr.GetArrayLength();
+                                            foreach (var ev in evArr.EnumerateArray())
+                                            {
+                                                if (ev.TryGetProperty("args", out var argsEl) &&
+                                                    argsEl.TryGetProperty("Title", out var titleEl) &&
+                                                    titleEl.GetString() == "learn marionette")
+                                                {
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+                                            if (found)
+                                            {
+                                                readOk = true;
+                                                readDetail = $"sequence={(inner.RootElement.TryGetProperty("sequence", out var sq) ? sq.GetInt64() : -1)}, count={len}, args.Title=\"learn marionette\" present";
+                                            }
+                                            else
+                                            {
+                                                readDetail = "no event with args.Title='learn marionette' found in buffer";
+                                            }
+                                        }
+                                        else
+                                        {
+                                            readDetail = "no events array or empty";
+                                        }
+                                    }
+                                    catch (JsonException ex)
+                                    {
+                                        readDetail = $"events resource text not JSON: {ex.Message}";
+                                    }
+                                }
+                            }
+                            readResp?.Dispose();
+                            if (readOk)
+                            {
+                                Console.WriteLine($"PASS — resources/subscribe + AddTodo produced an event notification on {eventUri} ({readDetail})");
+                            }
+                            else
+                            {
+                                Console.Error.WriteLine($"FAIL — event resource read mismatch: {readDetail}");
+                                failures++;
+                            }
+                        }
+                    }
+                }
             }
             else
             {
