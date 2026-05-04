@@ -1,34 +1,33 @@
-// Marionette.NET — Avalonia input simulation helper (Phase 3.1)
+// Marionette.NET — Avalonia input simulation helper
 //
-// LIMITATION (documented per the Phase 3.1 brief):
+// History:
+//   Phase 3.1 — only `click` family supported (via Button.ClickEvent +
+//               public RoutedEventArgs ctor). Other kinds returned false.
+//   Phase 9.1 — adds `type_text` via direct property-setting on the
+//               common Avalonia text inputs (TextBox, AutoCompleteBox,
+//               MaskedTextBox), matching the pragmatic pattern the MAUI
+//               adapter uses (MauiInputSimulator.cs). Covers the primary
+//               LLM use case "type something into a form".
 //
-// Avalonia 11.x exposes Avalonia.Input.InputManager.Instance and
-// IInputManager.ProcessInput(RawInputEventArgs), but the EVENT-ARGS-LEVEL
+// Architectural constraints (still true in Avalonia 11.3.14):
+//
+// Avalonia exposes `Avalonia.Input.InputManager.Instance` and
+// `IInputManager.ProcessInput(RawInputEventArgs)`, but the EVENT-ARGS-LEVEL
 // types Marionette would want to construct (PointerPressedEventArgs,
 // PointerReleasedEventArgs, KeyEventArgs, TextInputEventArgs) all have
-// `internal` ctors in 11.3.14. The publicly-constructible alternatives
+// `internal` ctors. The publicly-constructible alternatives
 // (RawPointerEventArgs, RawInputEventArgs) require an `IInputRoot` which is
-// also typically wired by the platform host and not adopter-trivially
-// constructible.
+// typically wired by the platform host and not adopter-trivially
+// constructible. AOT also forbids reflection-based ctor invocation.
 //
-// Phase 3.1 takes the masterplan-sanctioned fallback: for `click` (and the
-// click variants double_click / right_click) we raise the public
-// Avalonia.Controls.Button.ClickEvent (or the inherited ClickEvent on any
-// ButtonBase descendant) using the public RoutedEventArgs ctor +
-// Interactive.RaiseEvent. This DOES drive the framework's routed event
-// pipeline (handlers, bubbling, tunneling) so for the most common Phase-3.1
-// scenario — clicking a Button to fire its Click handler — the behaviour is
-// observably the same as a real user click.
-//
-// For keyboard / text-input / mouse-move kinds, Phase 3.1 returns false with
-// a logged "kind not yet supported" breadcrumb. Phase 3.2 (WinUI's
-// InputInjector) and Phase 3.3 (multi-window routing) will revisit this; the
-// masterplan flags Avalonia's raw-input API as historically unstable across
-// minor releases, so we explicitly do not pin it down here. Adopters who
-// need keyboard input can either:
+// What this means for the unsupported kinds (key_press / key_down / key_up /
+// mouse_move): they remain `return false` with a clear breadcrumb. Adopters
+// who need keyboard input have two AOT-clean options:
 //   * decorate the relevant method with [McpCallable] and invoke it directly
 //     (Phase 1 path; semantic > visual per masterplan tenet 2), or
-//   * raise the appropriate event via raise_event with the C# event name.
+//   * raise the appropriate routed event via raise_event with the C# event
+//     name (the framework's `Interactive.RaiseEvent` works fine for events
+//     whose args type is publicly constructible — KeyDown/KeyUp are not).
 //
 // Threading: every public method here MUST be called on the Avalonia UI
 // thread. AvaloniaUiAutomationAdapter wraps each call in DispatchAsync<T>(...).
@@ -67,21 +66,73 @@ internal static class AvaloniaInputSimulator
             case "right_click":   // Same reasoning — Avalonia routes ContextRequested separately, but Phase 3.1 just raises Click for the test scenarios we ship.
                 return RaiseClickEvent(target, log);
 
+            case "type_text":
+                return TypeText(target, args, log);
+
             case "key_press":
             case "key_down":
             case "key_up":
-            case "type_text":
             case "mouse_move":
                 log.LogInformation(
-                    "simulate_input: kind '{Kind}' is not supported by the Phase-3.1 Avalonia adapter " +
-                    "(Avalonia 11.x has internal ctors for the relevant EventArgs types). " +
-                    "Use raise_event with the framework event name, OR a [McpCallable] method, " +
-                    "OR wait for Phase 3.2's WinUI / cross-platform raw-input pipeline.",
+                    "simulate_input: kind '{Kind}' is not supported by the Avalonia adapter " +
+                    "(Avalonia 11.x has internal ctors for KeyEventArgs / PointerEventArgs and the " +
+                    "raw-input pipeline requires platform-host plumbing the adapter does not have). " +
+                    "Use raise_event with the framework event name (when its args type is publicly " +
+                    "constructible), OR a [McpCallable] method that performs the semantic action.",
                     kind);
                 return false;
 
             default:
                 log.LogWarning("simulate_input: unknown kind '{Kind}'.", kind);
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Phase 9.1: set the target's <c>Text</c> property when it's one of the
+    /// common Avalonia text inputs. Mirrors the pragmatic pattern used by the
+    /// MAUI adapter — semantic-first, no platform-host plumbing. The setter
+    /// goes through Avalonia's <c>StyledProperty</c> system so any
+    /// <c>PropertyChanged</c> binding fires normally; data-bound view models
+    /// see the change.
+    /// </summary>
+    private static bool TypeText(Control target, IReadOnlyDictionary<string, object?>? args, ILogger log)
+    {
+        if (args is null || !args.TryGetValue("text", out var raw))
+        {
+            log.LogInformation(
+                "simulate_input(type_text) on {Type}: no 'text' argument supplied.",
+                target.GetType().Name);
+            return false;
+        }
+        var text = raw as string ?? raw?.ToString() ?? string.Empty;
+
+        // Order matters: derived types must come before their base. In
+        // Avalonia 11.x, MaskedTextBox : TextBox — handle it first or the
+        // TextBox case would shadow it (the C# compiler also flags this as
+        // CS8120 if the order is wrong).
+        switch (target)
+        {
+            case global::Avalonia.Controls.MaskedTextBox mtb:
+                mtb.Text = text;
+                return true;
+            case global::Avalonia.Controls.TextBox tb:
+                tb.Text = text;
+                return true;
+            case global::Avalonia.Controls.AutoCompleteBox ab:
+                ab.Text = text;
+                return true;
+            case global::Avalonia.Controls.TextBlock tbl:
+                // Read-only by Avalonia's design (no user-typing target), but
+                // we accept programmatic text set so test fixtures can drive
+                // observable bindings via labels.
+                tbl.Text = text;
+                return true;
+            default:
+                log.LogInformation(
+                    "simulate_input(type_text) on {Type}: target is not a TextBox / AutoCompleteBox / " +
+                    "MaskedTextBox / TextBlock. Other controls would need a custom adapter.",
+                    target.GetType().Name);
                 return false;
         }
     }
