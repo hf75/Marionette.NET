@@ -84,6 +84,12 @@ public sealed class WinUiAutomationAdapter : IUiAutomationAdapter
         _log = log ?? throw new ArgumentNullException(nameof(log));
         _tracker = tracker ?? new RootInstanceTracker();
         _tracker.Changed += OnTrackerChanged;
+
+        // Phase 9.3: eagerly probe Windows.UI.Input.Preview.Injection.InputInjector
+        // so adopters see the simulate_input key/mouse-move availability up
+        // front, not at the first failed call. Doesn't affect functionality —
+        // the per-call path probes anew.
+        Internal.WinUiInputSimulator.ProbeInjectorAvailability(_log);
     }
 
     /// <summary>Phase 3.3: expose the tracker to MarionetteWinUI.</summary>

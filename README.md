@@ -112,6 +112,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .phase7\release-local.ps1
 - **[docs/adapter-authoring.md](docs/adapter-authoring.md)** - Contract for new UI adapters.
 - **[docs/stripping.md](docs/stripping.md)** - Build stripping and AOT verification guide.
 - **[docs/testing.md](docs/testing.md)** - In-process test toolkit guide.
+- **[docs/winui-input-injection.md](docs/winui-input-injection.md)** - WinUI keyboard / mouse-move injection: when `InputInjector` is available unpackaged-unelevated, fallback paths for constrained systems.
 - **[docs/release-local.md](docs/release-local.md)** - Local release runbook without push.
 - **[docs/skill-pack.md](docs/skill-pack.md)** - Skill-pack v2 command reference.
 - **[skill-pack/README.md](skill-pack/README.md)** - Claude Code skills (manual install today; Phase 7 automates).

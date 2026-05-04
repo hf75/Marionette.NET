@@ -1,4 +1,4 @@
-// Marionette.NET — WinUI input simulation helper (Phase 3.2)
+// Marionette.NET — WinUI input simulation helper (Phase 3.2; refined Phase 9.3)
 //
 // Implements simulate_input for WinUI 3 (Microsoft.UI.Xaml). WinUI's input
 // surface differs meaningfully from WPF/Avalonia:
@@ -10,14 +10,36 @@
 //     adopters subscribe via `+=`.
 //   * Real input fidelity is provided by Windows.UI.Input.Preview.Injection.InputInjector
 //     (the Windows SDK projection — accessible from WinUI via the SDK contract).
-//     `InputInjector.TryCreate()` returns null when:
-//        * The process isn't elevated, AND the app's manifest doesn't declare
-//          the `inputInjectionBrokered` capability;
-//        * The OS denies the injection broker (rare, certain SKUs / lockdown).
-//     When TryCreate returns null we fall back to per-control automation peers
-//     (the approach UIA-driving tools use): ButtonAutomationPeer.Invoke() etc.
 //
-// Phase 3.2 strategy:
+// InputInjector availability (Phase 9.3 update):
+//
+//   The original Phase 3.2 framing was that `InputInjector.TryCreate()` requires
+//   either an elevated process OR an MSIX-packaged manifest that declares the
+//   `inputInjectionBrokered` restricted capability. That description matched
+//   Windows 10 behaviour and Microsoft's documentation circa 2022-2023.
+//
+//   Verified May 2026: on current Windows 11 (build 26200, .NET 10.0.6) a
+//   plain console app and an unpackaged WinUI-3 process both return a working
+//   `InputInjector` from `TryCreate()` with no manifest declaration and no
+//   elevation. Microsoft has relaxed the gate (or never enforced it on Win11
+//   the way it was documented). The strict requirement still applies to:
+//      * Older Windows builds (Win10 ≤ 22H2, certain enterprise lockdown
+//        configurations);
+//      * Windows Sandbox / Hyper-V VM scenarios with input-injection blocked
+//        at the host level;
+//      * Locked-down SKUs (Education / Enterprise with input restrictions).
+//
+//   Runtime behaviour: TryCreateInjector probes once and logs whether the
+//   keyboard / mouse-move path is operational. Adopters who hit a null
+//   injector on a constrained system have two AOT-clean fall-backs:
+//      * Run the host elevated;
+//      * Switch the sample to MSIX-packaged with the
+//        `inputInjectionBrokered` restricted capability declared in
+//        `Package.appxmanifest`.
+//   See `docs/winui-input-injection.md` for the manifest snippet + the
+//   Visual Studio project-property change.
+//
+// Phase 3.2 strategy (unchanged in 9.3):
 //   * For "click" / "double_click" / "right_click": prefer the
 //     ButtonAutomationPeer.Invoke() path (or any IInvokeProvider). It runs the
 //     framework's Click handler synchronously, fires bubbling, and works
@@ -201,9 +223,12 @@ internal static class WinUiInputSimulator
             if (injector is null)
             {
                 log.LogInformation(
-                    "simulate_input: Windows.UI.Input.Preview.Injection.InputInjector.TryCreate returned null. " +
-                    "Run elevated, OR declare the 'inputInjectionBrokered' capability in your app manifest. " +
-                    "For WinUI / Phase 3.2 the AutomationPeer path is the unelevated alternative.");
+                    "simulate_input: InputInjector.TryCreate returned null on this system. " +
+                    "Keyboard / mouse-move paths fall back to AutomationPeer + property-set " +
+                    "where possible; arbitrary key/pointer injection is unavailable. " +
+                    "Common causes: pre-Windows-11-22H2 build, locked-down SKU, or sandbox " +
+                    "host blocking input injection. See docs/winui-input-injection.md for the " +
+                    "elevated-host / MSIX-capability fallback paths.");
             }
             return injector;
         }
@@ -211,6 +236,48 @@ internal static class WinUiInputSimulator
         {
             log.LogWarning(ex, "simulate_input: InputInjector.TryCreate threw unexpectedly.");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Phase 9.3: eagerly probe <see cref="InputInjector.TryCreate"/> at
+    /// adapter construction so adopters see the keyboard/mouse-move
+    /// availability state in their startup log instead of finding out at
+    /// the first failed simulate_input call. Returns
+    /// <see langword="true"/> when keyboard / mouse-move injection is
+    /// available on this system.
+    /// </summary>
+    /// <remarks>
+    /// Calling <c>TryCreate()</c> twice is cheap — the runtime caches the
+    /// broker handle internally. We discard the probe result; the
+    /// per-call <see cref="TryCreateInjector"/> path retrieves a fresh
+    /// instance for actual injection.
+    /// </remarks>
+    public static bool ProbeInjectorAvailability(ILogger log)
+    {
+        try
+        {
+            var probe = InputInjector.TryCreate();
+            if (probe is null)
+            {
+                log.LogInformation(
+                    "WinUI input-injection probe: InputInjector unavailable. " +
+                    "simulate_input falls back to AutomationPeer for clicks and " +
+                    "TextBox.Text for type_text. Other kinds (key_press, mouse_move) " +
+                    "will return success=false. See docs/winui-input-injection.md.");
+                return false;
+            }
+            log.LogInformation(
+                "WinUI input-injection probe: InputInjector available — full " +
+                "simulate_input matrix (click / key_* / type_text / mouse_move) operational.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex,
+                "WinUI input-injection probe: InputInjector.TryCreate threw — " +
+                "treating injector as unavailable.");
+            return false;
         }
     }
 
