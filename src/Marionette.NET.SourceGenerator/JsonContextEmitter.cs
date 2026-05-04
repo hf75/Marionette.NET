@@ -172,9 +172,89 @@ internal static class JsonContextEmitter
             case JsonTypeKind.Enum:
                 EmitEnumCreation(sb, type);
                 break;
+            case JsonTypeKind.Array:
+                EmitArrayCreation(sb, type);
+                break;
+            case JsonTypeKind.List:
+                EmitListCreation(sb, type);
+                break;
+            case JsonTypeKind.Dictionary:
+                EmitDictionaryCreation(sb, type);
+                break;
         }
 
         sb.AppendLine();
+    }
+
+    private static void EmitArrayCreation(StringBuilder sb, JsonTypeModel type)
+    {
+        var elementFqn = StripGlobalPrefix(type.ElementTypeFullName!);
+        sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateArrayInfo<global::");
+        sb.Append(elementFqn);
+        sb.AppendLine(">(Options,");
+        sb.Append("            new global::System.Text.Json.Serialization.Metadata.JsonCollectionInfoValues<global::");
+        sb.Append(elementFqn);
+        sb.AppendLine("[]>");
+        sb.AppendLine("            {");
+        sb.AppendLine("                ObjectCreator = null,");
+        sb.AppendLine("                NumberHandling = default,");
+        sb.AppendLine("                SerializeHandler = null,");
+        sb.Append("                ElementInfo = ");
+        sb.Append(type.ElementContextName);
+        sb.AppendLine(",");
+        sb.AppendLine("            });");
+    }
+
+    private static void EmitListCreation(StringBuilder sb, JsonTypeModel type)
+    {
+        var elementFqn = StripGlobalPrefix(type.ElementTypeFullName!);
+        sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<global::");
+        sb.Append(elementFqn);
+        sb.Append(">, global::");
+        sb.Append(elementFqn);
+        sb.AppendLine(">(Options,");
+        sb.Append("            new global::System.Text.Json.Serialization.Metadata.JsonCollectionInfoValues<global::System.Collections.Generic.List<global::");
+        sb.Append(elementFqn);
+        sb.AppendLine(">>");
+        sb.AppendLine("            {");
+        sb.Append("                ObjectCreator = static () => new global::System.Collections.Generic.List<global::");
+        sb.Append(elementFqn);
+        sb.AppendLine(">(),");
+        sb.AppendLine("                NumberHandling = default,");
+        sb.AppendLine("                SerializeHandler = null,");
+        sb.Append("                ElementInfo = ");
+        sb.Append(type.ElementContextName);
+        sb.AppendLine(",");
+        sb.AppendLine("            });");
+    }
+
+    private static void EmitDictionaryCreation(StringBuilder sb, JsonTypeModel type)
+    {
+        // Slice 4: string-keyed only. The collector enforces that
+        // KeyContextName is always System_String so the renderer can
+        // hardcode the string key type.
+        var elementFqn = StripGlobalPrefix(type.ElementTypeFullName!);
+        sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateDictionaryInfo<global::System.Collections.Generic.Dictionary<global::System.String, global::");
+        sb.Append(elementFqn);
+        sb.Append(">, global::System.String, global::");
+        sb.Append(elementFqn);
+        sb.AppendLine(">(Options,");
+        sb.Append("            new global::System.Text.Json.Serialization.Metadata.JsonCollectionInfoValues<global::System.Collections.Generic.Dictionary<global::System.String, global::");
+        sb.Append(elementFqn);
+        sb.AppendLine(">>");
+        sb.AppendLine("            {");
+        sb.Append("                ObjectCreator = static () => new global::System.Collections.Generic.Dictionary<global::System.String, global::");
+        sb.Append(elementFqn);
+        sb.AppendLine(">(),");
+        sb.AppendLine("                NumberHandling = default,");
+        sb.AppendLine("                SerializeHandler = null,");
+        sb.Append("                KeyInfo = ");
+        sb.Append(type.KeyContextName);
+        sb.AppendLine(",");
+        sb.Append("                ElementInfo = ");
+        sb.Append(type.ElementContextName);
+        sb.AppendLine(",");
+        sb.AppendLine("            });");
     }
 
     private static void EmitEnumCreation(StringBuilder sb, JsonTypeModel type)

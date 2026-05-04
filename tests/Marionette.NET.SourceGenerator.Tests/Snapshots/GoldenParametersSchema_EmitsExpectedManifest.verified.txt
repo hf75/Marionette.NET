@@ -87,7 +87,7 @@ public static class GeneratedManifest
                         var __raw_level = args["level"];
                         global::Demo.Severity level = __raw_level is global::System.Text.Json.JsonElement __json_level ? (global::Demo.Severity)global::System.Enum.Parse(typeof(global::Demo.Severity), __json_level.ValueKind == global::System.Text.Json.JsonValueKind.String ? __json_level.GetString()! : __json_level.GetRawText()) : (global::Demo.Severity)__raw_level!;
                         var __raw_tags = args["tags"];
-                        string[] tags = __raw_tags is global::System.Text.Json.JsonElement __json_tags ? global::System.Text.Json.JsonSerializer.Deserialize<string[]>(__json_tags.GetRawText())! : (string[])__raw_tags!;
+                        string[] tags = __raw_tags is global::System.Text.Json.JsonElement __json_tags ? global::System.Text.Json.JsonSerializer.Deserialize<string[]>(__json_tags.GetRawText(), global::Marionette.Generated.MarionetteJsonContext.Default.Array_System_String)! : (string[])__raw_tags!;
                         typed.Tagged(level, tags);
                         return null;
                     }),
@@ -133,6 +133,17 @@ internal sealed class MarionetteJsonContext : global::System.Text.Json.Serializa
     public MarionetteJsonContext(global::System.Text.Json.JsonSerializerOptions options)
         : base(options) { }
 
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.String[]>? _Array_System_String;
+    public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.String[]> Array_System_String => _Array_System_String ??= 
+        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateArrayInfo<global::System.String>(Options,
+            new global::System.Text.Json.Serialization.Metadata.JsonCollectionInfoValues<global::System.String[]>
+            {
+                ObjectCreator = null,
+                NumberHandling = default,
+                SerializeHandler = null,
+                ElementInfo = System_String,
+            });
+
     private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::Demo.Severity>? _Demo_Severity;
     public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::Demo.Severity> Demo_Severity => _Demo_Severity ??= 
         global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::Demo.Severity>(
@@ -156,6 +167,7 @@ internal sealed class MarionetteJsonContext : global::System.Text.Json.Serializa
 
     public override global::System.Text.Json.Serialization.Metadata.JsonTypeInfo? GetTypeInfo(global::System.Type type)
     {
+        if (type == typeof(global::System.String[])) return Array_System_String;
         if (type == typeof(global::Demo.Severity)) return Demo_Severity;
         if (type == typeof(global::System.Boolean)) return System_Boolean;
         if (type == typeof(global::System.Int32)) return System_Int32;

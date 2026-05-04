@@ -174,6 +174,24 @@ internal enum JsonTypeKind
     /// <see cref="JsonSchemaWriter"/> (<c>"type":"string","enum":[...]</c>).
     /// </summary>
     Enum,
+    /// <summary>
+    /// Phase 8.4: single-dimensional arrays (<c>T[]</c>). Emitted via
+    /// <c>JsonMetadataServices.CreateArrayInfo&lt;TElement&gt;</c> with an
+    /// <c>ElementInfo</c> reference to the element type's
+    /// <see cref="JsonTypeModel.UnderlyingTypeFullName"/>.
+    /// </summary>
+    Array,
+    /// <summary>
+    /// Phase 8.4: <c>List&lt;T&gt;</c>. Emitted via
+    /// <c>JsonMetadataServices.CreateListInfo&lt;List&lt;T&gt;, T&gt;</c>.
+    /// </summary>
+    List,
+    /// <summary>
+    /// Phase 8.4: <c>Dictionary&lt;string, TValue&gt;</c>. STJ only supports
+    /// string-keyed dictionaries via the typed factory; non-string keys
+    /// remain unsupported and fall back to runtime serialisation.
+    /// </summary>
+    Dictionary,
 }
 
 /// <summary>
@@ -203,13 +221,33 @@ internal enum JsonTypeKind
 /// For <see cref="JsonTypeKind.Object"/>: the type's public, JSON-relevant
 /// properties in declaration order. Empty for primitive/nullable kinds.
 /// </param>
+/// <param name="ElementContextName">
+/// Phase 8.4: for <see cref="JsonTypeKind.Array"/> / <see cref="JsonTypeKind.List"/> /
+/// <see cref="JsonTypeKind.Dictionary"/>, the encoded property name on the
+/// generated context for the collection's element type. The Dictionary case
+/// also uses <see cref="KeyContextName"/>; arrays and lists leave that null.
+/// </param>
+/// <param name="KeyContextName">
+/// Phase 8.4: for <see cref="JsonTypeKind.Dictionary"/>, the encoded
+/// property name for the key type (always <c>System_String</c> in slice 4 —
+/// non-string-keyed dictionaries are unsupported and fall back to runtime
+/// serialisation).
+/// </param>
+/// <param name="ElementTypeFullName">
+/// Phase 8.4: canonical full name of the collection element type (so the
+/// emitter can render <c>JsonMetadataServices.CreateListInfo&lt;...&gt;</c>
+/// generic arguments without re-resolving symbols).
+/// </param>
 internal sealed record JsonTypeModel(
     string TypeFullName,
     string PropertyName,
     JsonTypeKind Kind,
     string? PrimitiveConverter,
     string? UnderlyingTypeFullName,
-    EquatableArray<JsonPropertyModel> Properties);
+    EquatableArray<JsonPropertyModel> Properties,
+    string? ElementContextName = null,
+    string? KeyContextName = null,
+    string? ElementTypeFullName = null);
 
 /// <summary>
 /// Phase 8.1: a single property on a Json-context-tracked object type. The

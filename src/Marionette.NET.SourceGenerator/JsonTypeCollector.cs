@@ -157,6 +157,92 @@ internal sealed class JsonTypeCollector
             return primKey;
         }
 
+        // Phase 8.4: arrays — IArrayTypeSymbol carries the element type via
+        // .ElementType. Multi-dim arrays are unsupported (STJ requires a
+        // typed factory shape that doesn't exist for them).
+        if (unannotated is IArrayTypeSymbol arrSym && arrSym.Rank == 1)
+        {
+            var elementName = TryRegister(arrSym.ElementType, visiting, depth + 1);
+            if (elementName is null) return null;
+            var elementCanonical = _types[elementName].TypeFullName;
+            var arrKey = "Array_" + elementName;
+            if (!_types.ContainsKey(arrKey))
+            {
+                _types[arrKey] = new JsonTypeModel(
+                    TypeFullName: elementCanonical + "[]",
+                    PropertyName: arrKey,
+                    Kind: JsonTypeKind.Array,
+                    PrimitiveConverter: null,
+                    UnderlyingTypeFullName: null,
+                    Properties: EquatableArray<JsonPropertyModel>.Empty,
+                    ElementContextName: elementName,
+                    ElementTypeFullName: elementCanonical);
+            }
+            return arrKey;
+        }
+
+        // Phase 8.4: List<T> / Dictionary<string, V>. We restrict to these
+        // two specific generics — IEnumerable<T> + Dictionary<non-string, V>
+        // need different STJ factory shapes (or aren't supported at all)
+        // and would dilute slice 4's promise.
+        if (unannotated is INamedTypeSymbol genericSym &&
+            genericSym.IsGenericType &&
+            !genericSym.IsUnboundGenericType)
+        {
+            var unbound = genericSym.ConstructUnboundGenericType()
+                .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            if (unbound == "global::System.Collections.Generic.List<>")
+            {
+                var elementName = TryRegister(genericSym.TypeArguments[0], visiting, depth + 1);
+                if (elementName is null) return null;
+                var elementCanonical = _types[elementName].TypeFullName;
+                var listKey = "List_" + elementName;
+                if (!_types.ContainsKey(listKey))
+                {
+                    _types[listKey] = new JsonTypeModel(
+                        TypeFullName: "System.Collections.Generic.List<" + elementCanonical + ">",
+                        PropertyName: listKey,
+                        Kind: JsonTypeKind.List,
+                        PrimitiveConverter: null,
+                        UnderlyingTypeFullName: null,
+                        Properties: EquatableArray<JsonPropertyModel>.Empty,
+                        ElementContextName: elementName,
+                        ElementTypeFullName: elementCanonical);
+                }
+                return listKey;
+            }
+            if (unbound == "global::System.Collections.Generic.Dictionary<,>")
+            {
+                // STJ only supports string-keyed dictionaries via the typed
+                // factory; non-string keys fall back to runtime serialisation.
+                if (genericSym.TypeArguments[0].SpecialType != SpecialType.System_String) return null;
+                var valueName = TryRegister(genericSym.TypeArguments[1], visiting, depth + 1);
+                if (valueName is null) return null;
+                var valueCanonical = _types[valueName].TypeFullName;
+                // Make sure the key (System.String) is registered too — the
+                // dictionary's KeyInfo references it.
+                var keyName = TryRegister(genericSym.TypeArguments[0], visiting, depth + 1);
+                if (keyName is null) return null;
+                var dictKey = "Dictionary_" + keyName + "_" + valueName;
+                if (!_types.ContainsKey(dictKey))
+                {
+                    _types[dictKey] = new JsonTypeModel(
+                        TypeFullName: "System.Collections.Generic.Dictionary<System.String, " + valueCanonical + ">",
+                        PropertyName: dictKey,
+                        Kind: JsonTypeKind.Dictionary,
+                        PrimitiveConverter: null,
+                        UnderlyingTypeFullName: null,
+                        Properties: EquatableArray<JsonPropertyModel>.Empty,
+                        ElementContextName: valueName,
+                        KeyContextName: keyName,
+                        ElementTypeFullName: valueCanonical);
+                }
+                return dictKey;
+            }
+            // Any other generic instantiation: defer to slice 5.
+            return null;
+        }
+
         // Phase 8.3: enums first — they're concrete value types but the
         // emitter needs a different shape (CreateValueInfo + an enum
         // converter), so handle them before the object branch.
@@ -177,18 +263,17 @@ internal sealed class JsonTypeCollector
             return enumKey;
         }
 
-        // Reject non-object shapes early.
+        // Reject non-object shapes early. (Arrays + the supported generics
+        // are handled above; any remaining INamedTypeSymbol that's still a
+        // generic at this point is an unsupported instantiation that the
+        // generic block already rejected. We do reject open generics here
+        // for completeness — they shouldn't appear in real user code as
+        // typed parameters but are theoretically reachable through
+        // typeof(MyType<>) tricks.)
         if (unannotated is not INamedTypeSymbol obj) return null;
         if (obj.IsAbstract || obj.IsStatic) return null;
         if (obj.TypeKind == TypeKind.Interface) return null;
-        if (obj.TypeKind == TypeKind.Array) return null;          // slice 2+
-        if (obj.IsGenericType && !obj.IsUnboundGenericType)
-        {
-            // Closed generic — defer until slice 2+ when we can wire
-            // CreateListInfo / CreateDictionaryInfo correctly.
-            return null;
-        }
-        if (obj.IsGenericType) return null;                        // open generic
+        if (obj.IsGenericType) return null;
 
         var typeKey = EncodePropertyName(obj.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
 
