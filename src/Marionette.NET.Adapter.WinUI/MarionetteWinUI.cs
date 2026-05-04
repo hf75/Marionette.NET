@@ -54,6 +54,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -137,6 +138,29 @@ public static class MarionetteWinUI
     /// </returns>
     /// <exception cref="ArgumentNullException">A required argument is null.</exception>
     /// <exception cref="InvalidOperationException">Called from a non-UI thread (no DispatcherQueue available).</exception>
+    /// <remarks>
+    /// <para>
+    /// <b>AOT/trim contract (Phase 4.2):</b> the bootstrap forwards into
+    /// <see cref="MarionetteHost.RunAsync(string[], IReadOnlyList{RootDescriptor}, IUiAutomationAdapter?, CancellationToken)"/>,
+    /// which is itself marked
+    /// <see cref="System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute"/>
+    /// because the runtime surfaces the <c>raise_event</c> MCP tool. WinUI's
+    /// raiser is <b>more fragile</b> than WPF/Avalonia's because it reflects on
+    /// compiler-emitted backing delegate fields rather than canonical static
+    /// <c>RoutedEvent</c> identifiers — adopters who AOT-publish should plan
+    /// to use <c>simulate_input</c> (AutomationPeer-based, reflection-free) or
+    /// <c>[McpCallable]</c> shims for any UI flow they care about.
+    /// </para>
+    /// </remarks>
+    [RequiresUnreferencedCode(
+        "MarionetteWinUI.AttachTo forwards into MarionetteHost.RunAsync, which surfaces the " +
+        "raise_event MCP tool's reflection-based event resolver. WinUI 3's CLR-event surface " +
+        "makes the raiser especially trim-fragile; prefer simulate_input + [McpCallable] for " +
+        "AOT-published WinUI apps.")]
+    [RequiresDynamicCode(
+        "MarionetteWinUI.AttachTo forwards into MarionetteHost.RunAsync, which uses " +
+        "System.Text.Json for boxed-object serialisation. Phase 4.2 keeps this on the warning " +
+        "surface; Phase 6 may move to source-generated JsonTypeInfo.")]
     public static IDisposable AttachTo(
         Application app,
         Window mainWindow,

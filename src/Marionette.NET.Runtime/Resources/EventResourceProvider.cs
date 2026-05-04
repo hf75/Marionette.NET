@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -94,6 +95,11 @@ public sealed class EventResourceProvider : IAsyncDisposable
     /// resources/read implementation for an event URI. Returns a snapshot of
     /// the ring buffer plus the current monotonic sequence head.
     /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: forwards into SerializeArgsToNode which has the same suppression. " +
+                        "The cascading warning surfaces at MarionetteHost.RunAsync.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: same reasoning.")]
     public Task<ReadResourceResult> ReadAsync(string uri, CancellationToken ct)
     {
         if (!_entries.TryGetValue(uri, out var entry))
@@ -195,6 +201,16 @@ public sealed class EventResourceProvider : IAsyncDisposable
         // schema and confuse adopters.
     };
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: SerializeArgsToNode runs STJ over user [McpEvent]Args types. " +
+                        "The cascading warning surfaces at MarionetteHost.RunAsync's RequiresUnreferencedCode. " +
+                        "Adopters who AOT-publish should keep [McpEvent]Args public properties on " +
+                        "JSON-primitive shapes (records of int/string/DateTime/etc.) so trimming " +
+                        "preserves their getters.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: same reasoning — JsonSerializer may JIT-generate code at " +
+                        "runtime for unknown user types. Phase 6 may move to source-generated " +
+                        "JsonTypeInfo per descriptor.")]
     private static JsonNode? SerializeArgsToNode(object? args)
     {
         if (args is null) return null;

@@ -87,3 +87,7 @@ stdio-test.log
 # Phase-1 test artifacts (logs + screenshots regenerated on every run; reports stay tracked)
 .phase1/*.log
 .phase1/*.png
+
+# Phase-4 AOT publish artifacts (binary + many GB; report stays tracked)
+.phase4/aot-*/
+.phase4/*.log

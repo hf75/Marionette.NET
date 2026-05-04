@@ -45,6 +45,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -204,6 +205,33 @@ public interface IUiAutomationAdapter
     /// <see langword="true"/> when the event was raised, <see langword="false"/>
     /// when the control or event name didn't resolve.
     /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>AOT/trim caveat (Phase 4.2):</b> every adapter resolves the event by
+    /// name via reflection on the control's type chain — WPF walks for static
+    /// <c>&lt;EventName&gt;Event</c> fields of type <c>RoutedEvent</c>; Avalonia
+    /// uses the analogous <c>RoutedEvent</c> static-field idiom; WinUI and MAUI
+    /// reflect on the compiler-emitted backing delegate field of CLR events.
+    /// All four paths break under aggressive trimming when the user-supplied
+    /// event name refers to a custom-control event whose backing field has been
+    /// stripped. Framework-shipped controls (<c>Button</c>, <c>TextBox</c>, …)
+    /// keep their event metadata rooted because XAML/templates reference them.
+    /// </para>
+    /// <para>
+    /// Adopters who need reliable <c>raise_event</c> in AOT scenarios should
+    /// either (a) use <c>simulate_input</c>, which goes through the framework's
+    /// input pipeline (no reflection on user types), or (b) decorate the
+    /// underlying handler with <c>[McpCallable]</c> and invoke via
+    /// <c>invoke_method</c> — the source generator emits a typed dispatch with
+    /// no reflection. Phase 4.2 surfaces this as <c>[RequiresUnreferencedCode]</c>
+    /// so adopters get a build-time analyzer hint and can suppress at the
+    /// boundary they own.
+    /// </para>
+    /// </remarks>
+    [RequiresUnreferencedCode(
+        "raise_event resolves the event by name via reflection on the control's type chain. " +
+        "Trimming may strip the backing event field for custom controls. " +
+        "Use simulate_input or [McpCallable]+invoke_method for AOT-clean event firing.")]
     Task<bool> RaiseEventAsync(
         string rootName,
         string controlName,

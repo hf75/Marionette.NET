@@ -328,9 +328,18 @@ public sealed class MauiUiAutomationAdapter : IUiAutomationAdapter
     /// AOT note: <see cref="MauiEventRaiser.Raise"/> walks the control's type
     /// chain via reflection looking for the compiler-emitted backing field of
     /// the named CLR event. Trimming MAY remove the backing field; framework
-    /// controls keep theirs rooted via XAML usage. Phase 6's AOT-hardening
-    /// pass may surface a source-gen alternative.
+    /// controls keep theirs rooted via XAML usage. MAUI's CLR-event surface is
+    /// the most fragile of the four adapters (no canonical static-field
+    /// idiom); Phase 4.2's AOT survey confirms WPF/Avalonia AOT-publish more
+    /// reliably than MAUI. The interface method is marked
+    /// <see cref="System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute"/>;
+    /// the suppression below acknowledges the warning here at the
+    /// implementation site rather than re-propagating it.
     /// </remarks>
+    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode(
+        "MauiUiAutomationAdapter.RaiseEventAsync reflects on the compiler-emitted backing delegate " +
+        "field of CLR events on the element's type chain. Trimming may strip these fields for " +
+        "custom controls. Use simulate_input or [McpCallable] for AOT.")]
     public Task<bool> RaiseEventAsync(
         string rootName,
         string controlName,

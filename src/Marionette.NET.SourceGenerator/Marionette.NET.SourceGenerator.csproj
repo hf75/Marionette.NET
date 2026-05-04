@@ -1,4 +1,19 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<!--
+  TreatAsLocalProperty — Phase 4.2.
+  When the consuming sample publishes with -p:PublishAot=true, the property
+  cascades into every ProjectReference. This generator targets netstandard2.0
+  (the only TFM Roslyn loads analyzers from) and cannot be AOT-published. The
+  TreatAsLocalProperty unwinds the propagated globals so the explicit pinning
+  below wins. Same shape as the Abstractions csproj.
+-->
+<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PublishAot;IsAotCompatible;PublishTrimmed;IsTrimmable">
+
+  <PropertyGroup>
+    <PublishAot>false</PublishAot>
+    <IsAotCompatible>false</IsAotCompatible>
+    <PublishTrimmed>false</PublishTrimmed>
+    <IsTrimmable>false</IsTrimmable>
+  </PropertyGroup>
 
   <!--
     Source generators MUST target netstandard2.0: that is the only TFM the

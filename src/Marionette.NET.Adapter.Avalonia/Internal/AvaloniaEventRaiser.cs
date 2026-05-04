@@ -76,6 +76,10 @@ internal static class AvaloniaEventRaiser
     /// <c>public static readonly RoutedEvent ClickEvent = ...</c> — same
     /// shape as WPF.
     /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2070:UnrecognizedReflectionPattern",
+        Justification = "Phase 4.2: bound to Avalonia framework types whose RoutedEvent fields are kept rooted by XAML / templating.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2075:UnrecognizedReflectionPattern",
+        Justification = "Phase 4.2: same justification.")]
     private static RoutedEvent? ResolveRoutedEvent(Type type, string eventName)
     {
         var fieldName = eventName + "Event";

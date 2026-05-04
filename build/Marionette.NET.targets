@@ -46,16 +46,16 @@
     and fires whenever UseWPF=true && PublishTrimmed=true (PublishAot implies
     PublishTrimmed). _SuppressWpfTrimError=true is the only documented bypass.
 
-    We scope this to:
-      - EnableMcpAutomation=true (a stripped build doesn't ship Adapter.Wpf, so
-        the WPF+AOT combination is moot there; preserving NETSDK1168 keeps the
-        helpful error visible if someone misconfigures a stripped publish)
-      - UseWPF=true and PublishAot=true (don't suppress on non-AOT WPF builds —
-        no error fires there anyway)
+    Phase 4.2: scope changed from `EnableMcpAutomation=true` only to ANY
+    UseWPF + PublishAot combination. The original gate assumed a stripped
+    Marionette build wouldn't ever AOT-publish, so NETSDK1168's helpful error
+    could stay visible. The Phase 4.2 AOT survey (publishes BOTH stripped and
+    full per sample) needs the suppress in both paths — and a stripped WPF
+    AOT build is itself a meaningful adopter scenario worth supporting.
 
     Adopters who target Avalonia / WinUI / etc. simply skip this branch.
   -->
-  <PropertyGroup Condition="'$(EnableMcpAutomation)'=='true' and '$(UseWPF)'=='true' and '$(PublishAot)'=='true'">
+  <PropertyGroup Condition="'$(UseWPF)'=='true' and '$(PublishAot)'=='true'">
     <_SuppressWpfTrimError>true</_SuppressWpfTrimError>
   </PropertyGroup>
 

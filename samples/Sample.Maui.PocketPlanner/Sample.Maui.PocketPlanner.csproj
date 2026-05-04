@@ -97,6 +97,17 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.1" />
   </ItemGroup>
 
+  <!--
+    AOT publish settings (Phase 4.2). MAUI 10.x has only partial AOT support;
+    the Phase 4.2 survey documents that AOT publish may fail outright on the
+    MAUI head. Relax TreatWarningsAsErrors so any IL3xxx warnings inherent to
+    Microsoft.Maui.Controls / Microsoft.Maui print rather than aborting.
+  -->
+  <PropertyGroup Condition="'$(PublishAot)'=='true'">
+    <SelfContained>true</SelfContained>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
   <!-- Always reference Abstractions; attributes survive into Release as markup. -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />

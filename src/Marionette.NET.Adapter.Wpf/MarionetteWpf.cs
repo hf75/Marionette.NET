@@ -54,6 +54,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -118,6 +119,26 @@ public static class MarionetteWpf
     /// handle still get clean shutdown when the WPF Application exits.
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="app"/> or <paramref name="roots"/> is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// <b>AOT/trim contract (Phase 4.2):</b> the bootstrap forwards into
+    /// <see cref="MarionetteHost.RunAsync(string[], IReadOnlyList{RootDescriptor}, IUiAutomationAdapter?, CancellationToken)"/>,
+    /// which is itself marked
+    /// <see cref="System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute"/>
+    /// because the runtime surfaces the <c>raise_event</c> MCP tool. AOT-publishing
+    /// adopters who use Marionette only via <c>simulate_input</c> + <c>[McpCallable]</c>
+    /// can suppress the warning at this entry point and stay reflection-clean.
+    /// </para>
+    /// </remarks>
+    [RequiresUnreferencedCode(
+        "MarionetteWpf.AttachTo forwards into MarionetteHost.RunAsync, which surfaces the " +
+        "raise_event MCP tool's reflection-based event resolver. Suppress at the call site " +
+        "after auditing your raise_event use, or avoid raise_event in favour of " +
+        "simulate_input + [McpCallable]+invoke_method.")]
+    [RequiresDynamicCode(
+        "MarionetteWpf.AttachTo forwards into MarionetteHost.RunAsync, which uses System.Text.Json " +
+        "to serialise observable values and callable results. Phase 4.2 keeps this warning on the " +
+        "boundary; Phase 6 may move to source-generated JsonTypeInfo to close it.")]
     public static IDisposable AttachTo(
         Application app,
         IReadOnlyList<RootDescriptor> roots,

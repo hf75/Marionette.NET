@@ -49,6 +49,14 @@ public partial class App : Application
         AvaloniaXamlLoader.Load(this);
     }
 
+#if MCP_ENABLED
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: Dashboard sample forwards into MarionetteAvalonia.AttachTo " +
+                        "which surfaces the cascading raise_event reflection warning. The Dashboard " +
+                        "doesn't use raise_event from any deployed flow.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: cascading IL3050 from STJ.")]
+#endif
     public override void OnFrameworkInitializationCompleted()
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)

@@ -1,4 +1,17 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<!--
+  TreatAsLocalProperty — Phase 4.2 restored from Spike B.
+
+  When an adopter publishes a sample with `dotnet publish -p:PublishAot=true`,
+  MSBuild propagates the property as a *global* into every transitively
+  referenced project, including this multi-target Abstractions assembly. On
+  the netstandard2.0 leg of this multi-target the propagated PublishAot=true
+  triggers NETSDK1207 ("Ahead-of-time compilation is not supported for the
+  target framework"). TreatAsLocalProperty on the <Project> element tells
+  MSBuild to *unwind* the listed globals at this project boundary so the
+  property-group overrides below can pin them to false for the netstandard2.0
+  leg. Same pattern applies to PublishTrimmed / IsTrimmable / IsAotCompatible.
+-->
+<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PublishAot;IsAotCompatible;PublishTrimmed;IsTrimmable">
 
   <PropertyGroup>
     <!--
@@ -19,12 +32,24 @@
     IsTrimmable / IsAotCompatible only ship in the analyzer pack from net8.0 upward.
     Setting either on netstandard2.0 raises NETSDK1212 / NETSDK1210, which becomes a build
     error under TreatWarningsAsErrors. Gate them on net8.0+ via IsTargetFrameworkCompatible.
-    This replaces Spike B's TreatAsLocalProperty workaround on the <Project> element.
   -->
   <PropertyGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
     <IsTrimmable>true</IsTrimmable>
     <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
+
+  <!--
+    Phase 4.2 explicit unwind: when the parent publish propagates PublishAot=true,
+    pin the netstandard2.0 leg to false. The TreatAsLocalProperty above lets these
+    project-level values win against the propagated globals.
+  -->
+  <PropertyGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
+    <PublishAot>false</PublishAot>
+    <IsAotCompatible>false</IsAotCompatible>
+    <PublishTrimmed>false</PublishTrimmed>
+    <IsTrimmable>false</IsTrimmable>
+  </PropertyGroup>
+
 
   <!--
     The Runtime assembly populates Marionette.Ai.TriggerHook / ScheduleTriggerHook at

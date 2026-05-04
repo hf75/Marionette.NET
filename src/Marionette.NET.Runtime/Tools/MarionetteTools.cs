@@ -19,6 +19,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -388,6 +389,13 @@ public sealed class MarionetteTools
         "Raises a named routed event (e.g. Click) on a control resolved by AutomationId or x:Name. " +
         "Bubbling and tunneling are honoured by the framework. Returns {success:true} or " +
         "{success:false,errorCode,message}.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: the underlying IUiAutomationAdapter.RaiseEventAsync is " +
+                        "marked RequiresUnreferencedCode; the host's RunAsync entry point also " +
+                        "carries the warning so adopters see it at the boundary they own. " +
+                        "Suppression here is intentional — this MCP-tool method is one of " +
+                        "several reachable paths from the annotated host and re-surfacing the " +
+                        "warning at every call site spam adopter logs.")]
     public static async Task<string> RaiseEventAsync(
         ManifestRegistry registry,
         IUiAutomationAdapter adapter,
@@ -511,6 +519,12 @@ public sealed class MarionetteTools
     private static string SerializeResult(object? value)
         => MarionetteDispatch.SerializeResult(value);
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: JsonArray.Add over JsonValue-wrapped strings is primitive-only. " +
+                        "The compiler can't see this from the generic constraint; the warning surfaces " +
+                        "at MarionetteHost.RunAsync's RequiresUnreferencedCode.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: same reasoning.")]
     private static JsonObject SerializeRoot(RegisteredRoot r, IUiAutomationAdapter adapter, string? windowId)
     {
         var d = r.Descriptor;

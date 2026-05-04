@@ -200,6 +200,22 @@ public sealed class AvaloniaUiAutomationAdapter : IUiAutomationAdapter
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// AOT note: <see cref="AvaloniaEventRaiser.Raise"/> walks the control's
+    /// type chain via reflection looking for static
+    /// <c>&lt;EventName&gt;Event</c> fields (the Avalonia idiom, same as WPF).
+    /// Trimming MAY remove unreferenced fields and break the lookup; framework
+    /// controls (Button, TextBox, …) keep their <c>RoutedEvent</c> fields
+    /// rooted because XAML / templating references them. Phase 4.2: the
+    /// interface method is marked
+    /// <see cref="System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute"/>;
+    /// the suppression below acknowledges the warning here at the
+    /// implementation site rather than re-propagating it.
+    /// </remarks>
+    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode(
+        "AvaloniaUiAutomationAdapter.RaiseEventAsync resolves Avalonia RoutedEvents by reflecting " +
+        "on the control's type chain looking for static <EventName>Event fields. Trimming may " +
+        "strip these fields for custom controls. Use simulate_input or [McpCallable] for AOT.")]
     public Task<bool> RaiseEventAsync(
         string rootName,
         string controlName,

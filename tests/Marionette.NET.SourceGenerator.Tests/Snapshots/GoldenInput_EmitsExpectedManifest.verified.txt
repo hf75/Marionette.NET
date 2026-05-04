@@ -96,7 +96,12 @@ public static class GeneratedManifest
                     Invoke: static (instance, args) =>
                     {
                         var typed = (global::Demo.Calculator)instance;
-                        return typed.LoadAsync();
+                        async global::System.Threading.Tasks.Task<object?> __wrapAsync()
+                        {
+                            var __r = await typed.LoadAsync().ConfigureAwait(false);
+                            return (object?)__r;
+                        }
+                        return __wrapAsync();
                     }),
             },
             Observables: new ObservableDescriptor[]

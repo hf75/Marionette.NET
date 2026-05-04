@@ -67,6 +67,14 @@ public partial class App : Application
         InitializeComponent();
     }
 
+#if MCP_ENABLED
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: TodoApp uses [McpCallable] and simulate_input but does NOT " +
+                        "exercise raise_event from any deployed flow. The cascading warning from " +
+                        "MarionetteWpf.AttachTo -> MarionetteHost.RunAsync is acknowledged here.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: cascading IL3050 from STJ.")]
+#endif
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);

@@ -236,12 +236,19 @@ public sealed class WpfUiAutomationAdapter : IUiAutomationAdapter
     /// AOT note: <see cref="WpfEventRaiser.Raise"/> walks the control's type
     /// chain via reflection looking for static <c>&lt;EventName&gt;Event</c>
     /// fields (the WPF idiom). Trimming MAY remove unreferenced fields and
-    /// break the lookup; Phase 5's AOT-hardening pass may surface a
-    /// source-gen-emitted alternative that doesn't reflect at runtime. For
-    /// now WPF's own framework controls (Button, TextBox, …) keep their
-    /// RoutedEvent fields rooted because XAML / templating references them.
-    /// Custom controls that strip should fall back to <c>simulate_input</c>.
+    /// break the lookup. WPF's own framework controls (Button, TextBox, …)
+    /// keep their RoutedEvent fields rooted because XAML / templating
+    /// references them; custom controls that strip should fall back to
+    /// <c>simulate_input</c> or a <c>[McpCallable]</c> shim.
+    /// Phase 4.2: the interface method is marked
+    /// <see cref="System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute"/>;
+    /// the suppression below acknowledges the warning here at the
+    /// implementation site rather than re-propagating it.
     /// </remarks>
+    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode(
+        "WpfUiAutomationAdapter.RaiseEventAsync resolves WPF RoutedEvents by reflecting on " +
+        "the control's type chain looking for static <EventName>Event fields. Trimming may " +
+        "strip these fields for custom controls. Use simulate_input or [McpCallable] for AOT.")]
     public Task<bool> RaiseEventAsync(
         string rootName,
         string controlName,

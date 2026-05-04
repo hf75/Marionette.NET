@@ -128,6 +128,11 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
     /// Read the current value of a watchable resource. The value is dispatched
     /// to the UI thread (most observables read UI state) and JSON-serialised.
     /// </summary>
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: STJ over [McpObservable] return values. The cascading warning " +
+                        "surfaces at MarionetteHost.RunAsync.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: same reasoning.")]
     public async Task<ReadResourceResult> ReadAsync(string uri, CancellationToken ct)
     {
         if (!_entries.TryGetValue(uri, out var entry))
@@ -239,6 +244,10 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
     // Internal: change detection + 200 ms coalesce + push
     // -------------------------------------------------------------------------
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: STJ inside the watcher push path; cascading warning at MarionetteHost.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: same reasoning.")]
     private async Task MaybePushUpdatedAsync(Subscription sub, CancellationToken ct)
     {
         if (ct.IsCancellationRequested) return;
@@ -286,6 +295,10 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: STJ over [McpObservable] return value. Cascading warning at MarionetteHost.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: same reasoning.")]
     private string ReadValueJsonInline(WatchableEntry entry)
     {
         // Inline (no dispatch) — used for the initial-baseline read inside

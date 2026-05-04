@@ -23,6 +23,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -198,6 +199,12 @@ internal static class MarionetteDispatch
         return map;
     }
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: the default branch deserialises into JsonElement, which is " +
+                        "primitive-only and AOT-safe. The compiler can't see this from the generic " +
+                        "constraint; the warning surfaces at MarionetteHost.RunAsync's RequiresUnreferencedCode.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: same reasoning — JsonElement deserialisation requires no dynamic code.")]
     internal static object? ConvertJsonToClr(JsonElement el, string clrTypeName, string paramName)
     {
         var name = clrTypeName;
@@ -252,40 +259,65 @@ internal static class MarionetteDispatch
         }
     }
 
+    /// <summary>
+    /// Await any boxed Task / Task&lt;T&gt; / ValueTask / ValueTask&lt;T&gt; coming
+    /// out of a callable's <c>Invoke</c> lambda and return the (boxed) result.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// AOT contract (Phase 4.2): the source generator wraps async callables in
+    /// a typed async lambda that returns <see cref="Task{Object}"/> with
+    /// <c>object?</c> as the type argument — the runtime's await path is
+    /// therefore <b>statically typed</b> and does not need
+    /// <see cref="System.Reflection.MethodInfo.Invoke"/>,
+    /// <c>MakeGenericMethod</c>, or <c>Task&lt;T&gt;.Result</c> reflection.
+    /// </para>
+    /// <para>
+    /// The remaining non-generic <see cref="Task"/> / <see cref="ValueTask"/>
+    /// branches handle adopters who manually populate a descriptor with a
+    /// custom <c>Invoke</c> lambda — keeping the surface forgiving without
+    /// re-introducing reflection. The most common path (source-generator
+    /// emission) hits the <c>Task&lt;object?&gt;</c> case first and returns.
+    /// </para>
+    /// </remarks>
     internal static async Task<object?> AwaitAndUnwrapAsync(object? maybeTask)
     {
         switch (maybeTask)
         {
             case null:
                 return null;
+            // Source-generator-emitted shape (Phase 4.2): typed Task<object?>.
+            // Statically typed — no reflection.
+            case Task<object?> generatorWrapped:
+                return await generatorWrapped.ConfigureAwait(false);
             case Task task:
+                // Non-generic Task: await without trying to reflect on a result.
+                // Adopters who hand-author a Task<T>-returning Invoke will need
+                // to wrap with their own typed lambda; the source generator
+                // already wraps every async callable into Task<object?>.
                 await task.ConfigureAwait(false);
-                var taskType = task.GetType();
-                if (taskType.IsGenericType && taskType.GetGenericTypeDefinition() == typeof(Task<>))
-                {
-                    var prop = taskType.GetProperty("Result");
-                    return prop?.GetValue(task);
-                }
                 return null;
             case ValueTask vt:
                 await vt.ConfigureAwait(false);
                 return null;
             default:
-                var t = maybeTask.GetType();
-                if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(ValueTask<>))
-                {
-                    var asTask = t.GetMethod("AsTask", Type.EmptyTypes);
-                    if (asTask?.Invoke(maybeTask, parameters: null) is Task asyncTask)
-                    {
-                        await asyncTask.ConfigureAwait(false);
-                        var resultProp = asyncTask.GetType().GetProperty("Result");
-                        return resultProp?.GetValue(asyncTask);
-                    }
-                }
+                // Anything else is treated as a sync return value (already
+                // boxed). No reflection on user types — keeps the runtime
+                // AOT/trim-clean (Phase 4.2).
                 return maybeTask;
         }
     }
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: SerializeResult uses System.Text.Json's reflection-based " +
+                        "serialiser to round-trip [McpCallable] return values. The cascading " +
+                        "warning surfaces at MarionetteHost.RunAsync's RequiresUnreferencedCode " +
+                        "annotation; adopters who AOT-publish suppress at the host call site after " +
+                        "auditing their callable return types (JSON-primitive shapes are safe).")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: same reasoning — JsonSerializer may JIT-generate code at " +
+                        "runtime for unknown user types. Phase 6 may move to source-generated " +
+                        "JsonTypeInfo per descriptor.")]
     internal static string SerializeResult(object? value)
     {
         if (value is null) return "null";

@@ -31,6 +31,20 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <!--
+    AOT publish settings (Phase 4.2). Only active when -p:PublishAot=true is passed on the publish
+    command; a normal `dotnet build` is unaffected. Mirrors the StripeProbe csproj.
+      * Self-contained + RID are required for AOT.
+      * TreatWarningsAsErrors is relaxed during AOT publish so we can SEE trim/AOT warnings (otherwise
+        the build aborts before they print).
+      * `_SuppressWpfTrimError=true` is contributed by build/Marionette.NET.targets when
+        UseWPF=true && PublishAot=true (Phase 4.2 widened from EnableMcpAutomation=true only).
+  -->
+  <PropertyGroup Condition="'$(PublishAot)'=='true'">
+    <SelfContained>true</SelfContained>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
   <!-- Always reference Abstractions; attributes survive into Release as markup. -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />

@@ -223,21 +223,51 @@ internal static class Emitter
 
         if (call.ReturnsTaskOfT)
         {
-            // Task<T> / ValueTask<T> — return the task as object?, runtime awaits + unboxes.
-            sb.Append("                        return typed.");
+            // Task<T> / ValueTask<T>: wrap in a typed async lambda that boxes
+            // the awaited result into Task<object?>. The runtime can then
+            // await Task<object?> directly without MakeGenericMethod /
+            // reflective Task<T>.Result reads (Phase 4.2 AOT-hardening).
+            //
+            // Shape:
+            //   static async global::System.Threading.Tasks.Task<object?> __wrap()
+            //   {
+            //       var __r = await typed.Foo(args).ConfigureAwait(false);
+            //       return (object?)__r;
+            //   }
+            //   return __wrap();
+            //
+            // We inline the helper as a local function so each callable owns
+            // its own closure (closures capture `typed` + parameter locals
+            // by reference, which the C# compiler handles correctly).
+            sb.AppendLine("                        async global::System.Threading.Tasks.Task<object?> __wrapAsync()");
+            sb.AppendLine("                        {");
+            // Whether the source returns Task<T> or ValueTask<T>, awaiting
+            // works the same — `await` patterns are duck-typed by the C#
+            // compiler. The `(object?)` cast boxes value-type results.
+            sb.Append("                            var __r = await typed.");
             sb.Append(call.MethodName);
             sb.Append("(");
             sb.Append(argsList);
-            sb.AppendLine(");");
+            sb.AppendLine(").ConfigureAwait(false);");
+            sb.AppendLine("                            return (object?)__r;");
+            sb.AppendLine("                        }");
+            sb.AppendLine("                        return __wrapAsync();");
         }
         else if (call.ReturnsTask)
         {
-            // Task / ValueTask — return as object?, runtime awaits.
-            sb.Append("                        return typed.");
+            // Task / ValueTask (no T): wrap into Task<object?> returning null
+            // on completion. Same rationale as the Task<T> branch — keeps the
+            // runtime's await path reflection-free (Phase 4.2 AOT-hardening).
+            sb.AppendLine("                        async global::System.Threading.Tasks.Task<object?> __wrapAsync()");
+            sb.AppendLine("                        {");
+            sb.Append("                            await typed.");
             sb.Append(call.MethodName);
             sb.Append("(");
             sb.Append(argsList);
-            sb.AppendLine(");");
+            sb.AppendLine(").ConfigureAwait(false);");
+            sb.AppendLine("                            return null;");
+            sb.AppendLine("                        }");
+            sb.AppendLine("                        return __wrapAsync();");
         }
         else if (call.ReturnTypeFullName == "global::System.Void" || call.ReturnTypeFullName == "void")
         {

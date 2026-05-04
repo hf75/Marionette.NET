@@ -51,6 +51,16 @@
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
 
+  <!--
+    AOT publish settings (Phase 4.2). WinUI 3 + AOT is partially supported in
+    .NET 10; relax TreatWarningsAsErrors so the inherent IL3xxx warnings from
+    Microsoft.WindowsAppSDK / Microsoft.UI.Xaml print instead of aborting.
+  -->
+  <PropertyGroup Condition="'$(PublishAot)'=='true'">
+    <SelfContained>true</SelfContained>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
   <!-- Always reference Abstractions; attributes survive into Release as markup. -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />

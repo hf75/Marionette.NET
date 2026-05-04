@@ -28,6 +28,16 @@ namespace Sample.Wpf.StripeProbe;
 internal static class Program
 {
     [STAThread]
+#if MCP_ENABLED
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: StripeProbe surfaces MarionetteHost.RunAsync from Main; the " +
+                        "host's RequiresUnreferencedCode warning is acknowledged here. The probe " +
+                        "exercises [McpCallable] only and does not invoke raise_event.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: cascading IL3050 from MarionetteHost.RunAsync's STJ path. " +
+                        "StripeProbe's manifest exposes only int/string callables and an int observable " +
+                        "— STJ's reflection over those primitive shapes is AOT-safe in practice.")]
+#endif
     public static int Main(string[] args)
     {
 #if MCP_ENABLED

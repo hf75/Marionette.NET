@@ -479,6 +479,12 @@ public sealed class DynamicToolRegistry : IDisposable
     /// a single <see cref="JsonElement"/> object that
     /// <see cref="MarionetteDispatch.InvokeAsync"/> can consume.
     /// </summary>
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: SerializeToElement is invoked on a JsonNode tree we built " +
+                        "ourselves out of primitive JsonNodes; the operation is AOT-safe in " +
+                        "practice. The cascading warning surfaces at MarionetteHost.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: same reasoning — primitive JsonNode round-trip needs no dynamic code.")]
     private static JsonElement? BuildArgsElement(RequestContext<CallToolRequestParams> ctx)
     {
         var args = ctx.Params?.Arguments;

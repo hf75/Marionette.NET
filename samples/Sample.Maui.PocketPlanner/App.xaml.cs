@@ -58,6 +58,14 @@ public partial class App : Application
         return window;
     }
 
+#if MCP_ENABLED
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: PocketPlanner forwards into MarionetteMaui.AttachTo which carries " +
+                        "the cascading raise_event reflection warning. PocketPlanner doesn't use " +
+                        "raise_event from any deployed flow.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: cascading IL3050 from STJ.")]
+#endif
     protected override void OnStart()
     {
         base.OnStart();

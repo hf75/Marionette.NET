@@ -362,9 +362,16 @@ public sealed class WinUiAutomationAdapter : IUiAutomationAdapter
     /// AOT note: <see cref="WinUiEventRaiser.Raise"/> walks the control's type
     /// chain via reflection looking for the compiler-emitted backing field of
     /// the named CLR event. Trimming MAY remove the backing field; framework
-    /// controls keep theirs rooted via XAML usage. Phase 5's AOT-hardening
-    /// pass may surface a source-gen alternative.
+    /// controls keep theirs rooted via XAML usage. Phase 4.2: the interface
+    /// method is marked
+    /// <see cref="System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute"/>;
+    /// the suppression below acknowledges the warning here at the
+    /// implementation site rather than re-propagating it.
     /// </remarks>
+    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode(
+        "WinUiAutomationAdapter.RaiseEventAsync reflects on the compiler-emitted backing delegate " +
+        "field of CLR events on the control's type chain. Trimming may strip these fields for " +
+        "custom controls. Use simulate_input or [McpCallable] for AOT.")]
     public Task<bool> RaiseEventAsync(
         string rootName,
         string controlName,

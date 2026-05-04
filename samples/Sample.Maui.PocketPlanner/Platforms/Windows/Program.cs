@@ -27,6 +27,13 @@ namespace Sample.Maui.PocketPlanner.WinUI;
 internal static class Program
 {
     [STAThread]
+#if MCP_ENABLED
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 4.2: PocketPlanner's headless path calls MarionetteHost.RunAsync " +
+                        "directly. The cascading raise_event reflection warning is acknowledged here.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Phase 4.2: cascading IL3050 from STJ.")]
+#endif
     public static int Main(string[] args)
     {
 #if MCP_ENABLED

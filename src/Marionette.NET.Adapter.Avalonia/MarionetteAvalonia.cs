@@ -13,6 +13,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -40,6 +41,26 @@ public static class MarionetteAvalonia
     /// <summary>
     /// Attach the Marionette MCP host to a running Avalonia Application.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>AOT/trim contract (Phase 4.2):</b> the bootstrap forwards into
+    /// <see cref="MarionetteHost.RunAsync(string[], IReadOnlyList{RootDescriptor}, IUiAutomationAdapter?, CancellationToken)"/>,
+    /// which is itself marked
+    /// <see cref="System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute"/>
+    /// because the runtime surfaces the <c>raise_event</c> MCP tool. Suppress
+    /// at this entry point if you only use <c>simulate_input</c> +
+    /// <c>[McpCallable]</c>.
+    /// </para>
+    /// </remarks>
+    [RequiresUnreferencedCode(
+        "MarionetteAvalonia.AttachTo forwards into MarionetteHost.RunAsync, which surfaces the " +
+        "raise_event MCP tool's reflection-based event resolver. Suppress at the call site " +
+        "after auditing your raise_event use, or avoid raise_event in favour of " +
+        "simulate_input + [McpCallable]+invoke_method.")]
+    [RequiresDynamicCode(
+        "MarionetteAvalonia.AttachTo forwards into MarionetteHost.RunAsync, which uses " +
+        "System.Text.Json for boxed-object serialisation. Phase 4.2 keeps this on the warning " +
+        "surface; Phase 6 may move to source-generated JsonTypeInfo.")]
     public static IDisposable AttachTo(
         global::Avalonia.Application app,
         IReadOnlyList<RootDescriptor> roots,

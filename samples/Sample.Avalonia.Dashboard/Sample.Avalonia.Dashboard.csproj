@@ -34,6 +34,16 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
+  <!--
+    AOT publish settings (Phase 4.2). Mirrors the WPF samples: relax
+    TreatWarningsAsErrors during publish so AOT analyzer warnings print
+    instead of aborting the build.
+  -->
+  <PropertyGroup Condition="'$(PublishAot)'=='true'">
+    <SelfContained>true</SelfContained>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
   <!-- Always reference Abstractions; attributes survive into Release as markup. -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />

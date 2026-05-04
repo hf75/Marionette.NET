@@ -25,6 +25,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -120,6 +121,17 @@ public sealed class NoOpAdapter : IUiAutomationAdapter
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Phase 4.2: the interface contract declares
+    /// <see cref="RequiresUnreferencedCodeAttribute"/> because the framework
+    /// implementations reflect on the event name. This NoOp implementation
+    /// inherits the annotation to satisfy IL2046 (annotations must match
+    /// across overrides) — even though this stub returns false unconditionally
+    /// and does no reflection itself.
+    /// </remarks>
+    [RequiresUnreferencedCode(
+        "NoOpAdapter inherits the interface annotation; the stub itself does no reflection " +
+        "but the contract requires every implementation to declare the same warning.")]
     public Task<bool> RaiseEventAsync(
         string rootName,
         string controlName,

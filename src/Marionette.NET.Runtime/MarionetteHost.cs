@@ -32,6 +32,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -81,6 +82,58 @@ public static class MarionetteHost
     /// <c>0</c> on success or when the call is a no-op (no <c>--mcp</c> flag);
     /// non-zero on host startup failure.
     /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>AOT/trim contract (Phase 4.2):</b> the runtime's hot paths are
+    /// reflection-free — every <c>[McpCallable]</c> dispatch goes through a
+    /// typed lambda emitted by the source generator, every observable read uses
+    /// a typed getter, every event subscribe uses a typed delegate bridge.
+    /// The reflection surfaces that DO exist are:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <c>raise_event</c> — see
+    ///     <see cref="IUiAutomationAdapter.RaiseEventAsync(string, string, string, IReadOnlyDictionary{string, object?}?, string?, CancellationToken)"/>
+    ///     which is itself marked <see cref="RequiresUnreferencedCodeAttribute"/>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     The MCP SDK's per-tool argument marshalling reflects on the
+    ///     <see cref="ModelContextProtocol.Server.McpServerToolType"/>'s tool
+    ///     methods. The SDK's analyzer surface ships its own annotations;
+    ///     adopters who enable AOT see the SDK's IL2026 / IL3050 hints rather
+    ///     than Marionette's.
+    ///   </description></item>
+    ///   <item><description>
+    ///     The optional <see cref="IUiAutomationAdapter.RaiseEventAsync"/>
+    ///     surface (see above).
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// <see cref="RequiresUnreferencedCodeAttribute"/> is applied here at the
+    /// composition boundary: adopters call <c>RunAsync</c> from their <c>Main</c>
+    /// after parsing argv. AOT-publishing apps suppress the warning at that
+    /// single call site once they've audited their use of <c>raise_event</c>;
+    /// alternatively they avoid <c>raise_event</c> entirely and use
+    /// <c>simulate_input</c> + <c>[McpCallable]</c> for fully reflection-free
+    /// automation.
+    /// </para>
+    /// </remarks>
+    [RequiresUnreferencedCode(
+        "MarionetteHost.RunAsync surfaces the raise_event MCP tool, which resolves event " +
+        "names by reflection on user types. Trimmed apps may lose event metadata for custom " +
+        "controls. Additionally, the runtime serialises observable values, callable results, " +
+        "and event payloads via System.Text.Json's reflection-based JsonSerializer; trimming " +
+        "may strip the property metadata of user types. Suppress at the call site after " +
+        "auditing, or avoid raise_event and confine [McpObservable]/event payloads to JSON-" +
+        "primitive shapes (int/string/bool/arrays/INPC records) so the serializer's reflection " +
+        "doesn't reach beyond what the trimmer keeps.")]
+    [RequiresDynamicCode(
+        "MarionetteHost.RunAsync uses System.Text.Json for boxed-object serialisation of " +
+        "[McpObservable] reads, [McpCallable] results, and [McpEvent] payloads. JsonSerializer " +
+        "may JIT-generate code at runtime when no JsonTypeInfo is supplied. Phase 4.2 keeps " +
+        "this on the AOT-warning surface; Phase 6 may migrate to System.Text.Json source-" +
+        "generation per descriptor type to close the warning. Suppress at the call site if " +
+        "your AOT toolchain ships the JsonReader fallback path.")]
     public static async Task<int> RunAsync(
         string[] args,
         IReadOnlyList<RootDescriptor> roots,
