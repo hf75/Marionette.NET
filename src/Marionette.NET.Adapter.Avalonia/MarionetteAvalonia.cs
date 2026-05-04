@@ -1,53 +1,15 @@
 // Marionette.NET - Avalonia bootstrap entry point
 //
 // Phase 2.1 contract: adopters wire Marionette into their Avalonia Application
-// with one call from `App.OnFrameworkInitializationCompleted`:
+// with one call from `App.OnFrameworkInitializationCompleted`.
 //
-//     public override void OnFrameworkInitializationCompleted()
-//     {
-//         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-//         {
-//             desktop.MainWindow = new MainWindow();
-//         }
-//         base.OnFrameworkInitializationCompleted();
-//
-//         #if MCP_ENABLED
-//         MarionetteAvalonia.AttachTo(this, GeneratedManifest.Roots, args);
-//         #endif
-//     }
-//
-// The call:
-//
-//   1. Constructs an `AvaloniaUiAutomationAdapter(app, logger)`.
-//   2. Rewrites every RootDescriptor's `Create` factory so it dispatches
-//      through the Avalonia UI thread AND, when possible, returns a live
-//      instance already attached to the visible window tree (e.g. the desktop
-//      lifetime's `MainWindow`) rather than a fresh `new T()`. This is the
-//      Avalonia analogue of the Phase 1.3 WPF rewrite. Two problems solved:
-//      thread-affinity (Avalonia Window ctors only work on the UI thread) and
-//      instance-affinity (the UI binds one DataContext but the runtime
-//      registry would otherwise see a different instance).
-//   3. Spawns `MarionetteHost.RunAsync(args, roots, adapter, ct)` on a
-//      background Task so the UI thread is never blocked.
-//   4. Hooks the desktop lifetime's `Exit` event to cancel the host (clean
-//      shutdown). On non-classic-desktop lifetimes (mobile, single-view) we
-//      skip the hook - the `IDisposable` returned remains the adopter's only
-//      shutdown path.
-//   5. Returns immediately. The returned IDisposable can be Disposed early to
-//      detach the host explicitly (cancel + wait for the run task).
-//
-// SCENARIO COVERAGE
-//
-// `--mcp` (with GUI): adopters call AttachTo. The args from Program.Main need
-// to be propagated to AttachTo (via the `args` parameter) so MarionetteHost
-// sees `--mcp`. Without `--mcp` in args, the host's RunAsync returns 0
-// immediately and AttachTo becomes a no-op.
-//
-// `--mcp --headless`: do NOT use AttachTo. There is no Avalonia application
-// (the headless path skips the AppBuilder entirely). Adopters call
-// `MarionetteHost.RunAsync(args, roots, adapter: null)` directly from
-// `Program.Main`; the host falls back to NoOpAdapter, screenshot returns the
-// `screenshot_not_supported` structured error, and dispatch runs inline.
+// Phase 3.3 multi-window routing: the adapter's RootInstanceTracker is
+// populated from two sources:
+//   (a) bridged factories register the live root instance on first
+//       materialisation;
+//   (b) MarionetteAvalonia subscribes to the desktop lifetime's WindowOpened
+//       event so secondary Window-typed roots auto-register. Adopters with
+//       non-Window roots can call MarionetteAvalonia.TrackInstance directly.
 
 using System;
 using System.Collections.Generic;
@@ -69,49 +31,15 @@ namespace Marionette.Adapter.Avalonia;
 
 /// <summary>
 /// One-call bootstrap for adding Marionette MCP automation to an Avalonia
-/// application. Use this from
-/// <see cref="global::Avalonia.Application.OnFrameworkInitializationCompleted"/>
-/// in GUI mode (i.e. the <c>--mcp</c> path; not <c>--mcp --headless</c>,
-/// which has no Avalonia Application).
+/// application.
 /// </summary>
-/// <remarks>
-/// <para>
-/// In <c>--mcp --headless</c> mode there is no <see cref="global::Avalonia.Application"/>,
-/// no <see cref="Dispatcher"/>, and no UI thread. MarionetteAvalonia cannot run there -
-/// adopters must call
-/// <see cref="MarionetteHost.RunAsync(string[], IReadOnlyList{RootDescriptor}, IUiAutomationAdapter?, CancellationToken)"/>
-/// directly from <c>Program.Main</c> with <c>adapter: null</c>; the runtime
-/// falls back to <see cref="NoOpAdapter"/>.
-/// </para>
-/// </remarks>
 public static class MarionetteAvalonia
 {
+    private static AvaloniaUiAutomationAdapter? s_currentAdapter;
+
     /// <summary>
-    /// Attach the Marionette MCP host to a running Avalonia <see cref="global::Avalonia.Application"/>.
-    /// Non-blocking: the host runs on a background <see cref="Task"/>; the
-    /// caller's UI thread continues into the regular Avalonia message loop.
+    /// Attach the Marionette MCP host to a running Avalonia Application.
     /// </summary>
-    /// <param name="app">The Avalonia application instance (typically <c>this</c> from <c>App.OnFrameworkInitializationCompleted</c>).</param>
-    /// <param name="roots">The source-generator-emitted root list (typically <c>Marionette.Generated.GeneratedManifest.Roots</c>).</param>
-    /// <param name="args">
-    /// Optional argv from <c>Program.Main</c>. When omitted, falls back to
-    /// <see cref="Environment.GetCommandLineArgs"/> (skipping the .exe path).
-    /// Without <c>--mcp</c> in args the host's <see cref="MarionetteHost.RunAsync(string[], IReadOnlyList{RootDescriptor}, IUiAutomationAdapter?, CancellationToken)"/>
-    /// returns 0 immediately and this call becomes a no-op.
-    /// </param>
-    /// <param name="loggerFactory">
-    /// Optional logger factory used to create the adapter's logger. When
-    /// <see langword="null"/>, a <see cref="NullLoggerFactory"/> is used; the
-    /// host's own logging then surfaces stderr-bound diagnostics.
-    /// </param>
-    /// <returns>
-    /// A disposable handle. Disposing it cancels the host run-task and waits
-    /// for it to complete (best-effort, max 2 s). Disposal is also auto-wired
-    /// to the desktop lifetime's <see cref="IClassicDesktopStyleApplicationLifetime.Exit"/>
-    /// event so adopters who don't track the handle still get clean shutdown
-    /// when the Avalonia Application exits.
-    /// </returns>
-    /// <exception cref="ArgumentNullException"><paramref name="app"/> or <paramref name="roots"/> is null.</exception>
     public static IDisposable AttachTo(
         global::Avalonia.Application app,
         IReadOnlyList<RootDescriptor> roots,
@@ -123,14 +51,18 @@ public static class MarionetteAvalonia
 
         var resolvedArgs = args ?? CommandLineArgsExceptExe();
         var lf = loggerFactory ?? NullLoggerFactory.Instance;
+        var tracker = new RootInstanceTracker();
         var adapter = new AvaloniaUiAutomationAdapter(
             app,
-            lf.CreateLogger<AvaloniaUiAutomationAdapter>());
+            lf.CreateLogger<AvaloniaUiAutomationAdapter>(),
+            tracker);
+        s_currentAdapter = adapter;
 
-        // Rewrite roots so factories dispatch through the Avalonia UI thread
-        // and prefer the live MainWindow when its CLR FullName matches the
-        // descriptor's TypeName. See WrapRootsForUiThread for the reasoning.
-        var bridgedRoots = WrapRootsForUiThread(app, roots);
+        var bridgedRoots = WrapRootsForUiThread(app, roots, tracker);
+
+        // Phase 3.3: hook desktop.Windows for auto-registration of Window-typed
+        // root types beyond the initial MainWindow.
+        InstallWindowOpenHook(app, roots, tracker);
 
         var cts = new CancellationTokenSource();
         var hostTask = Task.Run(async () =>
@@ -145,21 +77,14 @@ public static class MarionetteAvalonia
             }
             catch (OperationCanceledException) when (cts.IsCancellationRequested)
             {
-                // Normal shutdown via Detach / Application.Exit.
+                // Normal shutdown.
             }
             catch (Exception ex)
             {
-                // We're on a background thread; the only safe sink is stderr.
-                // Console.Error is reserved for log-style output by the
-                // runtime's StderrLoggerProvider, so this matches the rest of
-                // the host's diagnostic surface.
                 Console.Error.WriteLine($"[marionette-avalonia] MCP host crashed: {ex}");
             }
         }, cts.Token);
 
-        // Detach on Avalonia desktop lifetime Exit. Mobile / single-view
-        // lifetimes don't have an Exit event; adopters there must Dispose the
-        // handle manually.
         var attachment = new MarionetteAttachment(cts, hostTask);
         if (app.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
@@ -167,9 +92,9 @@ public static class MarionetteAvalonia
             exitHandler = (_, _) =>
             {
                 try { attachment.Dispose(); }
-                catch { /* shutdown path */ }
+                catch { /* shutdown */ }
                 try { if (exitHandler is not null) desktop.Exit -= exitHandler; }
-                catch { /* shutdown path */ }
+                catch { /* shutdown */ }
             };
             desktop.Exit += exitHandler;
         }
@@ -178,56 +103,25 @@ public static class MarionetteAvalonia
     }
 
     /// <summary>
-    /// Wrap each <see cref="RootDescriptor.Create"/> factory so it runs on the
-    /// Avalonia UI thread, and so it returns a live
-    /// <see cref="IClassicDesktopStyleApplicationLifetime.MainWindow"/> (when
-    /// type-compatible) before falling back to the original factory.
+    /// Phase 3.3: register a non-Window root instance for multi-window routing.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Two problems are solved here.
-    /// </para>
-    /// <para>
-    /// <b>Problem 1 - thread affinity.</b> Avalonia Window ctors and many
-    /// AvaloniaProperty operations require the UI thread;
-    /// <see cref="MarionetteHost.RunAsync(string[], IReadOnlyList{RootDescriptor}, IUiAutomationAdapter?, CancellationToken)"/>
-    /// runs from a background <see cref="Task"/>, so the registry's auto-call
-    /// to <c>new MainWindow()</c> on that bg thread can fail. Dispatching
-    /// through <see cref="Dispatcher.UIThread"/> moves the call.
-    /// </para>
-    /// <para>
-    /// <b>Problem 2 - instance affinity.</b> Even if we constructed a fresh
-    /// MainWindow on the UI thread, it would be a different object than the
-    /// desktop lifetime's MainWindow. The user clicks the live window and
-    /// mutates its DataContext; <c>read_observable</c> would see the OTHER
-    /// instance. We bind to the live MainWindow when its CLR type matches the
-    /// descriptor's <c>TypeName</c>; otherwise we fall back to the original
-    /// factory (still on the UI thread).
-    /// </para>
-    /// <para>
-    /// The bg thread blocks on <see cref="Dispatcher.Invoke"/> only for the
-    /// brief duration of the factory call. Sub-millisecond on a loaded
-    /// MainWindow; never on the UI thread itself, so no deadlock.
-    /// </para>
-    /// <para>
-    /// Note: this auto-wiring matches Window-typed roots only. Adopters whose
-    /// root is a non-Window ViewModel (typical Avalonia pattern) must still do
-    /// the explicit `RootDescriptor.Create = () => MyViewModel.Shared` rewrite
-    /// in their `App.OnFrameworkInitializationCompleted` BEFORE calling
-    /// AttachTo - exactly the same way the WPF TodoApp does. See the Phase 2
-    /// sample (Sample.Avalonia.Dashboard) for the canonical example.
-    /// </para>
-    /// </remarks>
+    public static string TrackInstance(string rootName, object instance)
+    {
+        var adapter = s_currentAdapter
+            ?? throw new InvalidOperationException(
+                "MarionetteAvalonia.TrackInstance was called before AttachTo. " +
+                "Call AttachTo from App.OnFrameworkInitializationCompleted first.");
+        return adapter.Tracker.Track(rootName, instance);
+    }
+
     private static IReadOnlyList<RootDescriptor> WrapRootsForUiThread(
         global::Avalonia.Application app,
-        IReadOnlyList<RootDescriptor> roots)
+        IReadOnlyList<RootDescriptor> roots,
+        RootInstanceTracker tracker)
     {
         var bridged = new List<RootDescriptor>(roots.Count);
         foreach (var r in roots)
         {
-            // No factory -> nothing to wrap. The runtime will surface
-            // "root_unavailable" until / unless an adapter binds an instance
-            // (Phase 3+ may add framework-specific binding flows).
             if (r.Create is null)
             {
                 bridged.Add(r);
@@ -236,23 +130,24 @@ public static class MarionetteAvalonia
 
             var originalCreate = r.Create;
             var typeName = r.TypeName;
+            var rootName = r.Name;
 
             Func<object> bridged_ = () => Dispatcher.UIThread.Invoke(
                 () =>
                 {
-                    // Try the live MainWindow first. The descriptor's TypeName
-                    // is fully-qualified (FQN); match against the runtime
-                    // type's FullName.
+                    object resolved;
                     if (app.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
                         desktop.MainWindow is { } mw &&
                         string.Equals(mw.GetType().FullName, typeName, StringComparison.Ordinal))
                     {
-                        return (object)mw;
+                        resolved = mw;
                     }
-
-                    // Otherwise call the original factory; we're on the UI
-                    // thread now so thread-affine ctors are happy.
-                    return originalCreate();
+                    else
+                    {
+                        resolved = originalCreate();
+                    }
+                    tracker.Track(rootName, resolved);
+                    return resolved;
                 });
 
             bridged.Add(r with { Create = bridged_ });
@@ -260,10 +155,72 @@ public static class MarionetteAvalonia
         return bridged;
     }
 
+    /// <summary>
+    /// Phase 3.3: hook the desktop lifetime's <see cref="IClassicDesktopStyleApplicationLifetime.Windows"/>
+    /// indirectly via per-window <c>Opened</c>/<c>Closed</c> events captured
+    /// from a periodic reconciliation. Avalonia 11.x doesn't expose a public
+    /// "window-opened" application-level event; reconciling on
+    /// <see cref="Dispatcher.UIThread"/> idle ticks is the simplest match.
+    /// </summary>
+    private static void InstallWindowOpenHook(
+        global::Avalonia.Application app,
+        IReadOnlyList<RootDescriptor> roots,
+        RootInstanceTracker tracker)
+    {
+        var typeToRoot = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var r in roots)
+        {
+            if (!string.IsNullOrEmpty(r.TypeName))
+            {
+                typeToRoot[r.TypeName] = r.Name;
+            }
+        }
+        if (typeToRoot.Count == 0) return;
+        if (app.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop) return;
+
+        var hooked = new System.Runtime.CompilerServices.ConditionalWeakTable<Window, object>();
+
+        void ReconcileOnce()
+        {
+            foreach (var w in desktop.Windows)
+            {
+                if (w is null) continue;
+                var typeName = w.GetType().FullName;
+                if (typeName is null) continue;
+                if (!typeToRoot.TryGetValue(typeName, out var rootName)) continue;
+
+                tracker.Track(rootName, w);
+
+                // Hook close exactly once per Window via the CWT sentinel.
+                if (hooked.TryGetValue(w, out _)) continue;
+                hooked.Add(w, new object());
+                var capturedWindow = w;
+                EventHandler? closedHandler = null;
+                closedHandler = (_, _) =>
+                {
+                    try { tracker.Untrack(capturedWindow); } catch { /* ignore */ }
+                    try { if (closedHandler is not null) capturedWindow.Closed -= closedHandler; } catch { /* ignore */ }
+                };
+                capturedWindow.Closed += closedHandler;
+            }
+        }
+
+        ReconcileOnce();
+
+        // Avalonia 11.x exposes a Window.Activated event but no
+        // application-wide "window-opened" notifier. We rely on the same
+        // periodic-tick pattern as the WPF adapter — schedule a low-priority
+        // reconciliation on each application idle.
+        var timer = new DispatcherTimer(DispatcherPriority.ApplicationIdle)
+        {
+            Interval = TimeSpan.FromMilliseconds(250),
+        };
+        timer.Tick += (_, _) => ReconcileOnce();
+        timer.Start();
+    }
+
     private static string[] CommandLineArgsExceptExe()
     {
-        // Environment.GetCommandLineArgs[0] is the executable path; the rest
-        // are the actual flags. Mirrors what Program.Main(string[] args) sees.
         var cli = Environment.GetCommandLineArgs();
         if (cli.Length <= 1) return Array.Empty<string>();
         var rest = new string[cli.Length - 1];
@@ -288,13 +245,7 @@ public static class MarionetteAvalonia
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
             try { _cts.Cancel(); } catch { /* ignore */ }
-
-            // Best-effort wait; never block the UI thread for more than 2s.
-            // The Avalonia Dispatcher pumps message-loop work during the wait
-            // if we're called from the UI thread, so this is safe even from
-            // the desktop lifetime's Exit handler.
             try { _hostTask.Wait(TimeSpan.FromSeconds(2)); } catch { /* ignore - shutdown */ }
-
             try { _cts.Dispose(); } catch { /* ignore */ }
         }
     }

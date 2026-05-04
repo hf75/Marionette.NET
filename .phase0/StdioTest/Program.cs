@@ -77,7 +77,7 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: StdioTest <path-to-sample.exe> [--gui] [--todoapp] [--avalonia] [--winui] [--probe] [--simulate-input]");
+            Console.Error.WriteLine("Usage: StdioTest <path-to-sample.exe> [--gui] [--todoapp] [--avalonia] [--winui] [--probe] [--simulate-input] [--two-windows]");
             return 2;
         }
 
@@ -88,6 +88,7 @@ internal static class Program
         var avaloniaMode = false;
         var winuiMode = false;
         var simulateInputMode = false;
+        var twoWindowsMode = false;
         for (var ai = 1; ai < args.Length; ai++)
         {
             if (args[ai] == "--probe") probeMode = true;
@@ -96,6 +97,7 @@ internal static class Program
             else if (args[ai] == "--avalonia") avaloniaMode = true;
             else if (args[ai] == "--winui") winuiMode = true;
             else if (args[ai] == "--simulate-input") simulateInputMode = true;
+            else if (args[ai] == "--two-windows") twoWindowsMode = true;
         }
         // --simulate-input only makes sense with a GUI sample (the input
         // simulator needs a real WPF/Avalonia visual tree). Auto-imply --gui
@@ -105,6 +107,21 @@ internal static class Program
         {
             Console.Error.WriteLine("INFO — --simulate-input requires --gui; enabling automatically.");
             guiMode = true;
+        }
+        // Phase 3.3: --two-windows only makes sense in GUI mode (the headless
+        // path bypasses the WPF App entirely). Auto-imply.
+        if (twoWindowsMode)
+        {
+            if (!guiMode)
+            {
+                Console.Error.WriteLine("INFO — --two-windows requires --gui; enabling automatically.");
+                guiMode = true;
+            }
+            if (!todoAppMode)
+            {
+                Console.Error.WriteLine("INFO — --two-windows currently only supported with --todoapp; ignoring otherwise.");
+                twoWindowsMode = false;
+            }
         }
         if (!File.Exists(exePath))
         {
@@ -122,7 +139,7 @@ internal static class Program
             : (avaloniaMode
                 ? "Phase 2.1 Avalonia Dashboard stdio handshake harness"
                 : (todoAppMode
-                    ? "Phase 1.4 TodoApp stdio handshake harness"
+                    ? (twoWindowsMode ? "Phase 3.3 TodoApp --two-windows stdio handshake harness" : "Phase 1.4 TodoApp stdio handshake harness")
                     : (guiMode ? "Phase 1.3 stdio + GUI screenshot harness" : "Phase 1.2 stdio handshake harness")));
         Console.WriteLine($"=== {phaseLabel} ===");
         Console.WriteLine($"Child: {exePath}");
@@ -144,6 +161,7 @@ internal static class Program
         };
         psi.ArgumentList.Add("--mcp");
         if (!guiMode) psi.ArgumentList.Add("--headless");
+        if (twoWindowsMode) psi.ArgumentList.Add("--two-windows");
         if (probeMode)
         {
             psi.Environment["MARIONETTE_STDOUT_PROBE"] = "1";
@@ -151,6 +169,13 @@ internal static class Program
         // Phase 3.1: simulate-input mode runs more sequential invocations
         // than the default 5-hop budget allows. Bump for this run only.
         if (simulateInputMode)
+        {
+            psi.Environment["MARIONETTE_MAX_DEPTH"] = "50";
+        }
+        // Phase 3.3: two-window mode also runs many sequential per-window
+        // invocations; bump the budget so the assertion sequence doesn't
+        // trip loop-protection.
+        if (twoWindowsMode)
         {
             psi.Environment["MARIONETTE_MAX_DEPTH"] = "50";
         }
@@ -1233,6 +1258,160 @@ internal static class Program
                         }
                     }
                 }
+
+                // ---- Phase 3.3 multi-window assertions ----
+                if (twoWindowsMode)
+                {
+                    // Allow a settle window so the deferred second-window
+                    // construction completes and the coalesced
+                    // tools/list_changed notification has landed.
+                    await Task.Delay(TimeSpan.FromSeconds(2));
+
+                    // 1) tools/list contains both per-window dynamic-tool
+                    //    variants (`...:w1` and `...:w2`).
+                    var twListId = Interlocked.Increment(ref _nextRequestId);
+                    var twListReq = new { jsonrpc = "2.0", id = twListId, method = "tools/list", @params = new { } };
+                    await SendAsync(child, twListReq);
+                    var twListResp = await WaitForResponseAsync(stdoutMessages, twListId, TimeSpan.FromSeconds(10));
+                    if (twListResp is null)
+                    {
+                        Console.Error.WriteLine("FAIL — no response to tools/list (post --two-windows) within 10s");
+                        failures++;
+                    }
+                    else
+                    {
+                        var listed = new System.Collections.Generic.List<string>();
+                        if (twListResp.RootElement.TryGetProperty("result", out var twResult) &&
+                            twResult.TryGetProperty("tools", out var twTools) &&
+                            twTools.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var tool in twTools.EnumerateArray())
+                            {
+                                if (tool.TryGetProperty("name", out var nm))
+                                    listed.Add(nm.GetString() ?? string.Empty);
+                            }
+                        }
+                        bool hasW1 = listed.Contains("TodoListViewModel.AddTodo:w1");
+                        bool hasW2 = listed.Contains("TodoListViewModel.AddTodo:w2");
+                        if (hasW1 && hasW2)
+                        {
+                            Console.WriteLine("PASS — [--two-windows] tools/list contains both per-window AddTodo variants (:w1 + :w2)");
+                        }
+                        else
+                        {
+                            Console.Error.WriteLine($"FAIL — [--two-windows] tools/list missing per-window variants. hasW1={hasW1}, hasW2={hasW2}. Got: {string.Join(",", listed)}");
+                            failures++;
+                        }
+                        twListResp.Dispose();
+                    }
+
+                    // 2) inspect_app_api advertises a 2-element windowIds array.
+                    var twInspId = Interlocked.Increment(ref _nextRequestId);
+                    var twInspReq = new
+                    {
+                        jsonrpc = "2.0",
+                        id = twInspId,
+                        method = "tools/call",
+                        @params = new { name = "inspect_app_api", arguments = new { } },
+                    };
+                    await SendAsync(child, twInspReq);
+                    var twInspResp = await WaitForResponseAsync(stdoutMessages, twInspId, TimeSpan.FromSeconds(10));
+                    if (twInspResp is null)
+                    {
+                        Console.Error.WriteLine("FAIL — no response to inspect_app_api (post --two-windows)");
+                        failures++;
+                    }
+                    else
+                    {
+                        bool foundIds = false;
+                        if (TryReadToolText(twInspResp.RootElement, out var inspText))
+                        {
+                            try
+                            {
+                                using var inspDoc = JsonDocument.Parse(inspText);
+                                if (inspDoc.RootElement.ValueKind == JsonValueKind.Array)
+                                {
+                                    foreach (var entry in inspDoc.RootElement.EnumerateArray())
+                                    {
+                                        if (entry.TryGetProperty("name", out var nProp) &&
+                                            nProp.GetString() == "TodoListViewModel" &&
+                                            entry.TryGetProperty("windowIds", out var wIds) &&
+                                            wIds.ValueKind == JsonValueKind.Array &&
+                                            wIds.GetArrayLength() == 2)
+                                        {
+                                            foundIds = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            catch (JsonException) { /* fall through */ }
+                        }
+                        if (foundIds)
+                        {
+                            Console.WriteLine("PASS — [--two-windows] inspect_app_api reports 2-element windowIds on TodoListViewModel");
+                        }
+                        else
+                        {
+                            Console.Error.WriteLine($"FAIL — [--two-windows] inspect_app_api missing 2-element windowIds. Raw: {twInspResp.RootElement.GetRawText()}");
+                            failures++;
+                        }
+                        twInspResp.Dispose();
+                    }
+
+                    // 3) Per-window AddTodo + read isolation.
+                    int? w1BaselineV = await ReadObservableIntScoped(child, stdoutMessages,
+                        "TodoListViewModel", "TotalCount", "w1");
+                    int? w2BaselineV = await ReadObservableIntScoped(child, stdoutMessages,
+                        "TodoListViewModel", "TotalCount", "w2");
+                    Console.WriteLine($"INFO — [--two-windows] baseline w1={w1BaselineV?.ToString() ?? "<error>"}, w2={w2BaselineV?.ToString() ?? "<error>"}");
+
+                    var addW1Ok = await InvokeMethodAsyncScoped(child, stdoutMessages,
+                        "TodoListViewModel", "AddTodo", new { title = "stdio-w1" }, "w1");
+                    if (!addW1Ok.Success)
+                    {
+                        Console.Error.WriteLine($"FAIL — [--two-windows] AddTodo windowId=w1 failed: {addW1Ok.Detail}");
+                        failures++;
+                    }
+
+                    int? w1AfterAddV = await ReadObservableIntScoped(child, stdoutMessages,
+                        "TodoListViewModel", "TotalCount", "w1");
+                    int? w2AfterAddV = await ReadObservableIntScoped(child, stdoutMessages,
+                        "TodoListViewModel", "TotalCount", "w2");
+
+                    if (w1AfterAddV == (w1BaselineV ?? 0) + 1 && w2AfterAddV == (w2BaselineV ?? 0))
+                    {
+                        Console.WriteLine($"PASS — [--two-windows] AddTodo windowId=w1 only mutated w1 ({w1BaselineV} -> {w1AfterAddV}); w2 unchanged at {w2AfterAddV}");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"FAIL — [--two-windows] AddTodo windowId=w1 isolation broken. w1 {w1BaselineV} -> {w1AfterAddV}, w2 {w2BaselineV} -> {w2AfterAddV}");
+                        failures++;
+                    }
+
+                    var addW2Ok = await InvokeMethodAsyncScoped(child, stdoutMessages,
+                        "TodoListViewModel", "AddTodo", new { title = "stdio-w2" }, "w2");
+                    if (!addW2Ok.Success)
+                    {
+                        Console.Error.WriteLine($"FAIL — [--two-windows] AddTodo windowId=w2 failed: {addW2Ok.Detail}");
+                        failures++;
+                    }
+
+                    int? w1FinalV = await ReadObservableIntScoped(child, stdoutMessages,
+                        "TodoListViewModel", "TotalCount", "w1");
+                    int? w2FinalV = await ReadObservableIntScoped(child, stdoutMessages,
+                        "TodoListViewModel", "TotalCount", "w2");
+
+                    if (w1FinalV == w1AfterAddV && w2FinalV == (w2AfterAddV ?? 0) + 1)
+                    {
+                        Console.WriteLine($"PASS — [--two-windows] AddTodo windowId=w2 only mutated w2 ({w2AfterAddV} -> {w2FinalV}); w1 unchanged at {w1FinalV}");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"FAIL — [--two-windows] AddTodo windowId=w2 isolation broken. w1 {w1AfterAddV} -> {w1FinalV}, w2 {w2AfterAddV} -> {w2FinalV}");
+                        failures++;
+                    }
+                }
             }
             else
             {
@@ -1657,7 +1836,7 @@ internal static class Program
             : (avaloniaMode
                 ? "Phase 2.1 Avalonia Dashboard handshake"
                 : (todoAppMode
-                    ? "Phase 1.4 TodoApp handshake"
+                    ? (twoWindowsMode ? "Phase 3.3 TodoApp --two-windows handshake" : "Phase 1.4 TodoApp handshake")
                     : (guiMode ? "Phase 1.3 GUI handshake" : "Phase 1.2 handshake")));
         if (failures == 0)
         {
@@ -1936,6 +2115,97 @@ internal static class Program
                 return n;
             }
             return null;
+        }
+        finally
+        {
+            resp.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Phase 3.3: read_observable scoped to a specific windowId. Mirrors
+    /// <see cref="ReadObservableInt"/> but adds the <c>windowId</c> argument
+    /// so the runtime routes to the matching tracked instance.
+    /// </summary>
+    private static async Task<int?> ReadObservableIntScoped(
+        Process child,
+        BlockingCollection<JsonDocument> queue,
+        string root,
+        string property,
+        string windowId)
+    {
+        var id = Interlocked.Increment(ref _nextRequestId);
+        var req = new
+        {
+            jsonrpc = "2.0",
+            id,
+            method = "tools/call",
+            @params = new { name = "read_observable", arguments = new { root, property, windowId } },
+        };
+        await SendAsync(child, req);
+        var resp = await WaitForResponseAsync(queue, id, TimeSpan.FromSeconds(10));
+        if (resp is null) return null;
+        try
+        {
+            if (TryReadToolText(resp.RootElement, out var text) &&
+                int.TryParse(text.Trim(), out var n))
+            {
+                return n;
+            }
+            return null;
+        }
+        finally
+        {
+            resp.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Phase 3.3: invoke_method scoped to a specific windowId. Mirrors
+    /// <see cref="InvokeMethodAsync"/> but adds the <c>windowId</c> argument.
+    /// </summary>
+    private static async Task<(bool Success, string Detail)> InvokeMethodAsyncScoped(
+        Process child,
+        BlockingCollection<JsonDocument> queue,
+        string root,
+        string method,
+        object? methodArgs,
+        string windowId)
+    {
+        var id = Interlocked.Increment(ref _nextRequestId);
+        var req = new
+        {
+            jsonrpc = "2.0",
+            id,
+            method = "tools/call",
+            @params = new
+            {
+                name = "invoke_method",
+                arguments = new { root, method, args = methodArgs, windowId },
+            },
+        };
+        await SendAsync(child, req);
+        var resp = await WaitForResponseAsync(queue, id, TimeSpan.FromSeconds(10));
+        if (resp is null) return (false, "no response within 10s");
+        try
+        {
+            if (!TryReadToolText(resp.RootElement, out var text))
+                return (false, "no text content");
+            try
+            {
+                using var inner = JsonDocument.Parse(text);
+                if (inner.RootElement.ValueKind == JsonValueKind.Object &&
+                    inner.RootElement.TryGetProperty("success", out var s) &&
+                    s.ValueKind == JsonValueKind.False)
+                {
+                    var code = inner.RootElement.TryGetProperty("errorCode", out var c) ? c.GetString() : "?";
+                    var msg = inner.RootElement.TryGetProperty("message", out var m) ? m.GetString() : "?";
+                    return (false, $"[{code}] {msg}");
+                }
+            }
+            catch (JsonException) { /* primitive / null is success */ }
+
+            return (true, text.Trim());
         }
         finally
         {

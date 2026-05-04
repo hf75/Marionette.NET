@@ -23,6 +23,25 @@
 // `simulate_input` and `raise_event` MCP tools depend on. Both methods are
 // additive — Phase 1/2 adapters that don't override them continue to work,
 // they just have to return `false` for the new pair (NoOpAdapter does this).
+//
+// Phase 3.3 (multi-window routing) adds an OPTIONAL string `windowId`
+// parameter to every method that needs to address a specific window:
+//
+//   * CaptureScreenshotAsync(targetName, windowId, ct)
+//   * ResolveControlAsync(rootName, controlName, windowId, ct)
+//   * SimulateInputAsync(rootName, controlName, kind, args, windowId, ct)
+//   * RaiseEventAsync(rootName, controlName, eventName, args, windowId, ct)
+//
+// Plus two new enumeration methods that the runtime + DynamicToolRegistry
+// use to discover live instances:
+//
+//   * IReadOnlyList<string> GetWindowIds(string rootName);
+//   * object? GetRootInstance(string rootName, string? windowId);
+//
+// `null` windowId is the default: route to the first / oldest live instance
+// (the "default window" — the original single-window behaviour). Each
+// adapter is responsible for assigning stable per-process windowIds (e.g.
+// `w1`, `w2`, ...) to the live root instances of every [McpRoot] type.
 
 using System;
 using System.Collections.Generic;
@@ -72,13 +91,18 @@ public interface IUiAutomationAdapter
     /// <see langword="null"/>, the adapter captures the application's main
     /// window.
     /// </param>
+    /// <param name="windowId">
+    /// Phase 3.3: optional <see cref="GetWindowIds(string)"/>-issued ID of
+    /// the window to capture. <see langword="null"/> means "first / default
+    /// window" (the original single-window behaviour).
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>PNG-encoded byte array.</returns>
     /// <exception cref="NotSupportedException">
     /// Thrown by adapters that do not (yet) implement screenshotting,
     /// including the Phase 1.2 <see cref="NoOpAdapter"/>.
     /// </exception>
-    Task<byte[]> CaptureScreenshotAsync(string? targetName, CancellationToken ct);
+    Task<byte[]> CaptureScreenshotAsync(string? targetName, string? windowId, CancellationToken ct);
 
     /// <summary>
     /// Resolve a control instance referenced by <c>[McpTriggerable]</c>
@@ -88,9 +112,14 @@ public interface IUiAutomationAdapter
     /// </summary>
     /// <param name="rootName">The <c>[McpRoot]</c>-relative root name (e.g. <c>"MainWindow"</c>).</param>
     /// <param name="controlName">The <c>[McpTriggerable]</c> property name.</param>
+    /// <param name="windowId">
+    /// Phase 3.3: optional window-scoped lookup. <see langword="null"/> means
+    /// "search every window" (compat with single-window mode); a specific ID
+    /// scopes the search to that window's visual tree.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The resolved control instance, or <see langword="null"/> when not found.</returns>
-    Task<object?> ResolveControlAsync(string rootName, string controlName, CancellationToken ct);
+    Task<object?> ResolveControlAsync(string rootName, string controlName, string? windowId, CancellationToken ct);
 
     /// <summary>
     /// Drive a real input event through the framework's input pipeline against
@@ -99,7 +128,7 @@ public interface IUiAutomationAdapter
     /// fire normally. This is the "test-automation-grade" input fidelity
     /// promised by MASTERPLAN tenet 8.
     /// </summary>
-    /// <param name="rootName">The <c>[McpRoot]</c>-relative root name; passed through to the visual-tree finder as a disambiguation hint (Phase 3.1: unused, multi-window in Phase 3.3 will key on it).</param>
+    /// <param name="rootName">The <c>[McpRoot]</c>-relative root name; passed through to the visual-tree finder as a disambiguation hint.</param>
     /// <param name="controlName">
     /// Either an <c>AutomationProperties.AutomationId</c> or an <c>x:Name</c>
     /// of a control inside a currently-open window. The adapter resolves the
@@ -126,6 +155,10 @@ public interface IUiAutomationAdapter
     /// for mouse_move. <see langword="null"/> means default (e.g. click at the
     /// element's center).
     /// </param>
+    /// <param name="windowId">
+    /// Phase 3.3: optional window-scoped lookup. <see langword="null"/> means
+    /// "any window" (the Phase 3.1 behaviour).
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
     /// <see langword="true"/> on success, <see langword="false"/> when the
@@ -136,6 +169,7 @@ public interface IUiAutomationAdapter
         string controlName,
         string kind,
         IReadOnlyDictionary<string, object?>? args,
+        string? windowId,
         CancellationToken ct);
 
     /// <summary>
@@ -146,7 +180,7 @@ public interface IUiAutomationAdapter
     /// tunneling is honoured by the framework — handlers up and down the
     /// visual tree fire as if the event came from a real source.
     /// </summary>
-    /// <param name="rootName">The <c>[McpRoot]</c>-relative root name; passed through as a disambiguation hint (Phase 3.1: unused).</param>
+    /// <param name="rootName">The <c>[McpRoot]</c>-relative root name; passed through as a disambiguation hint.</param>
     /// <param name="controlName">
     /// Either an <c>AutomationProperties.AutomationId</c> or an <c>x:Name</c>
     /// of a control inside a currently-open window.
@@ -161,6 +195,10 @@ public interface IUiAutomationAdapter
     /// args for routed events that take a parameterless constructor;
     /// kind-specific args may be honoured in later phases.
     /// </param>
+    /// <param name="windowId">
+    /// Phase 3.3: optional window-scoped lookup. <see langword="null"/> means
+    /// "any window".
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
     /// <see langword="true"/> when the event was raised, <see langword="false"/>
@@ -171,5 +209,57 @@ public interface IUiAutomationAdapter
         string controlName,
         string eventName,
         IReadOnlyDictionary<string, object?>? args,
+        string? windowId,
         CancellationToken ct);
+
+    // ---------------------------------------------------------------------
+    // Phase 3.3 — multi-window routing
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Enumerate the live windowIds for a given root, in deterministic
+    /// (oldest-first / monotonic-counter) order. An empty list means no
+    /// instances are currently bound for that root (the runtime uses
+    /// <see cref="Manifest.RegisteredRoot.Instance"/> in that case).
+    /// </summary>
+    /// <param name="rootName">The <c>[McpRoot]</c>-relative root name.</param>
+    /// <returns>Window IDs ordered oldest-first.</returns>
+    /// <remarks>
+    /// Window IDs are short, stable strings such as <c>w1</c>, <c>w2</c>,
+    /// <c>w3</c> ... — derived from a per-process monotonically-increasing
+    /// counter. Each window-open allocates a fresh ID; closing a window does
+    /// NOT free the ID for reuse. An identical-class reopen gets a new ID.
+    /// </remarks>
+    IReadOnlyList<string> GetWindowIds(string rootName);
+
+    /// <summary>
+    /// Look up the live root instance bound to a specific
+    /// <paramref name="windowId"/> for <paramref name="rootName"/>.
+    /// </summary>
+    /// <param name="rootName">The root name.</param>
+    /// <param name="windowId">
+    /// Phase 3.3 window ID, or <see langword="null"/> to mean "first /
+    /// default window" (the lowest live windowId — typically the
+    /// originally-opened MainWindow).
+    /// </param>
+    /// <returns>
+    /// The live instance, or <see langword="null"/> when no window with that
+    /// ID exists.
+    /// </returns>
+    object? GetRootInstance(string rootName, string? windowId);
+
+    /// <summary>
+    /// Raised when the live windowId set for any root changes (window opened
+    /// or closed). The runtime's <c>DynamicToolRegistry</c> subscribes so it
+    /// can re-key per-window tool names and emit
+    /// <c>notifications/tools/list_changed</c>.
+    /// </summary>
+    /// <remarks>
+    /// Adapters MUST raise the mutation AFTER updating the internal registry
+    /// (so subscribers see consistent state) and SHOULD coalesce rapid
+    /// open/close bursts to avoid notification floods. The single-window
+    /// case (one instance per root) does NOT raise — the bare-form tool
+    /// names already cover it.
+    /// </remarks>
+    event EventHandler? WindowsChanged;
 }

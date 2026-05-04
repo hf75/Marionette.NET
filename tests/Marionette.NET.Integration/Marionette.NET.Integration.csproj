@@ -36,25 +36,28 @@
   </ItemGroup>
 
   <!--
-    Build dependency on the TodoApp sample. We do NOT use a regular
-    ProjectReference because:
+    Phase 3.3 parallel-build fix: we previously registered a BeforeBuild
+    target that called `dotnet build` on the TodoApp sample. Two parallel
+    builders (the test project's BeforeBuild + the sample's own ordinary
+    build during `dotnet build Marionette.NET.sln`) raced over the sample's
+    `obj/` directory and intermittently failed with file-locked errors
+    (PHASE2_FINDINGS follow-up #1).
+
+    Fix: drop the BeforeBuild target. `TodoAppFixture` invokes
+    `dotnet build` lazily on first use (with a static lock + `bool _built`
+    flag so the build runs at most once per test session). The same
+    EnableMcpAutomation=true override is passed through, so the fixture
+    behaviour is identical from the tests' perspective. Solution-level
+    builds now drive the sample build via the regular MSBuild graph
+    rather than racing against it.
+
+    We do NOT use a regular ProjectReference because:
       1. ProjectReference on a WinExe pulls assembly outputs into our
          net10.0 test project, which fails because the TodoApp targets
          net10.0-windows.
       2. We need the TodoApp built with EnableMcpAutomation=true; a plain
          reference inherits the test project's properties (Configuration,
-         Platform) which leaves EnableMcpAutomation unset and falls back
-         to the props-file default which evaluates to "Debug=='Debug'"
-         (a string literal, not a boolean) and ends up disabled.
-
-    Instead we register a BeforeBuild target that calls dotnet build on
-    the sample with the right property set explicitly. dotnet test still
-    builds our own assembly via the normal pipeline; this target just
-    ensures the spawned TodoApp exists and is MCP-enabled.
+         Platform) which leaves EnableMcpAutomation unset.
   -->
-  <Target Name="BuildTodoAppForIntegrationTests" BeforeTargets="Build">
-    <Message Text="Building Sample.Wpf.TodoApp with EnableMcpAutomation=true (required by integration tests)." Importance="high" />
-    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\..\samples\Sample.Wpf.TodoApp\Sample.Wpf.TodoApp.csproj&quot; -c $(Configuration) -p:EnableMcpAutomation=true --nologo -v:quiet" />
-  </Target>
 
 </Project>

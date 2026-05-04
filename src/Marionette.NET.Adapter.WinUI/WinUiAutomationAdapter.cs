@@ -64,6 +64,7 @@ public sealed class WinUiAutomationAdapter : IUiAutomationAdapter
     private readonly Application _app;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue _dispatcherQueue;
     private readonly ILogger<WinUiAutomationAdapter> _log;
+    private readonly RootInstanceTracker _tracker;
 
     /// <summary>
     /// Construct a WinUI adapter bound to the supplied <see cref="Application"/>
@@ -75,12 +76,18 @@ public sealed class WinUiAutomationAdapter : IUiAutomationAdapter
     public WinUiAutomationAdapter(
         Application app,
         Microsoft.UI.Dispatching.DispatcherQueue dispatcherQueue,
-        ILogger<WinUiAutomationAdapter> log)
+        ILogger<WinUiAutomationAdapter> log,
+        RootInstanceTracker? tracker = null)
     {
         _app = app ?? throw new ArgumentNullException(nameof(app));
         _dispatcherQueue = dispatcherQueue ?? throw new ArgumentNullException(nameof(dispatcherQueue));
         _log = log ?? throw new ArgumentNullException(nameof(log));
+        _tracker = tracker ?? new RootInstanceTracker();
+        _tracker.Changed += OnTrackerChanged;
     }
+
+    /// <summary>Phase 3.3: expose the tracker to MarionetteWinUI.</summary>
+    public RootInstanceTracker Tracker => _tracker;
 
     /// <inheritdoc />
     public Task DispatchAsync(Action action, CancellationToken ct)
@@ -182,7 +189,7 @@ public sealed class WinUiAutomationAdapter : IUiAutomationAdapter
     }
 
     /// <inheritdoc />
-    public async Task<byte[]> CaptureScreenshotAsync(string? targetName, CancellationToken ct)
+    public async Task<byte[]> CaptureScreenshotAsync(string? targetName, string? windowId, CancellationToken ct)
     {
         // Screenshot path is async-end-to-end on WinUI: RenderTargetBitmap.RenderAsync
         // is awaitable, GetPixelsAsync is awaitable, BitmapEncoder.CreateAsync
@@ -196,19 +203,20 @@ public sealed class WinUiAutomationAdapter : IUiAutomationAdapter
         await DispatchAsync(() =>
         {
             // Fire and forget the async work; complete the outer TCS when done.
-            _ = RunCaptureAsync(targetName, screenshotTcs, ct);
+            _ = RunCaptureAsync(targetName, windowId, screenshotTcs, ct);
         }, ct).ConfigureAwait(false);
         return await screenshotTcs.Task.ConfigureAwait(false);
     }
 
     private async Task RunCaptureAsync(
         string? targetName,
+        string? windowId,
         TaskCompletionSource<byte[]> outer,
         CancellationToken ct)
     {
         try
         {
-            var element = ResolveScreenshotTarget(targetName);
+            var element = ResolveScreenshotTarget(targetName, windowId);
             if (element is null)
             {
                 outer.TrySetException(new InvalidOperationException(
@@ -282,21 +290,24 @@ public sealed class WinUiAutomationAdapter : IUiAutomationAdapter
     }
 
     /// <inheritdoc />
-    public Task<object?> ResolveControlAsync(string rootName, string controlName, CancellationToken ct)
+    public Task<object?> ResolveControlAsync(string rootName, string controlName, string? windowId, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(controlName))
             throw new ArgumentException("controlName must be non-empty.", nameof(controlName));
 
-        // rootName is intentionally unused in Phase 3.2 - the adapter walks
-        // every tracked window and matches by name. Phase 3.3 (multi-window
-        // routing) may use rootName as a disambiguation hint.
-        _ = rootName;
-
         return DispatchAsync<object?>(() =>
         {
-            _log.LogDebug("ResolveControlAsync requested '{Control}' (rootHint='{Root}').", controlName, rootName);
-            var fe = VisualTreeFinder.FindByName(controlName, _log);
-            return fe;
+            _log.LogDebug("ResolveControlAsync requested '{Control}' (rootHint='{Root}', windowId='{WindowId}').",
+                controlName, rootName, windowId ?? "(default)");
+            // Phase 3.3: when windowId resolves to a tracked Window-typed
+            // instance, scope the visual-tree walk to it. Otherwise walk
+            // every tracked window like Phase 3.2.
+            var scoped = ResolveScopedWindow(rootName, windowId);
+            if (scoped is not null)
+            {
+                return VisualTreeFinder.FindByNameInWindow(scoped, controlName, _log);
+            }
+            return VisualTreeFinder.FindByName(controlName, _log);
         }, ct);
     }
 
@@ -320,23 +331,28 @@ public sealed class WinUiAutomationAdapter : IUiAutomationAdapter
         string controlName,
         string kind,
         IReadOnlyDictionary<string, object?>? args,
+        string? windowId,
         CancellationToken ct)
     {
         if (string.IsNullOrEmpty(controlName))
             throw new ArgumentException("controlName must be non-empty.", nameof(controlName));
         if (string.IsNullOrEmpty(kind))
             throw new ArgumentException("kind must be non-empty.", nameof(kind));
-        _ = rootName;
 
         return DispatchAsync(() =>
         {
-            var fe = VisualTreeFinder.FindByName(controlName, _log);
+            var scoped = ResolveScopedWindow(rootName, windowId);
+            var fe = scoped is not null
+                ? VisualTreeFinder.FindByNameInWindow(scoped, controlName, _log)
+                : VisualTreeFinder.FindByName(controlName, _log);
             if (fe is null)
             {
-                _log.LogInformation("simulate_input: could not resolve '{Control}'.", controlName);
+                _log.LogInformation("simulate_input: could not resolve '{Control}' (windowId={WindowId}).",
+                    controlName, windowId ?? "(default)");
                 return false;
             }
-            _log.LogDebug("simulate_input '{Kind}' on {Type} (Name={Name}).", kind, fe.GetType().Name, fe.Name);
+            _log.LogDebug("simulate_input '{Kind}' on {Type} (Name={Name}, windowId={WindowId}).",
+                kind, fe.GetType().Name, fe.Name, windowId ?? "(default)");
             return WinUiInputSimulator.Simulate(fe, kind, args, _log);
         }, ct);
     }
@@ -354,35 +370,79 @@ public sealed class WinUiAutomationAdapter : IUiAutomationAdapter
         string controlName,
         string eventName,
         IReadOnlyDictionary<string, object?>? args,
+        string? windowId,
         CancellationToken ct)
     {
         if (string.IsNullOrEmpty(controlName))
             throw new ArgumentException("controlName must be non-empty.", nameof(controlName));
         if (string.IsNullOrEmpty(eventName))
             throw new ArgumentException("eventName must be non-empty.", nameof(eventName));
-        _ = rootName;
 
         return DispatchAsync(() =>
         {
-            var fe = VisualTreeFinder.FindByName(controlName, _log);
+            var scoped = ResolveScopedWindow(rootName, windowId);
+            var fe = scoped is not null
+                ? VisualTreeFinder.FindByNameInWindow(scoped, controlName, _log)
+                : VisualTreeFinder.FindByName(controlName, _log);
             if (fe is null)
             {
-                _log.LogInformation("raise_event: could not resolve '{Control}'.", controlName);
+                _log.LogInformation("raise_event: could not resolve '{Control}' (windowId={WindowId}).",
+                    controlName, windowId ?? "(default)");
                 return false;
             }
-            _log.LogDebug("raise_event '{Event}' on {Type} (Name={Name}).", eventName, fe.GetType().Name, fe.Name);
+            _log.LogDebug("raise_event '{Event}' on {Type} (Name={Name}, windowId={WindowId}).",
+                eventName, fe.GetType().Name, fe.Name, windowId ?? "(default)");
             return WinUiEventRaiser.Raise(fe, eventName, args, _log);
         }, ct);
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 3.3 — multi-window routing
+    // ---------------------------------------------------------------------
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> GetWindowIds(string rootName) => _tracker.GetWindowIds(rootName);
+
+    /// <inheritdoc />
+    public object? GetRootInstance(string rootName, string? windowId) => _tracker.GetInstance(rootName, windowId);
+
+    /// <inheritdoc />
+    public event EventHandler? WindowsChanged;
+
+    private void OnTrackerChanged(object? sender, EventArgs e) => WindowsChanged?.Invoke(this, e);
+
+    /// <summary>
+    /// Resolve a windowId hint to a tracked WinUI Window, when the tracker
+    /// holds a Window-typed instance for that root. Returns null otherwise
+    /// (the caller falls back to the legacy WindowTracker.Snapshot walk).
+    /// </summary>
+    private Window? ResolveScopedWindow(string? rootName, string? windowId)
+    {
+        if (string.IsNullOrEmpty(rootName) || string.IsNullOrEmpty(windowId)) return null;
+        return _tracker.GetInstance(rootName!, windowId) as Window;
     }
 
     // -------------------------------------------------------------------------
     // Screenshot internals (UI-thread-only)
     // -------------------------------------------------------------------------
 
-    private UIElement? ResolveScreenshotTarget(string? targetName)
+    private UIElement? ResolveScreenshotTarget(string? targetName, string? windowId)
     {
         if (string.IsNullOrEmpty(targetName))
         {
+            // Phase 3.3: if windowId resolves to a tracked Window, capture its Content.
+            if (!string.IsNullOrEmpty(windowId))
+            {
+                foreach (var (_, id, instance) in _tracker.SnapshotAll())
+                {
+                    if (string.Equals(id, windowId, StringComparison.Ordinal) && instance is Window scoped)
+                    {
+                        if (scoped.Content is UIElement scopedContent) return scopedContent;
+                        throw new InvalidOperationException(
+                            $"Window for windowId='{windowId}' has no Content; cannot capture a screenshot.");
+                    }
+                }
+            }
             var win = WindowTracker.FirstReadyWindow();
             if (win is null)
             {
@@ -391,12 +451,26 @@ public sealed class WinUiAutomationAdapter : IUiAutomationAdapter
                     "Open a window via App.OnLaunched and ensure MarionetteWinUI.AttachTo " +
                     "was called with the live window's DispatcherQueue.");
             }
-            // Window in WinUI 3 is NOT a UIElement - we capture its Content.
             if (win.Content is UIElement uie) return uie;
             throw new InvalidOperationException("Tracked window has no Content; cannot capture a screenshot.");
         }
 
-        var fe = VisualTreeFinder.FindByName(targetName!, _log);
+        FrameworkElement? fe;
+        if (!string.IsNullOrEmpty(windowId))
+        {
+            Window? scoped = null;
+            foreach (var (_, id, instance) in _tracker.SnapshotAll())
+            {
+                if (string.Equals(id, windowId, StringComparison.Ordinal) && instance is Window w) { scoped = w; break; }
+            }
+            fe = scoped is null
+                ? VisualTreeFinder.FindByName(targetName!, _log)
+                : VisualTreeFinder.FindByNameInWindow(scoped, targetName!, _log);
+        }
+        else
+        {
+            fe = VisualTreeFinder.FindByName(targetName!, _log);
+        }
         if (fe is null)
         {
             throw new InvalidOperationException(

@@ -122,15 +122,27 @@ public sealed class TodoListViewModel : INotifyPropertyChanged
     /// </summary>
     public ObservableCollection<TodoItem> Items => _items;
 
-    public TodoListViewModel()
+    public TodoListViewModel() : this(useShared: true) { }
+
+    /// <summary>
+    /// Phase 3.3 secondary-window ctor. When <paramref name="useShared"/> is
+    /// <see langword="false"/>, the new instance does NOT install itself as
+    /// the static <see cref="Shared"/> singleton — the runtime treats it as a
+    /// distinct multi-window root. Used by the <c>--two-windows</c> sample
+    /// path in <c>App.OnStartup</c>.
+    /// </summary>
+    public TodoListViewModel(bool useShared)
     {
         // First-construction-wins singleton: whoever runs the ctor first
         // installs themselves as the shared instance. The Shared getter only
         // creates a new one when s_shared is null, so the second caller picks
         // up the first one and never reaches this ctor.
-        lock (s_sharedLock)
+        if (useShared)
         {
-            s_shared ??= this;
+            lock (s_sharedLock)
+            {
+                s_shared ??= this;
+            }
         }
 
         // Subscribe so per-item IsDone toggles refresh the derived counts.

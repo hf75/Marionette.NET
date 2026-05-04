@@ -275,6 +275,67 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         shell: pwsh
 
+      # ----- Phase 3.3: Avalonia Dashboard AOT publish smoke -----------------
+      #
+      # PHASE2_FINDINGS follow-up #2 deferred Avalonia AOT to the first push
+      # against this workflow. The Avalonia Dashboard sample already builds in
+      # Debug; the AOT-publish flow is what this job exercises end-to-end. The
+      # stripped publish (=false) must succeed cleanly; the full publish (=on)
+      # is allowed to emit warnings — the IL2xxx warnings come from the same
+      # third-party reflection paths the StripeProbe AOT-on build tolerates.
+      #
+      # Avalonia GUI mode under AOT may also crash inherently (the same
+      # WPF-known limitation in spirit; documented in the report if observed).
+      # The meaningful runtime check is again the --mcp --headless handshake
+      # below.
+
+      - name: AOT publish — Avalonia Dashboard stripped (EnableMcpAutomation=false)
+        run: |
+          dotnet publish samples\Sample.Avalonia.Dashboard\Sample.Avalonia.Dashboard.csproj `
+              -c Release `
+              -r win-x64 `
+              -p:PublishAot=true `
+              -p:EnableMcpAutomation=false `
+              -warnaserror:false `
+              -o publish-aot-avalonia-off `
+              -bl:aot-avalonia-off.binlog
+        shell: pwsh
+
+      - name: AOT publish — Avalonia Dashboard full (EnableMcpAutomation=true)
+        run: |
+          dotnet publish samples\Sample.Avalonia.Dashboard\Sample.Avalonia.Dashboard.csproj `
+              -c Release `
+              -r win-x64 `
+              -p:PublishAot=true `
+              -p:EnableMcpAutomation=true `
+              -warnaserror:false `
+              -o publish-aot-avalonia-on `
+              -bl:aot-avalonia-on.binlog
+        shell: pwsh
+
+      - name: Verify stripped Avalonia AOT binary was produced
+        # Mirrors the StripeProbe stripped check. Avalonia GUI mode under AOT
+        # may crash inherently on launch (same class of issue as WPF+AOT); we
+        # intentionally do NOT launch the binary here. The meaningful runtime
+        # check is the --mcp --headless handshake below.
+        run: |
+          $exe = "publish-aot-avalonia-off\Sample.Avalonia.Dashboard.exe"
+          if (-not (Test-Path $exe)) { Write-Host "FAIL: stripped Avalonia AOT exe not produced at $exe"; exit 1 }
+          $size = (Get-Item $exe).Length
+          if ($size -lt 1MB)         { Write-Host "FAIL: stripped Avalonia AOT exe suspiciously small: $size bytes"; exit 1 }
+          Write-Host "PASS: stripped Avalonia AOT exe produced ($([math]::Round($size/1MB,1)) MB)"
+        shell: pwsh
+
+      - name: Smoke-test AOT-on Avalonia binary via stdio handshake
+        # Same pattern as the StripeProbe step above. Use --avalonia mode in
+        # the harness so DashboardViewModel's manifest is asserted, plus the
+        # per-method dynamic tools and resource subscribe path.
+        run: |
+          $exe = Resolve-Path publish-aot-avalonia-on\Sample.Avalonia.Dashboard.exe
+          dotnet .phase0\StdioTest\bin\Debug\net10.0\StdioTest.dll "$exe" --avalonia 2>&1 | Tee-Object -FilePath stdio-aot-avalonia.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        shell: pwsh
+
       - name: Upload publish artifacts (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
@@ -283,8 +344,13 @@ jobs:
           path: |
             aot-off.binlog
             aot-on.binlog
+            aot-avalonia-off.binlog
+            aot-avalonia-on.binlog
             stdio-aot.log
+            stdio-aot-avalonia.log
             publish-aot-off/**/*
             publish-aot-on/**/*
+            publish-aot-avalonia-off/**/*
+            publish-aot-avalonia-on/**/*
           if-no-files-found: ignore
           retention-days: 14

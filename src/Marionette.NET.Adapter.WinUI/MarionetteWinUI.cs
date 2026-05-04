@@ -90,6 +90,22 @@ namespace Marionette.Adapter.WinUI;
 /// </remarks>
 public static class MarionetteWinUI
 {
+    private static WinUiAutomationAdapter? s_currentAdapter;
+
+    /// <summary>
+    /// Phase 3.3: register a non-Window root instance for multi-window
+    /// routing. Used by adopters whose multi-window path materialises a
+    /// second ViewModel.
+    /// </summary>
+    public static string TrackInstance(string rootName, object instance)
+    {
+        var adapter = s_currentAdapter
+            ?? throw new InvalidOperationException(
+                "MarionetteWinUI.TrackInstance was called before AttachTo. " +
+                "Call AttachTo from App.OnLaunched first.");
+        return adapter.Tracker.Track(rootName, instance);
+    }
+
     /// <summary>
     /// Attach the Marionette MCP host to a running WinUI 3 <see cref="Application"/>.
     /// Non-blocking: the host runs on a background <see cref="Task"/>; the
@@ -148,6 +164,7 @@ public static class MarionetteWinUI
             app,
             dq,
             lf.CreateLogger<WinUiAutomationAdapter>());
+        s_currentAdapter = adapter;
 
         // Rewrite roots so factories dispatch through the WinUI UI thread and
         // prefer live instances. See WrapRootsForUiThread for the reasoning.

@@ -16,6 +16,9 @@
 //     simulation requires a real UI thread + visual tree, which headless mode
 //     doesn't provide. The runtime tools surface this as a structured
 //     `simulate_input_not_supported` / `raise_event_not_supported` error.
+//   * GetWindowIds (Phase 3.3) returns an empty list — headless mode has no
+//     live windows. The runtime falls back to the registry's bare-form root.
+//   * GetRootInstance (Phase 3.3) returns null — same reason.
 //
 // This adapter is intentionally trivial; anything more complex belongs in a
 // real framework-specific adapter.
@@ -74,9 +77,10 @@ public sealed class NoOpAdapter : IUiAutomationAdapter
     }
 
     /// <inheritdoc />
-    public Task<byte[]> CaptureScreenshotAsync(string? targetName, CancellationToken ct)
+    public Task<byte[]> CaptureScreenshotAsync(string? targetName, string? windowId, CancellationToken ct)
     {
         _ = targetName;
+        _ = windowId;
         _ = ct;
         // Surfaced as a structured error by the runtime's capture_screenshot
         // tool — never reaches the JSON-RPC stream as an unhandled exception.
@@ -87,10 +91,11 @@ public sealed class NoOpAdapter : IUiAutomationAdapter
     }
 
     /// <inheritdoc />
-    public Task<object?> ResolveControlAsync(string rootName, string controlName, CancellationToken ct)
+    public Task<object?> ResolveControlAsync(string rootName, string controlName, string? windowId, CancellationToken ct)
     {
         _ = rootName;
         _ = controlName;
+        _ = windowId;
         _ = ct;
         return Task.FromResult<object?>(null);
     }
@@ -101,9 +106,11 @@ public sealed class NoOpAdapter : IUiAutomationAdapter
         string controlName,
         string kind,
         IReadOnlyDictionary<string, object?>? args,
+        string? windowId,
         CancellationToken ct)
     {
         _ = args;
+        _ = windowId;
         _ = ct;
         _log.LogWarning(
             "simulate_input not supported in headless mode (root='{Root}', control='{Control}', kind='{Kind}'). " +
@@ -118,9 +125,11 @@ public sealed class NoOpAdapter : IUiAutomationAdapter
         string controlName,
         string eventName,
         IReadOnlyDictionary<string, object?>? args,
+        string? windowId,
         CancellationToken ct)
     {
         _ = args;
+        _ = windowId;
         _ = ct;
         _log.LogWarning(
             "raise_event not supported in headless mode (root='{Root}', control='{Control}', event='{Event}'). " +
@@ -128,4 +137,29 @@ public sealed class NoOpAdapter : IUiAutomationAdapter
             rootName, controlName, eventName);
         return Task.FromResult(false);
     }
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> GetWindowIds(string rootName)
+    {
+        _ = rootName;
+        // Headless mode has no live windows — the runtime falls back to the
+        // single registry instance via Manifest. Returning an empty list
+        // signals "no per-window routing"; DynamicToolRegistry then keeps
+        // the bare-form tool names without per-window suffixes.
+        return Array.Empty<string>();
+    }
+
+    /// <inheritdoc />
+    public object? GetRootInstance(string rootName, string? windowId)
+    {
+        _ = rootName;
+        _ = windowId;
+        // No tracker — the runtime falls back to ManifestRegistry.Find.
+        return null;
+    }
+
+    /// <inheritdoc />
+#pragma warning disable CS0067 // Event is never used — by design (NoOp)
+    public event EventHandler? WindowsChanged;
+#pragma warning restore CS0067
 }

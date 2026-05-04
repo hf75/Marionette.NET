@@ -66,6 +66,7 @@ internal static class MarionetteDispatch
         IUiAutomationAdapter adapter,
         LoopProtectionService loopGuard,
         ILogger logger,
+        string? windowId,
         CancellationToken cancellationToken)
     {
         if (root is null) throw new ArgumentNullException(nameof(root));
@@ -88,7 +89,13 @@ internal static class MarionetteDispatch
             }.ToJsonString();
         }
 
-        if (root.Instance is null)
+        // Phase 3.3: when the adapter has a tracked instance for the named
+        // root + windowId, prefer it over the registry's bare singleton so
+        // multi-window apps route to the right ViewModel/Window. When the
+        // adapter has nothing (headless NoOpAdapter, single-window apps),
+        // fall back to root.Instance which the registry seeded at startup.
+        var instance = adapter.GetRootInstance(root.Descriptor.Name, windowId) ?? root.Instance;
+        if (instance is null)
         {
             return MakeError("root_unavailable",
                 $"Root '{root.Descriptor.Name}' has no live instance: {root.CreateError ?? "no factory; install adapter that binds an instance"}.")
@@ -105,7 +112,7 @@ internal static class MarionetteDispatch
             return MakeError("argument_marshalling_failed", ex.Message).ToJsonString();
         }
 
-        Func<object?> doCall = () => callable.Invoke(root.Instance!, argMap);
+        Func<object?> doCall = () => callable.Invoke(instance, argMap);
 
         try
         {

@@ -34,12 +34,17 @@ internal static class Program
         bool wantsMcp = false;
         bool wantsHeadless = false;
         bool wantsHelp = false;
+        bool wantsTwoWindows = false;
         foreach (var arg in args)
         {
             if (string.Equals(arg, "--mcp", StringComparison.Ordinal)) wantsMcp = true;
             else if (string.Equals(arg, "--headless", StringComparison.Ordinal)) wantsHeadless = true;
             else if (string.Equals(arg, "--mcp-help", StringComparison.Ordinal)) wantsHelp = true;
+            else if (string.Equals(arg, "--two-windows", StringComparison.Ordinal)) wantsTwoWindows = true;
         }
+        // --two-windows is a GUI-only switch; ignore in headless mode (the
+        // App class isn't constructed there).
+        if (wantsTwoWindows) App.OpenSecondWindowOnStartup = true;
 
         if (wantsHelp)
         {

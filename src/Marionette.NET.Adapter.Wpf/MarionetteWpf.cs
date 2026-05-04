@@ -11,7 +11,7 @@
 //
 // The call:
 //
-//   1. Constructs a `WpfUiAutomationAdapter(app, logger)`.
+//   1. Constructs a `WpfUiAutomationAdapter(app, logger, tracker)`.
 //   2. Rewrites every RootDescriptor's `Create` factory so it dispatches
 //      through the WPF UI thread AND, when possible, returns a live instance
 //      already attached to the visible window tree (e.g. `app.MainWindow`)
@@ -26,6 +26,18 @@
 //   4. Hooks `Application.Exit` to cancel the host (clean shutdown).
 //   5. Returns immediately. The returned IDisposable can be Disposed early to
 //      detach the host explicitly (cancel + wait for the run task).
+//
+// Phase 3.3 multi-window routing:
+//   * The adapter's RootInstanceTracker is populated from two sources:
+//       (a) the bridged factory bound to a Window-typed root → tracked when
+//           the registry first auto-creates;
+//       (b) WindowsTrackerHook attaches to `app.Activated` / `app.Deactivated`
+//           and per-Window `SourceInitialized` so newly-opened windows whose
+//           class name matches a known root register automatically.
+//   * Adopters with non-Window roots (the typical TodoListViewModel pattern)
+//     should call `MarionetteWpf.TrackInstance(root, instance)` themselves
+//     when they create a second instance. The TodoApp's `--two-windows`
+//     handler does this.
 //
 // SCENARIO COVERAGE
 //
@@ -75,6 +87,12 @@ namespace Marionette.Adapter.Wpf;
 /// </remarks>
 public static class MarionetteWpf
 {
+    // Phase 3.3: per-process adapter handle so adopters with non-Window roots
+    // can call `MarionetteWpf.TrackInstance(rootName, instance)` to register a
+    // second ViewModel for multi-window routing without having to plumb a
+    // reference through their App class.
+    private static WpfUiAutomationAdapter? s_currentAdapter;
+
     /// <summary>
     /// Attach the Marionette MCP host to a running WPF <see cref="Application"/>.
     /// Non-blocking: the host runs on a background <see cref="Task"/>; the
@@ -111,11 +129,20 @@ public static class MarionetteWpf
 
         var resolvedArgs = args ?? CommandLineArgsExceptExe();
         var lf = loggerFactory ?? NullLoggerFactory.Instance;
-        var adapter = new WpfUiAutomationAdapter(app, lf.CreateLogger<WpfUiAutomationAdapter>());
+        var tracker = new RootInstanceTracker();
+        var adapter = new WpfUiAutomationAdapter(app, lf.CreateLogger<WpfUiAutomationAdapter>(), tracker);
+        s_currentAdapter = adapter;
 
         // Rewrite roots so factories dispatch through the WPF UI thread and
         // prefer live instances. See WrapRootsForUiThread for the reasoning.
-        var bridgedRoots = WrapRootsForUiThread(app, roots);
+        var bridgedRoots = WrapRootsForUiThread(app, roots, tracker);
+
+        // Phase 3.3: hook Window opens after the registry has been populated
+        // so secondary windows of the same class as a known root register a
+        // fresh windowId. We hook before MarionetteHost.RunAsync so the
+        // tracker is alive when DynamicToolRegistry binds to its Changed
+        // event.
+        InstallWindowOpenHook(app, roots, tracker);
 
         var cts = new CancellationTokenSource();
         var hostTask = Task.Run(async () =>
@@ -162,6 +189,24 @@ public static class MarionetteWpf
     }
 
     /// <summary>
+    /// Phase 3.3: register a non-Window root instance (e.g. a ViewModel) as
+    /// belonging to a specific named root. Used by adopters whose
+    /// <c>--two-windows</c> path materialises a second ViewModel that the
+    /// auto-tracker can't pick up via Window class-name matching.
+    /// </summary>
+    /// <param name="rootName">The manifest name of the root.</param>
+    /// <param name="instance">The live instance to register.</param>
+    /// <returns>The newly-allocated windowId, or the existing one if already tracked.</returns>
+    public static string TrackInstance(string rootName, object instance)
+    {
+        var adapter = s_currentAdapter
+            ?? throw new InvalidOperationException(
+                "MarionetteWpf.TrackInstance was called before AttachTo. " +
+                "Call AttachTo from App.OnStartup first.");
+        return adapter.Tracker.Track(rootName, instance);
+    }
+
+    /// <summary>
     /// Wrap each <see cref="RootDescriptor.Create"/> factory so it runs on the
     /// WPF UI (STA) thread, and so it returns a live <see cref="Application.MainWindow"/>
     /// (when type-compatible) before falling back to the original factory.
@@ -192,10 +237,15 @@ public static class MarionetteWpf
     /// only for the brief duration of the factory call. Sub-millisecond on a
     /// loaded MainWindow; never on the UI thread itself, so no deadlock.
     /// </para>
+    /// <para>
+    /// Phase 3.3: every successful resolution registers the instance with the
+    /// tracker so the runtime can address it by windowId.
+    /// </para>
     /// </remarks>
     private static IReadOnlyList<RootDescriptor> WrapRootsForUiThread(
         Application app,
-        IReadOnlyList<RootDescriptor> roots)
+        IReadOnlyList<RootDescriptor> roots,
+        RootInstanceTracker tracker)
     {
         var bridged = new List<RootDescriptor>(roots.Count);
         foreach (var r in roots)
@@ -211,10 +261,12 @@ public static class MarionetteWpf
 
             var originalCreate = r.Create;
             var typeName = r.TypeName;
+            var rootName = r.Name;
 
             Func<object> bridged_ = () => app.Dispatcher.Invoke(
                 () =>
                 {
+                    object resolved;
                     // Try the live MainWindow first. The descriptor's TypeName
                     // is fully-qualified (FQN); match against the runtime
                     // type's FullName.
@@ -222,18 +274,123 @@ public static class MarionetteWpf
                     if (mw is not null &&
                         string.Equals(mw.GetType().FullName, typeName, StringComparison.Ordinal))
                     {
-                        return (object)mw;
+                        resolved = mw;
                     }
-
-                    // Otherwise call the original factory; we're on the UI
-                    // thread now so STA-bound ctors are happy.
-                    return originalCreate();
+                    else
+                    {
+                        // Otherwise call the original factory; we're on the UI
+                        // thread now so STA-bound ctors are happy.
+                        resolved = originalCreate();
+                    }
+                    // Phase 3.3: register with the tracker so windowId routing
+                    // works. Idempotent (Track de-dupes by reference).
+                    tracker.Track(rootName, resolved);
+                    return resolved;
                 },
                 DispatcherPriority.Normal);
 
             bridged.Add(r with { Create = bridged_ });
         }
         return bridged;
+    }
+
+    /// <summary>
+    /// Phase 3.3: hook the application so newly-opened Window-typed roots
+    /// (e.g. a second MainWindow opened via <c>--two-windows</c>) auto-register.
+    /// </summary>
+    /// <remarks>
+    /// We watch <see cref="ContentControl.Loaded"/> on every Window via the
+    /// <see cref="Window.IsLoaded"/> shortcut. WPF doesn't expose a single
+    /// "window-opened" event, so we lean on the per-process pattern:
+    /// <list type="bullet">
+    ///   <item><description>
+    ///   Periodically reconcile the tracker against <see cref="Application.Windows"/>:
+    ///   any Window in the collection whose class FullName matches a known
+    ///   root and isn't yet tracked gets registered. A reconciliation runs on
+    ///   <see cref="Application.Activated"/> and on a Dispatcher idle tick.
+    ///   </description></item>
+    ///   <item><description>
+    ///   Window.Closed → tracker.Untrack so the windowId set shrinks back.
+    ///   </description></item>
+    /// </list>
+    /// This is best-effort and idempotent. The TodoApp's <c>--two-windows</c>
+    /// path also calls <see cref="TrackInstance"/> for non-Window roots
+    /// (TodoListViewModel) which the class-name reconciliation can't reach.
+    /// </remarks>
+    private static void InstallWindowOpenHook(
+        Application app,
+        IReadOnlyList<RootDescriptor> roots,
+        RootInstanceTracker tracker)
+    {
+        // Build a typeName → rootName map once. We iterate this on every
+        // reconciliation; a 1- or 2-element dictionary lookup is fine.
+        var typeToRoot = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var r in roots)
+        {
+            if (!string.IsNullOrEmpty(r.TypeName))
+            {
+                typeToRoot[r.TypeName] = r.Name;
+            }
+        }
+        if (typeToRoot.Count == 0) return;
+
+        void ReconcileOnce()
+        {
+            // Always called on the UI thread.
+            foreach (Window? w in app.Windows)
+            {
+                if (w is null) continue;
+                var typeName = w.GetType().FullName;
+                if (typeName is null) continue;
+                if (!typeToRoot.TryGetValue(typeName, out var rootName)) continue;
+
+                // Track is reference-equality idempotent.
+                tracker.Track(rootName, w);
+
+                // Hook Closed once. We tag with a sentinel attached property
+                // analogue: a closure-captured flag in the handler list. WPF
+                // doesn't dedup our handlers automatically, so we go through
+                // the Tag dictionary to record "already-hooked".
+                if (w.Tag is not WindowHookMarker)
+                {
+                    var capturedWindow = w;
+                    EventHandler? closedHandler = null;
+                    closedHandler = (sender, _) =>
+                    {
+                        try { tracker.Untrack(capturedWindow); } catch { /* ignore */ }
+                        try { if (closedHandler is not null) capturedWindow.Closed -= closedHandler; } catch { /* ignore */ }
+                    };
+                    w.Closed += closedHandler;
+                    // Preserve any existing Tag the adopter may have set on a
+                    // root window; only overwrite when it's null.
+                    if (w.Tag is null) w.Tag = WindowHookMarker.Instance;
+                }
+            }
+        }
+
+        // Initial reconciliation (in case AttachTo runs after MainWindow has
+        // been loaded). This is on the UI thread (App.OnStartup).
+        ReconcileOnce();
+
+        // Reconcile on each Activated event (newly-shown Windows fire this
+        // when they receive focus). Cheap; the dictionary lookup is O(1) per
+        // Window and we cap the per-Window work via WindowHookMarker.
+        app.Activated += (_, _) => ReconcileOnce();
+
+        // Also reconcile on a Dispatcher idle tick so a window that was just
+        // shown but hasn't received focus yet is picked up. We use the
+        // ApplicationIdle priority so we only run when the message pump is
+        // otherwise quiet.
+        var idleOp = app.Dispatcher.BeginInvoke(
+            new Action(ReconcileOnce),
+            DispatcherPriority.ApplicationIdle);
+        _ = idleOp; // fire-and-forget
+    }
+
+    private sealed class WindowHookMarker
+    {
+        public static readonly WindowHookMarker Instance = new();
+        private WindowHookMarker() { }
     }
 
     private static string[] CommandLineArgsExceptExe()

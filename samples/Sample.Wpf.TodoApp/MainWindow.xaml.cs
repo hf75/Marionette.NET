@@ -33,23 +33,36 @@ namespace Sample.Wpf.TodoApp;
 
 public partial class MainWindow : Window
 {
-    public MainWindow()
+    /// <summary>
+    /// Phase 3.3: each MainWindow keeps its own ViewModel reference instead
+    /// of always reading <see cref="TodoListViewModel.Shared"/>. Default
+    /// path (single-window) still binds to Shared so Phase 1/2/3.1/3.2
+    /// behaviour is unchanged. The <c>--two-windows</c> path constructs a
+    /// second window with a non-Shared ViewModel.
+    /// </summary>
+    private readonly TodoListViewModel _vm;
+
+    public MainWindow() : this(TodoListViewModel.Shared) { }
+
+    public MainWindow(TodoListViewModel viewModel)
     {
+        _vm = viewModel ?? throw new System.ArgumentNullException(nameof(viewModel));
+
         InitializeComponent();
 
-        // Bind the SAME instance the manifest registry holds. See
-        // App.OnStartup for the descriptor-factory rewrite that ties the
-        // runtime's root instance to TodoListViewModel.Shared.
-        DataContext = TodoListViewModel.Shared;
+        // Bind to the SUPPLIED instance (defaults to TodoListViewModel.Shared
+        // for single-window mode; the secondary --two-windows window passes a
+        // fresh, non-Shared instance).
+        DataContext = _vm;
 
         // Pre-seed two demo items so the screenshot in adopter-facing demos
-        // shows a non-empty list. Adopters who don't want this can delete the
-        // call.
-        var vm = TodoListViewModel.Shared;
-        if (vm.Items.Count == 0)
+        // shows a non-empty list. Only do this for the FIRST construction of
+        // a given ViewModel so a fresh secondary window starts empty (the
+        // multi-window assertions can rely on a 0 baseline).
+        if (_vm.Items.Count == 0 && ReferenceEquals(_vm, TodoListViewModel.Shared))
         {
-            vm.AddTodo("Read the Marionette README");
-            vm.AddTodo("Decorate my ViewModel with [McpCallable]");
+            _vm.AddTodo("Read the Marionette README");
+            _vm.AddTodo("Decorate my ViewModel with [McpCallable]");
         }
     }
 
@@ -69,7 +82,7 @@ public partial class MainWindow : Window
         var title = NewTodoTextBox.Text;
         if (string.IsNullOrWhiteSpace(title)) return;
 
-        TodoListViewModel.Shared.AddTodo(title);
+        _vm.AddTodo(title);
         NewTodoTextBox.Clear();
         NewTodoTextBox.Focus();
     }
@@ -79,13 +92,13 @@ public partial class MainWindow : Window
         if (sender is not Button btn) return;
         if (btn.Tag is not TodoItem item) return;
 
-        var index = TodoListViewModel.Shared.Items.IndexOf(item);
+        var index = _vm.Items.IndexOf(item);
         if (index >= 0)
         {
-            TodoListViewModel.Shared.RemoveTodo(index);
+            _vm.RemoveTodo(index);
         }
     }
 
     private void ClearCompletedButton_Click(object sender, RoutedEventArgs e) =>
-        TodoListViewModel.Shared.ClearCompleted();
+        _vm.ClearCompleted();
 }

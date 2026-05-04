@@ -54,16 +54,26 @@ namespace Marionette.Runtime.Tools;
 /// once after the <see cref="McpServer"/> is built so the dynamic tools
 /// appear in the very first <c>tools/list</c> response.
 /// </summary>
-public sealed class DynamicToolRegistry
+public sealed class DynamicToolRegistry : IDisposable
 {
     private readonly ManifestRegistry _manifest;
     private readonly IUiAutomationAdapter _adapter;
     private readonly LoopProtectionService _loopGuard;
     private readonly ILogger<DynamicToolRegistry> _logger;
     private readonly Dictionary<string, string> _registered = new(StringComparer.Ordinal); // toolName → stableHash
+    private readonly object _lock = new();
+
+    // Phase 3.3 coalesce: the adapter's WindowsChanged event can fire
+    // multiple times when two windows open in close succession. We
+    // schedule a single refresh after a 100 ms quiet window so consumers
+    // get one tools/list_changed notification, not three.
+    private readonly object _refreshLock = new();
+    private System.Threading.Timer? _refreshTimer;
+    private static readonly TimeSpan s_refreshCoalesceDelay = TimeSpan.FromMilliseconds(100);
 
     private McpServer? _server;
     private bool _initialRegistrationDone;
+    private bool _disposed;
 
     public DynamicToolRegistry(
         ManifestRegistry manifest,
@@ -114,36 +124,90 @@ public sealed class DynamicToolRegistry
             return;
         }
 
-        var entries = ComputeEntries();
-        foreach (var entry in entries)
+        lock (_lock)
         {
-            try
+            var entries = ComputeEntries();
+            foreach (var entry in entries)
             {
-                var tool = BuildTool(entry);
-                if (collection.TryAdd(tool))
+                try
                 {
-                    _registered[entry.ToolName] = entry.StableHash;
+                    var tool = BuildTool(entry);
+                    if (collection.TryAdd(tool))
+                    {
+                        _registered[entry.ToolName] = entry.StableHash;
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Dynamic tool '{Tool}' could not be added (name collision). The four meta-tools or another root may already own this name.",
+                            entry.ToolName);
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    _logger.LogWarning(
-                        "Dynamic tool '{Tool}' could not be added (name collision). The four meta-tools or another root may already own this name.",
-                        entry.ToolName);
+                    _logger.LogWarning(ex, "Failed to register dynamic tool for {Root}.{Callable}",
+                        entry.RootName, entry.Callable.Name);
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to register dynamic tool for {Root}.{Callable}",
-                    entry.RootName, entry.Callable.Name);
-            }
+            _initialRegistrationDone = true;
         }
-        _initialRegistrationDone = true;
+
+        // Phase 3.3: subscribe to the adapter's window-set changes so
+        // per-window tool variants appear/disappear as windows open/close.
+        // Coalesce bursts via a short timer — see ScheduleRefresh comment.
+        _adapter.WindowsChanged += OnAdapterWindowsChanged;
 
         // Initial registration happens BEFORE the SDK starts servicing
         // tools/list, so we deliberately do NOT raise the changed event
         // here — clients will read the dynamic tools in the very first
         // listing.
         _logger.LogInformation("Dynamic per-method tools registered: {Count}.", _registered.Count);
+    }
+
+    /// <summary>
+    /// Phase 3.3: respond to the adapter's per-window mutation event by
+    /// scheduling a coalesced refresh. Two-window startup (the
+    /// <c>--two-windows</c> case) typically fires Changed twice within a
+    /// few milliseconds; coalescing avoids two redundant
+    /// <c>tools/list_changed</c> notifications. The timer reschedules each
+    /// time a new event arrives, so a steady burst defers refresh until
+    /// the burst ends.
+    /// </summary>
+    private void OnAdapterWindowsChanged(object? sender, EventArgs e)
+    {
+        if (_disposed) return;
+        ScheduleRefresh();
+    }
+
+    private void ScheduleRefresh()
+    {
+        lock (_refreshLock)
+        {
+            if (_disposed) return;
+            if (_refreshTimer is null)
+            {
+                _refreshTimer = new System.Threading.Timer(_ => RefreshTimerCallback(), state: null,
+                    dueTime: s_refreshCoalesceDelay, period: System.Threading.Timeout.InfiniteTimeSpan);
+            }
+            else
+            {
+                _refreshTimer.Change(s_refreshCoalesceDelay, System.Threading.Timeout.InfiniteTimeSpan);
+            }
+        }
+    }
+
+    private void RefreshTimerCallback()
+    {
+        // Best-effort fire-and-forget; failures are logged but don't crash
+        // the timer thread.
+        try
+        {
+            _ = RefreshFromManifestAsync(default);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "DynamicToolRegistry coalesced refresh failed.");
+        }
     }
 
     /// <summary>
@@ -168,56 +232,60 @@ public sealed class DynamicToolRegistry
         var collection = TryGetToolCollection(_server);
         if (collection is null) return false;
 
-        var entries = ComputeEntries();
-        var newSet = new Dictionary<string, (CallableEntry Entry, string Hash)>(StringComparer.Ordinal);
-        foreach (var e in entries) newSet[e.ToolName] = (e, e.StableHash);
-
-        var dirty = false;
-
-        // Removes: anything in _registered not in newSet.
-        var toRemove = new List<string>();
-        foreach (var (name, _) in _registered)
+        bool dirty;
+        lock (_lock)
         {
-            if (!newSet.ContainsKey(name)) toRemove.Add(name);
-        }
-        foreach (var name in toRemove)
-        {
-            if (collection.TryGetPrimitive(name, out var existing) && existing is not null)
+            var entries = ComputeEntries();
+            var newSet = new Dictionary<string, (CallableEntry Entry, string Hash)>(StringComparer.Ordinal);
+            foreach (var e in entries) newSet[e.ToolName] = (e, e.StableHash);
+
+            dirty = false;
+
+            // Removes: anything in _registered not in newSet.
+            var toRemove = new List<string>();
+            foreach (var (name, _) in _registered)
             {
-                if (collection.Remove(existing)) dirty = true;
+                if (!newSet.ContainsKey(name)) toRemove.Add(name);
             }
-            _registered.Remove(name);
-        }
-
-        // Adds + changes
-        foreach (var (name, payload) in newSet)
-        {
-            if (_registered.TryGetValue(name, out var existingHash))
+            foreach (var name in toRemove)
             {
-                if (string.Equals(existingHash, payload.Hash, StringComparison.Ordinal))
+                if (collection.TryGetPrimitive(name, out var existing) && existing is not null)
                 {
-                    // Unchanged — idempotent path. Skip.
-                    continue;
+                    if (collection.Remove(existing)) dirty = true;
                 }
-                // Changed — remove + re-add.
-                if (collection.TryGetPrimitive(name, out var stale) && stale is not null)
-                {
-                    collection.Remove(stale);
-                }
+                _registered.Remove(name);
             }
 
-            try
+            // Adds + changes
+            foreach (var (name, payload) in newSet)
             {
-                var tool = BuildTool(payload.Entry);
-                if (collection.TryAdd(tool))
+                if (_registered.TryGetValue(name, out var existingHash))
                 {
-                    _registered[name] = payload.Hash;
-                    dirty = true;
+                    if (string.Equals(existingHash, payload.Hash, StringComparison.Ordinal))
+                    {
+                        // Unchanged — idempotent path. Skip.
+                        continue;
+                    }
+                    // Changed — remove + re-add.
+                    if (collection.TryGetPrimitive(name, out var stale) && stale is not null)
+                    {
+                        collection.Remove(stale);
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to refresh dynamic tool {Tool}.", name);
+
+                try
+                {
+                    var tool = BuildTool(payload.Entry);
+                    if (collection.TryAdd(tool))
+                    {
+                        _registered[name] = payload.Hash;
+                        dirty = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to refresh dynamic tool {Tool}.", name);
+                }
             }
         }
 
@@ -242,24 +310,60 @@ public sealed class DynamicToolRegistry
         return dirty;
     }
 
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        try { _adapter.WindowsChanged -= OnAdapterWindowsChanged; } catch { /* shutdown */ }
+        lock (_refreshLock)
+        {
+            try { _refreshTimer?.Dispose(); } catch { /* shutdown */ }
+            _refreshTimer = null;
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Internals
     // -------------------------------------------------------------------------
 
     private List<CallableEntry> ComputeEntries()
     {
-        // Build a base-name list per (root, callable) so
-        // ToolIdentity.DisambiguateOverloads can rewrite duplicates with
-        // a stable suffix derived from the hash. The order of iteration
-        // matches RootDescriptor order (deterministic).
-        var bases = new List<(string BaseName, string Hash, string RootName, CallableDescriptor Callable)>();
+        // Phase 3.3 multi-window expansion: each (root, callable) yields:
+        //   * Always the bare-form `<RootName>.<MethodName>` variant
+        //     (windowId=null → adapter routes to oldest window).
+        //   * When the adapter reports 2+ live windowIds for the root,
+        //     ALSO emit one per-window variant `<RootName>.<MethodName>:<wId>`
+        //     so the LLM can address a specific window.
+        // The hash for per-window variants includes the windowId so the
+        // ToolIdentity becomes unique per (signature, window).
+        var bases = new List<(string BaseName, string Hash, string RootName, CallableDescriptor Callable, string? WindowId)>();
         foreach (var root in _manifest.Roots)
         {
+            var rootName = root.Descriptor.Name;
+            var liveWindowIds = _adapter.GetWindowIds(rootName);
+            var multiWindow = liveWindowIds is { Count: > 1 };
+
             foreach (var callable in root.Descriptor.Callables)
             {
-                var baseName = ToolIdentity.ComputeToolName(root.Descriptor.Name, callable);
-                var hash = ToolIdentity.ComputeStableHash(root.Descriptor.Name, callable);
-                bases.Add((baseName, hash, root.Descriptor.Name, callable));
+                var baseName = ToolIdentity.ComputeToolName(rootName, callable);
+                var bareHash = ToolIdentity.ComputeStableHash(rootName, callable);
+
+                // Bare form — always present. Default-window routing.
+                bases.Add((baseName, bareHash, rootName, callable, WindowId: null));
+
+                if (multiWindow)
+                {
+                    foreach (var wId in liveWindowIds!)
+                    {
+                        var perWindowName = baseName + ":" + wId;
+                        // Mix windowId into the hash so per-window variants
+                        // get distinct stable identities — they're routed to
+                        // different runtime instances even though the
+                        // signature is identical.
+                        var combinedHash = ToolIdentity.ComputeStableHash(rootName + "@" + wId, callable);
+                        bases.Add((perWindowName, combinedHash, rootName, callable, WindowId: wId));
+                    }
+                }
             }
         }
         var disambiguated = ToolIdentity.DisambiguateOverloads(
@@ -272,18 +376,22 @@ public sealed class DynamicToolRegistry
                 ToolName: disambiguated[i].Name,
                 StableHash: disambiguated[i].Hash,
                 RootName: bases[i].RootName,
-                Callable: bases[i].Callable));
+                Callable: bases[i].Callable,
+                WindowId: bases[i].WindowId));
         }
         return result;
     }
 
     private McpServerTool BuildTool(CallableEntry entry)
     {
-        // Closure captures rootName + callable. The same root + callable
-        // CLR identity is shared across all tool invocations, which is
-        // intentional: the registry is the single source of truth.
+        // Closure captures rootName + callable + windowId. The same root +
+        // callable CLR identity is shared across all tool invocations, which
+        // is intentional: the registry is the single source of truth. The
+        // per-window variants close over their windowId so each one routes
+        // to a specific tracked instance regardless of LLM calling pattern.
         var rootName = entry.RootName;
         var callable = entry.Callable;
+        var capturedWindowId = entry.WindowId;
         var dispatchAdapter = _adapter;
         var loopGuard = _loopGuard;
         var manifest = _manifest;
@@ -318,7 +426,8 @@ public sealed class DynamicToolRegistry
                 var argsElement = BuildArgsElement(ctx);
 
                 var resultJson = await MarionetteDispatch.InvokeAsync(
-                    registered, callable, argsElement, dispatchAdapter, loopGuard, logger, ct).ConfigureAwait(false);
+                    registered, callable, argsElement, dispatchAdapter, loopGuard, logger,
+                    capturedWindowId, ct).ConfigureAwait(false);
 
                 // Detect structured errors and surface IsError=true so the
                 // client treats them as failures rather than success values.
@@ -436,11 +545,16 @@ public sealed class DynamicToolRegistry
     }
 
     /// <summary>
-    /// One discovered (root, callable) pair after disambiguation.
+    /// One discovered (root, callable, windowId) tuple after disambiguation.
+    /// <see cref="WindowId"/> is <c>null</c> for the bare-form variant
+    /// (default-window routing) and a specific window ID like <c>"w1"</c>
+    /// for per-window variants emitted when the adapter reports 2+ live
+    /// windows for the root.
     /// </summary>
     private readonly record struct CallableEntry(
         string ToolName,
         string StableHash,
         string RootName,
-        CallableDescriptor Callable);
+        CallableDescriptor Callable,
+        string? WindowId);
 }

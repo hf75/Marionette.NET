@@ -496,6 +496,129 @@ public class EvalCases
     }
 
     // -------------------------------------------------------------------------
+    // EC-10: Multi-window routing — per-window dynamic tools + windowId fan-out
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Phase 3.3: spawn TodoApp with <c>--two-windows</c> so two MainWindows
+    /// are open with two distinct ViewModel instances. Asserts:
+    ///   * <c>tools/list</c> contains the per-window dynamic tool variants
+    ///     (<c>TodoListViewModel.AddTodo:w1</c> + <c>:w2</c>).
+    ///   * <c>inspect_app_api</c> reports the <c>windowIds</c> array on the
+    ///     TodoListViewModel root.
+    ///   * <c>invoke_method windowId:"w1" AddTodo("for w1")</c> only grows
+    ///     <c>read_observable windowId:"w1" TotalCount</c>; <c>w2</c> stays
+    ///     unchanged.
+    ///   * Mirror check for <c>w2</c>.
+    /// </summary>
+    [Fact(Skip = "GUI test (Phase 3.3 multi-window). Spawns TodoApp with --two-windows; requires interactive desktop. " +
+                  "Set MARIONETTE_GUI_TESTS=1 to enable on a desktop with an interactive session. " +
+                  "Run manually: .phase0/StdioTest <TodoApp.exe> --todoapp --two-windows.")]
+    public async Task EC10_MultiWindowRouting_Works()
+    {
+        if (!GuiTestsEnabled) return;
+
+        using var fx = new TodoAppFixture(guiMode: true, twoWindows: true);
+        // Two-window WPF startup is slower than single-window; allow a
+        // generous initialize timeout to cover cold-start of the WPF dispatcher
+        // + second-window construction.
+        await fx.InitializeAsync(TimeSpan.FromSeconds(60));
+
+        // Allow a settle window so the second MainWindow's tracker
+        // registration + the coalesced tools/list_changed notification
+        // both land before we assert.
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // ---- 1. tools/list contains per-window variants.
+        var tools = await fx.ListToolsAsync();
+        Assert.True(tools.Contains("TodoListViewModel.AddTodo:w1"),
+            $"EC-10: per-window tool 'TodoListViewModel.AddTodo:w1' missing. Got: {string.Join(",", tools)}");
+        Assert.True(tools.Contains("TodoListViewModel.AddTodo:w2"),
+            $"EC-10: per-window tool 'TodoListViewModel.AddTodo:w2' missing. Got: {string.Join(",", tools)}");
+        // The bare-form tool stays present (defaults to oldest window).
+        Assert.True(tools.Contains("TodoListViewModel.AddTodo"),
+            $"EC-10: bare-form 'TodoListViewModel.AddTodo' missing. Got: {string.Join(",", tools)}");
+
+        // ---- 2. inspect_app_api reports both windowIds for the root.
+        var manifestText = await fx.InspectAppApiAsync();
+        using var manifest = JsonDocument.Parse(manifestText);
+        Assert.True(manifest.RootElement.ValueKind == JsonValueKind.Array,
+            $"EC-10: manifest expected array, got {manifest.RootElement.ValueKind}");
+        JsonElement? todoRoot = null;
+        foreach (var entry in manifest.RootElement.EnumerateArray())
+        {
+            if (entry.TryGetProperty("name", out var n) && n.GetString() == "TodoListViewModel")
+            {
+                todoRoot = entry; break;
+            }
+        }
+        Assert.True(todoRoot is not null,
+            $"EC-10: manifest has no TodoListViewModel. Got: {manifestText}");
+        Assert.True(todoRoot!.Value.TryGetProperty("windowIds", out var windowIds) &&
+                    windowIds.ValueKind == JsonValueKind.Array && windowIds.GetArrayLength() == 2,
+            $"EC-10: expected 2-element windowIds. Got: {todoRoot!.Value.GetRawText()}");
+
+        // ---- 3. Per-window AddTodo + read isolation.
+        // Read the baselines first.
+        var w1BaselineText = await fx.CallToolAsync(
+            "read_observable",
+            new { root = "TodoListViewModel", property = "TotalCount", windowId = "w1" });
+        var w2BaselineText = await fx.CallToolAsync(
+            "read_observable",
+            new { root = "TodoListViewModel", property = "TotalCount", windowId = "w2" });
+        int.TryParse(w1BaselineText.Trim(), out var w1Baseline);
+        int.TryParse(w2BaselineText.Trim(), out var w2Baseline);
+
+        // AddTodo on window 1 only.
+        var addW1 = await fx.CallToolAsync(
+            "invoke_method",
+            new
+            {
+                root = "TodoListViewModel",
+                method = "AddTodo",
+                args = new { title = "for w1" },
+                windowId = "w1",
+            });
+        AssertCallableSuccess(addW1, "AddTodo windowId=w1");
+
+        var w1AfterText = await fx.CallToolAsync(
+            "read_observable",
+            new { root = "TodoListViewModel", property = "TotalCount", windowId = "w1" });
+        var w2AfterText = await fx.CallToolAsync(
+            "read_observable",
+            new { root = "TodoListViewModel", property = "TotalCount", windowId = "w2" });
+        int.TryParse(w1AfterText.Trim(), out var w1After);
+        int.TryParse(w2AfterText.Trim(), out var w2After);
+
+        Assert.Equal(w1Baseline + 1, w1After);
+        Assert.Equal(w2Baseline, w2After);
+
+        // AddTodo on window 2 only — mirror check.
+        var addW2 = await fx.CallToolAsync(
+            "invoke_method",
+            new
+            {
+                root = "TodoListViewModel",
+                method = "AddTodo",
+                args = new { title = "for w2" },
+                windowId = "w2",
+            });
+        AssertCallableSuccess(addW2, "AddTodo windowId=w2");
+
+        var w1Final = await fx.CallToolAsync(
+            "read_observable",
+            new { root = "TodoListViewModel", property = "TotalCount", windowId = "w1" });
+        var w2Final = await fx.CallToolAsync(
+            "read_observable",
+            new { root = "TodoListViewModel", property = "TotalCount", windowId = "w2" });
+        int.TryParse(w1Final.Trim(), out var w1FinalCnt);
+        int.TryParse(w2Final.Trim(), out var w2FinalCnt);
+
+        Assert.Equal(w1After, w1FinalCnt);     // w1 unchanged after w2 op
+        Assert.Equal(w2After + 1, w2FinalCnt); // w2 grew by exactly 1
+    }
+
+    // -------------------------------------------------------------------------
     // EC-5: Stdout stays JSON-RPC pure
     // -------------------------------------------------------------------------
 

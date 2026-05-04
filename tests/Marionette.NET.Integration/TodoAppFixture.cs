@@ -34,6 +34,19 @@ internal sealed class TodoAppFixture : IDisposable
     private int _nextRequestId = 1;
     private bool _disposed;
 
+    // Phase 3.3 parallel-build fix (PHASE2_FINDINGS follow-up #1):
+    // we previously registered a BeforeBuild target on the integration
+    // csproj that called `dotnet build` on the sample. Solution-level
+    // parallel builds raced over `samples/Sample.Wpf.TodoApp/obj/` and
+    // intermittently failed with file-locked errors. Replacement: build
+    // the sample lazily, exactly once per test session, before the first
+    // child spawn. Subsequent spawns hit the static flag and skip the
+    // rebuild. The lock + flag combination is dotnet-test-process-local;
+    // running test workers in parallel within the same `dotnet test`
+    // invocation share a single sample build.
+    private static readonly object s_buildLock = new();
+    private static bool s_built;
+
     public IReadOnlyCollection<string> StdoutLines => (IReadOnlyCollection<string>)_stdoutLines;
     public IReadOnlyCollection<string> StderrLines => (IReadOnlyCollection<string>)_stderrLines;
 
@@ -66,6 +79,79 @@ internal sealed class TodoAppFixture : IDisposable
     }
 
     /// <summary>
+    /// Phase 3.3 parallel-build replacement for the dropped
+    /// BeforeBuild target. Build Sample.Wpf.TodoApp.csproj with
+    /// EnableMcpAutomation=true exactly once per test session.
+    /// Subsequent fixture constructions are no-ops once
+    /// <see cref="s_built"/> flips. Threadsafe across test workers.
+    /// </summary>
+    private static void EnsureSampleBuiltOnce(string configuration)
+    {
+        if (s_built) return;
+        lock (s_buildLock)
+        {
+            if (s_built) return;
+
+            // Walk up to the repo root.
+            var here = Path.GetDirectoryName(typeof(TodoAppFixture).Assembly.Location)
+                       ?? Directory.GetCurrentDirectory();
+            string? root = here;
+            for (var i = 0; i < 8 && root is not null; i++)
+            {
+                if (File.Exists(Path.Combine(root, "Marionette.NET.sln"))) break;
+                root = Path.GetDirectoryName(root);
+            }
+            if (root is null)
+            {
+                // Best-effort: skip build, rely on the exe already existing.
+                s_built = true;
+                return;
+            }
+
+            var sampleCsproj = Path.Combine(root, "samples", "Sample.Wpf.TodoApp", "Sample.Wpf.TodoApp.csproj");
+            if (!File.Exists(sampleCsproj))
+            {
+                // Probably no longer present — let the exe-resolve step throw.
+                s_built = true;
+                return;
+            }
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add("build");
+            psi.ArgumentList.Add(sampleCsproj);
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(configuration);
+            psi.ArgumentList.Add("-p:EnableMcpAutomation=true");
+            psi.ArgumentList.Add("--nologo");
+            psi.ArgumentList.Add("-v:quiet");
+
+            using var p = Process.Start(psi)
+                ?? throw new InvalidOperationException(
+                    "Could not start `dotnet build` for Sample.Wpf.TodoApp. " +
+                    "Build the sample manually first: dotnet build samples/Sample.Wpf.TodoApp/Sample.Wpf.TodoApp.csproj -p:EnableMcpAutomation=true.");
+            // Drain output to avoid blocking on a full pipe buffer.
+            var stdoutTask = p.StandardOutput.ReadToEndAsync();
+            var stderrTask = p.StandardError.ReadToEndAsync();
+            p.WaitForExit();
+            var so = stdoutTask.GetAwaiter().GetResult();
+            var se = stderrTask.GetAwaiter().GetResult();
+            if (p.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"`dotnet build` for Sample.Wpf.TodoApp returned {p.ExitCode}.\nstdout:\n{so}\nstderr:\n{se}");
+            }
+            s_built = true;
+        }
+    }
+
+    /// <summary>
     /// Spawn a TodoApp child in `--mcp --headless` (default) or `--mcp` GUI
     /// mode (when <paramref name="guiMode"/> is true — required for Phase 3.1
     /// EC-8/EC-9 input simulation tests). Optional environment overrides
@@ -80,10 +166,18 @@ internal sealed class TodoAppFixture : IDisposable
     /// using GUI mode should be gated on the
     /// <c>MARIONETTE_GUI_TESTS=1</c> environment variable.
     /// </param>
-    public TodoAppFixture(IDictionary<string, string?>? extraEnv = null, bool guiMode = false)
+    /// <param name="twoWindows">
+    /// Phase 3.3: when true, append <c>--two-windows</c> to the child argv
+    /// so the WPF App opens a second MainWindow with its own
+    /// TodoListViewModel (NOT Shared). Implies <paramref name="guiMode"/>.
+    /// </param>
+    public TodoAppFixture(IDictionary<string, string?>? extraEnv = null, bool guiMode = false, bool twoWindows = false)
     {
+        EnsureSampleBuiltOnce("Debug");
+
         var exePath = ResolveTodoAppExePath();
 
+        if (twoWindows) guiMode = true;
         var psi = new ProcessStartInfo
         {
             FileName = exePath,
@@ -98,6 +192,7 @@ internal sealed class TodoAppFixture : IDisposable
         };
         psi.ArgumentList.Add("--mcp");
         if (!guiMode) psi.ArgumentList.Add("--headless");
+        if (twoWindows) psi.ArgumentList.Add("--two-windows");
 
         if (extraEnv is not null)
         {

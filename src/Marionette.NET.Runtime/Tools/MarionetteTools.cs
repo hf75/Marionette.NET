@@ -58,16 +58,24 @@ public sealed class MarionetteTools
     /// Return the manifest of every <c>[McpRoot]</c>-decorated class the host
     /// knows about, including each root's callables, observables, and
     /// triggerables. Pass <paramref name="rootName"/> to scope to a single root.
+    /// Pass <paramref name="windowId"/> (Phase 3.3) to scope to a single live
+    /// window — when omitted, the response includes a <c>windowIds</c> array
+    /// for any root with 2+ live instances so the LLM can disambiguate.
     /// </summary>
     [McpServerTool(Name = "inspect_app_api")]
     [Description(
         "Returns a JSON manifest describing the app's [McpRoot] classes — their methods, " +
         "observables, and triggerables. Call this first to discover what the app exposes. " +
-        "Optionally pass a specific rootName to scope the manifest.")]
+        "Optionally pass a specific rootName to scope the manifest. " +
+        "When multiple windows of the same root are open (Phase 3.3 multi-window), " +
+        "the response includes a 'windowIds' array per root so you can route per-window calls.")]
     public static string InspectAppApi(
         ManifestRegistry registry,
+        IUiAutomationAdapter adapter,
         [Description("Optional root name; when omitted, returns every root.")]
-        string? rootName = null)
+        string? rootName = null,
+        [Description("Optional Phase-3.3 window ID (e.g. 'w1', 'w2'). When omitted and multiple windows exist, the response advertises every windowId for that root.")]
+        string? windowId = null)
     {
         var roots = registry.Roots;
 
@@ -84,10 +92,10 @@ public sealed class MarionetteTools
                     ["available"] = new JsonArray(roots.Select(r => (JsonNode?)JsonValue.Create(r.Descriptor.Name)).ToArray()),
                 }.ToJsonString();
             }
-            return SerializeRoot(single).ToJsonString();
+            return SerializeRoot(single, adapter, windowId).ToJsonString();
         }
 
-        var arr = new JsonArray(roots.Select(r => (JsonNode?)SerializeRoot(r)).ToArray());
+        var arr = new JsonArray(roots.Select(r => (JsonNode?)SerializeRoot(r, adapter, windowId)).ToArray());
         return arr.ToJsonString();
     }
 
@@ -116,6 +124,8 @@ public sealed class MarionetteTools
         string method,
         [Description("Optional argument map keyed by parameter name. JSON values are coerced to the declared CLR type.")]
         JsonElement? args = null,
+        [Description("Optional Phase-3.3 window ID (e.g. 'w1', 'w2'). When omitted, routes to the oldest live window for the root.")]
+        string? windowId = null,
         CancellationToken cancellationToken = default)
     {
         // Phase 2.2: the dispatch pipeline (loop-protection, marshalling,
@@ -139,7 +149,7 @@ public sealed class MarionetteTools
         }
 
         return MarionetteDispatch.InvokeAsync(
-            registered, callable, args, adapter, loopGuard, logger, cancellationToken);
+            registered, callable, args, adapter, loopGuard, logger, windowId, cancellationToken);
     }
 
     // -------------------------------------------------------------------------
@@ -161,12 +171,21 @@ public sealed class MarionetteTools
         string root,
         [Description("Property name (matches the C# property declared with [McpObservable]).")]
         string property,
-        CancellationToken cancellationToken)
+        [Description("Optional Phase-3.3 window ID (e.g. 'w1', 'w2'). When omitted, reads the oldest live window for the root.")]
+        string? windowId = null,
+        CancellationToken cancellationToken = default)
     {
         var registered = registry.Find(root);
         if (registered is null)
             return MakeError("unknown_root", $"No root named '{root}' is registered.").ToJsonString();
-        if (registered.Instance is null)
+
+        // Phase 3.3: when an adapter has tracked a live instance for the named
+        // root + windowId, prefer that one over the registry's bare singleton
+        // — multi-window apps need the per-window instance, not the
+        // registry-default. When the adapter has nothing tracked (headless
+        // NoOpAdapter, single-window apps), fall back to registry.Instance.
+        var instance = adapter.GetRootInstance(root, windowId) ?? registered.Instance;
+        if (instance is null)
             return MakeError("root_unavailable",
                 $"Root '{root}' has no live instance: {registered.CreateError ?? "no factory"}.")
                 .ToJsonString();
@@ -179,7 +198,7 @@ public sealed class MarionetteTools
         try
         {
             var value = await adapter.DispatchAsync(
-                () => obs.Read(registered.Instance!),
+                () => obs.Read(instance),
                 cancellationToken).ConfigureAwait(false);
             return SerializeResult(value);
         }
@@ -205,11 +224,13 @@ public sealed class MarionetteTools
         IUiAutomationAdapter adapter,
         [Description("Optional target window or control name. Omit for the main window.")]
         string? target = null,
+        [Description("Optional Phase-3.3 window ID (e.g. 'w1', 'w2'). When omitted, captures the oldest live window.")]
+        string? windowId = null,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            var bytes = await adapter.CaptureScreenshotAsync(target, cancellationToken).ConfigureAwait(false);
+            var bytes = await adapter.CaptureScreenshotAsync(target, windowId, cancellationToken).ConfigureAwait(false);
             // ImageContentBlock.FromBytes is the documented factory; it handles
             // base64 encoding internally and sets the required `Data` field.
             var image = ImageContentBlock.FromBytes(bytes, mimeType: "image/png");
@@ -280,6 +301,8 @@ public sealed class MarionetteTools
         string kind,
         [Description("Optional kind-specific arguments — e.g. {\"key\":\"Enter\"} for key_press, {\"text\":\"hello\"} for type_text, {\"x\":10,\"y\":20} for mouse_move.")]
         JsonElement? args = null,
+        [Description("Optional Phase-3.3 window ID (e.g. 'w1', 'w2'). When omitted, the adapter walks every open window.")]
+        string? windowId = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(root))
@@ -322,7 +345,7 @@ public sealed class MarionetteTools
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(10));
-            var ok = await adapter.SimulateInputAsync(root, control, kind, argMap, cts.Token).ConfigureAwait(false);
+            var ok = await adapter.SimulateInputAsync(root, control, kind, argMap, windowId, cts.Token).ConfigureAwait(false);
             if (ok)
             {
                 return new JsonObject
@@ -378,6 +401,8 @@ public sealed class MarionetteTools
         string @event,
         [Description("Optional EventArgs property bag. Phase 3.1 ships default-constructed args.")]
         JsonElement? args = null,
+        [Description("Optional Phase-3.3 window ID (e.g. 'w1', 'w2'). When omitted, the adapter walks every open window.")]
+        string? windowId = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(root))
@@ -413,7 +438,7 @@ public sealed class MarionetteTools
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(10));
-            var ok = await adapter.RaiseEventAsync(root, control, @event, argMap, cts.Token).ConfigureAwait(false);
+            var ok = await adapter.RaiseEventAsync(root, control, @event, argMap, windowId, cts.Token).ConfigureAwait(false);
             if (ok)
             {
                 return new JsonObject
@@ -486,7 +511,7 @@ public sealed class MarionetteTools
     private static string SerializeResult(object? value)
         => MarionetteDispatch.SerializeResult(value);
 
-    private static JsonObject SerializeRoot(RegisteredRoot r)
+    private static JsonObject SerializeRoot(RegisteredRoot r, IUiAutomationAdapter adapter, string? windowId)
     {
         var d = r.Descriptor;
         var obj = new JsonObject
@@ -496,6 +521,24 @@ public sealed class MarionetteTools
             ["instanceAvailable"] = r.Instance is not null,
         };
         if (r.CreateError is not null) obj["createError"] = r.CreateError;
+
+        // Phase 3.3: advertise per-window IDs for any root with 2+ live
+        // instances so the LLM can route per-window calls. Single-window
+        // (or zero-window-headless) cases omit the field — keeps Phase
+        // 1.x/2.x consumers compatible.
+        var liveWindowIds = adapter.GetWindowIds(d.Name);
+        if (liveWindowIds is { Count: > 1 })
+        {
+            var arr = new JsonArray();
+            foreach (var id in liveWindowIds) arr.Add(JsonValue.Create(id));
+            obj["windowIds"] = arr;
+        }
+        if (!string.IsNullOrEmpty(windowId))
+        {
+            // Echo back the resolved windowId so the LLM can correlate the
+            // response with the request when scoping was requested.
+            obj["windowId"] = windowId;
+        }
 
         obj["callables"] = new JsonArray(d.Callables.Select(c => (JsonNode?)new JsonObject
         {

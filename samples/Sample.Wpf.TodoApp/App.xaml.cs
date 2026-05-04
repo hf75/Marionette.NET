@@ -45,6 +45,16 @@ namespace Sample.Wpf.TodoApp;
 
 public partial class App : Application
 {
+    /// <summary>
+    /// Phase 3.3 multi-window flag. When <see langword="true"/>, OnStartup
+    /// opens a SECOND <see cref="MainWindow"/> bound to a fresh
+    /// <see cref="TodoListViewModel"/> (not <see cref="TodoListViewModel.Shared"/>).
+    /// Set by <c>Program.Main</c> when <c>--two-windows</c> is on the command
+    /// line. Default is <see langword="false"/> so single-window behaviour
+    /// (Phase 3.2 baseline) is identical.
+    /// </summary>
+    public static bool OpenSecondWindowOnStartup { get; set; }
+
     public App()
     {
         // EnableDefaultApplicationDefinition=false in the csproj means the SDK
@@ -93,6 +103,42 @@ public partial class App : Application
         //   4. Hooks Application.Exit for clean shutdown.
         // Without `--mcp` in e.Args, AttachTo's host returns 0 immediately.
         MarionetteWpf.AttachTo(this, bridgedRoots, e.Args);
+
+        // Phase 3.3 --two-windows path: open a second MainWindow whose
+        // DataContext is a fresh TodoListViewModel (NOT Shared). The first
+        // window (already created by Program.RunGui) is bound to Shared and
+        // gets registered with the tracker via WrapRootsForUiThread; the
+        // second instance has no path through the bridged factory, so we
+        // explicitly call MarionetteWpf.TrackInstance with the fresh VM and
+        // open a second MainWindow that uses it as its DataContext. Both
+        // windows render side-by-side; the LLM addresses them by their
+        // tracker-assigned windowId (typically w1 / w2).
+        if (OpenSecondWindowOnStartup)
+        {
+            // Defer the second-window construction so the first window's
+            // tracker registration (via the bridged factory) wins the
+            // earlier monotonic ID.
+            Dispatcher.BeginInvoke(new Action(OpenSecondWindow),
+                System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+        }
 #endif
     }
+
+#if MCP_ENABLED
+    private void OpenSecondWindow()
+    {
+        // Construct a fresh ViewModel; track it with the runtime so the
+        // adapter knows about a second live instance for the
+        // TodoListViewModel root (=> a second windowId is allocated).
+        var freshVm = new TodoListViewModel(useShared: false);
+        MarionetteWpf.TrackInstance(typeof(TodoListViewModel).FullName!, freshVm);
+
+        var second = new MainWindow(freshVm);
+        // Offset so the user can tell the two apart at a glance.
+        second.Left = (this.MainWindow?.Left ?? 100) + 80;
+        second.Top = (this.MainWindow?.Top ?? 100) + 80;
+        second.Title = "TodoApp - Window #2";
+        second.Show();
+    }
+#endif
 }

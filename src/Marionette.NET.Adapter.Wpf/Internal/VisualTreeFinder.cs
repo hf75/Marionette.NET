@@ -87,33 +87,62 @@ internal static class VisualTreeFinder
             match = WalkVisualTree(win, name, candidateNames);
             if (match is not null) break;
         }
-
-        if (log is not null)
-        {
-            if (match is not null)
-            {
-                log.LogDebug(
-                    "VisualTreeFinder resolved '{Name}' to {ElementType} (Name={ActualName}, AutomationId={AutomationId}).",
-                    name,
-                    match.GetType().Name,
-                    string.IsNullOrEmpty(match.Name) ? "(unset)" : match.Name,
-                    AutomationProperties.GetAutomationId(match) is var id && string.IsNullOrEmpty(id) ? "(unset)" : id);
-            }
-            else
-            {
-                // Cap candidate list in the log to avoid unbounded spam on
-                // huge UIs; the first 32 are usually enough to debug a miss.
-                var preview = candidateNames.Count > 32
-                    ? string.Join(",", candidateNames.Take(32)) + $",...(+{candidateNames.Count - 32})"
-                    : string.Join(",", candidateNames);
-                log.LogInformation(
-                    "VisualTreeFinder did NOT find '{Name}'. Candidates considered: [{Candidates}].",
-                    name,
-                    preview.Length == 0 ? "(none)" : preview);
-            }
-        }
-
+        EmitLog(log, name, match, candidateNames);
         return match;
+    }
+
+    /// <summary>
+    /// Phase 3.3: scope the lookup to a single <see cref="Window"/>. Used by
+    /// the multi-window adapter path so a control resolution targets only
+    /// the requested window's visual tree (avoiding cross-window control-name
+    /// collisions when two MainWindows of the same class are open).
+    /// </summary>
+    public static FrameworkElement? FindByNameInWindow(Window win, string name, ILogger? log = null)
+    {
+        if (win is null) throw new ArgumentNullException(nameof(win));
+        if (string.IsNullOrEmpty(name)) throw new ArgumentException("Name must be non-empty.", nameof(name));
+
+        var candidateNames = new List<string>();
+        FrameworkElement? match;
+
+        if (Matches(win, name))
+        {
+            match = win;
+        }
+        else
+        {
+            RecordCandidate(win, candidateNames);
+            match = WalkLogicalTree(win, name, candidateNames)
+                    ?? WalkVisualTree(win, name, candidateNames);
+        }
+        EmitLog(log, name, match, candidateNames);
+        return match;
+    }
+
+    private static void EmitLog(ILogger? log, string name, FrameworkElement? match, List<string> candidateNames)
+    {
+        if (log is null) return;
+        if (match is not null)
+        {
+            log.LogDebug(
+                "VisualTreeFinder resolved '{Name}' to {ElementType} (Name={ActualName}, AutomationId={AutomationId}).",
+                name,
+                match.GetType().Name,
+                string.IsNullOrEmpty(match.Name) ? "(unset)" : match.Name,
+                AutomationProperties.GetAutomationId(match) is var id && string.IsNullOrEmpty(id) ? "(unset)" : id);
+        }
+        else
+        {
+            // Cap candidate list in the log to avoid unbounded spam on
+            // huge UIs; the first 32 are usually enough to debug a miss.
+            var preview = candidateNames.Count > 32
+                ? string.Join(",", candidateNames.Take(32)) + $",...(+{candidateNames.Count - 32})"
+                : string.Join(",", candidateNames);
+            log.LogInformation(
+                "VisualTreeFinder did NOT find '{Name}'. Candidates considered: [{Candidates}].",
+                name,
+                preview.Length == 0 ? "(none)" : preview);
+        }
     }
 
     private static IEnumerable<Window> EnumerateWindows(Application app)
