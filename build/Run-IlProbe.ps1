@@ -59,6 +59,7 @@ param(
         'Marionette.NET.Runtime',
         'Adapter.Wpf',
         'Adapter.Avalonia',
+        'Adapter.WinUI',
         'Marionette.Ai',
         'ModelContextProtocol'
     ),

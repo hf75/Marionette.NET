@@ -144,7 +144,9 @@ End the report with one bullet point acknowledging the limitation:
 
 ## Compatible apps
 
-Phase 2.1 validated this skill against both **WPF** and **Avalonia** Marionette adopters. The MCP tool surface is framework-agnostic; the same heuristic test generation works for both.
+Phase 3.2 validated this skill against **WPF**, **Avalonia**, and **WinUI 3** Marionette adopters. The MCP tool surface is framework-agnostic; the same heuristic test generation works for all three.
+
+WinUI-specific note: when running the simulate_input smoke test (step 6b) against a WinUI 3 sample, expect `success:true` for `kind:"click"` (via the `ButtonAutomationPeer.Invoke` path) regardless of elevation, but `success:false` with a logged limitation for keyboard/mouse-move kinds when the process isn't elevated and the manifest doesn't declare `inputInjectionBrokered`. That's a documented WinUI 3 limitation, not a Marionette regression.
 
 ## Reference
 

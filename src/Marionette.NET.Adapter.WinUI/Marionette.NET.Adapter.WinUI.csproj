@@ -1,0 +1,73 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Phase 3.2 - WinUI 3 / Windows App SDK adapter for Marionette.NET.
+      Windows-only by definition (WinUI 3 is Windows-only). Pinned to the latest
+      stable Windows App SDK as of 2026-05 (1.8.260416003 — locally cached
+      package; release notes confirm 1.8.x is the GA train). Adopters who need
+      to pin to a different stable line override the package version in their
+      own csproj.
+
+      TFM choice: net10.0-windows10.0.19041.0 — matches the Microsoft.Windows.SDK.NET.Ref
+      that the WinAppSDK 1.8 brings in transitively (10.0.19041.57). Aligning the
+      project TFM to that windowed SDK avoids the "net6.0-windows10.0.17763.0
+      isn't a known TFM for net10.0" mismatch that bites adopters who try the
+      naive net10.0-windows TFM.
+
+      Unpackaged-first: WindowsPackageType=None means the .exe runs without an
+      MSIX manifest. Adopters who want packaged builds can override; the adapter
+      is identical either way. The runtime initialization is the consumer app's
+      responsibility (the Microsoft.WindowsAppSDK.Bootstrap.Net library handles
+      it; we let the SAMPLE pull that, the adapter stays neutral).
+    -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <RootNamespace>Marionette.Adapter.WinUI</RootNamespace>
+    <AssemblyName>Marionette.NET.Adapter.WinUI</AssemblyName>
+    <Description>WinUI 3 (Windows App SDK) adapter for Marionette.NET. Only referenced when EnableMcpAutomation=true on a WinUI project.</Description>
+
+    <!--
+      The adapter is a library; the consumer is the EXE that flips
+      WindowsPackageType=None and pulls the bootstrap library. The adapter
+      doesn't need to ship a Package.appxmanifest itself.
+    -->
+    <UseRidGraph>true</UseRidGraph>
+
+    <!--
+      Trim / AOT analyzer flags. Same rationale as Adapter.Wpf and Adapter.Avalonia:
+      light up only when the consumer is being AOT-published. WinUI 3 itself is
+      not yet AOT-clean (transitive XAML metadata reflection), so adopters who
+      flip PublishAot=true should expect IL3xxx warnings from WinUI assemblies
+      themselves. From Marionette code: 0 warnings. The XML doc on the public
+      RaiseEvent helper documents the AOT caveat for adopters.
+    -->
+    <IsAotCompatible Condition="'$(PublishAot)'=='true' and $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">true</IsAotCompatible>
+    <IsTrimmable Condition="'$(PublishAot)'=='true' and $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">true</IsTrimmable>
+  </PropertyGroup>
+
+  <!-- During AOT publish flows, allow warnings through so the spike can capture them. -->
+  <PropertyGroup Condition="'$(PublishAot)'=='true'">
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Marionette.NET.Runtime\Marionette.NET.Runtime.csproj" />
+  </ItemGroup>
+
+  <!--
+    The adapter only needs Microsoft.WindowsAppSDK; the consumer csproj brings any
+    extra packages it needs. WAS pulls in WinUI + Foundation + InteractiveExperiences
+    transitively, which gives us:
+      * Microsoft.UI.Xaml.* (WinUI 3 controls, AutomationProperties, RenderTargetBitmap)
+      * Microsoft.UI.Dispatching.DispatcherQueue (UI-thread dispatcher)
+      * Windows.UI.Input.Preview.Injection.InputInjector (test-automation input)
+      * Windows.Graphics.Imaging.BitmapEncoder (PNG encoding)
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260416003" />
+  </ItemGroup>
+
+</Project>

@@ -28,6 +28,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Marionette.NET.Adapter.Aval
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sample.Avalonia.Dashboard", "samples\Sample.Avalonia.Dashboard\Sample.Avalonia.Dashboard.csproj", "{B1B1B1B1-B1B1-B1B1-B1B1-B1B1B1B1B1B1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Marionette.NET.Adapter.WinUI", "src\Marionette.NET.Adapter.WinUI\Marionette.NET.Adapter.WinUI.csproj", "{C2C2C2C2-C2C2-C2C2-C2C2-C2C2C2C2C2C2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sample.WinUI.FormLab", "samples\Sample.WinUI.FormLab\Sample.WinUI.FormLab.csproj", "{D3D3D3D3-D3D3-D3D3-D3D3-D3D3D3D3D3D3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -74,6 +78,14 @@ Global
 		{B1B1B1B1-B1B1-B1B1-B1B1-B1B1B1B1B1B1}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B1B1B1B1-B1B1-B1B1-B1B1-B1B1B1B1B1B1}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B1B1B1B1-B1B1-B1B1-B1B1-B1B1B1B1B1B1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C2C2C2C2-C2C2-C2C2-C2C2-C2C2C2C2C2C2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C2C2C2C2-C2C2-C2C2-C2C2-C2C2C2C2C2C2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C2C2C2C2-C2C2-C2C2-C2C2-C2C2C2C2C2C2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C2C2C2C2-C2C2-C2C2-C2C2-C2C2C2C2C2C2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D3D3D3D3-D3D3-D3D3-D3D3-D3D3D3D3D3D3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D3D3D3D3-D3D3-D3D3-D3D3-D3D3D3D3D3D3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D3D3D3D3-D3D3-D3D3-D3D3-D3D3D3D3D3D3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D3D3D3D3-D3D3-D3D3-D3D3-D3D3D3D3D3D3}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -89,5 +101,7 @@ Global
 		{0FE15ECC-15E5-15EC-15EC-15EC15EC15EC} = {33333333-3333-3333-3333-333333333333}
 		{A0A0A0A0-A0A0-A0A0-A0A0-A0A0A0A0A0A0} = {11111111-1111-1111-1111-111111111111}
 		{B1B1B1B1-B1B1-B1B1-B1B1-B1B1B1B1B1B1} = {22222222-2222-2222-2222-222222222222}
+		{C2C2C2C2-C2C2-C2C2-C2C2-C2C2C2C2C2C2} = {11111111-1111-1111-1111-111111111111}
+		{D3D3D3D3-D3D3-D3D3-D3D3-D3D3D3D3D3D3} = {22222222-2222-2222-2222-222222222222}
 	EndGlobalSection
 EndGlobal

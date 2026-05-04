@@ -2,7 +2,7 @@
 
 The canonical reference for the Marionette.NET v1 surface. Every skill in `skill-pack/claude-code/*/SKILL.md` cites this file. Adopters using a non-Claude agent (Cursor, Cline, Aider) can read this directly.
 
-**Status:** Phase 3.1 (WPF + Avalonia adapters; input-simulation + routed-event raising). The attribute set is locked; remaining phases add WinUI / Uno / MAUI adapters without changing the core contract.
+**Status:** Phase 3.2 (WPF + Avalonia + WinUI adapters; input-simulation + routed-event raising). The attribute set is locked; remaining phases add Uno / MAUI adapters without changing the core contract.
 
 ---
 
@@ -14,6 +14,7 @@ The canonical reference for the Marionette.NET v1 surface. Every skill in `skill
 | `Ai.Trigger`, `Ai.ScheduleTrigger`, `Ai.IsActive` | `Marionette` |
 | `MarionetteWpf.AttachTo` (WPF adapter bootstrap) | `Marionette.Adapter.Wpf` |
 | `MarionetteAvalonia.AttachTo` (Avalonia adapter bootstrap) | `Marionette.Adapter.Avalonia` |
+| `MarionetteWinUI.AttachTo` (WinUI 3 adapter bootstrap) | `Marionette.Adapter.WinUI` |
 | `MarionetteHost.RunAsync` (headless host entry) | `Marionette.Runtime` |
 | `RootDescriptor`, `CallableDescriptor`, `ObservableDescriptor`, `TriggerableDescriptor`, `EventDescriptor`, `ParamDescriptor` | `Marionette.Runtime.Manifest` |
 | `GeneratedManifest.Roots` (source-generator output) | `Marionette.Generated` |
@@ -791,6 +792,66 @@ MarionetteAvalonia.AttachTo(this, roots);
 ```
 
 See `samples/Sample.Avalonia.Dashboard/App.axaml.cs` for the working reference. The Phase 2.1 trapdoor: `OnFrameworkInitializationCompleted` runs BEFORE the MainWindow has fully laid out — the AttachTo call returns immediately, and the descriptor-factory rewrite resolves on first MCP request (typically a few hundred milliseconds later, by which time the window is open). For latency-sensitive scenarios the bound resource subscriptions still see baseline values via INPC.
+
+### WinUI 3 — App.OnLaunched
+
+WinUI 3 adopters use the Windows App SDK analogue of WPF/Avalonia AttachTo. The same attribute set works (no WinUI-specific attributes); the lifecycle hook is `Application.OnLaunched`:
+
+```csharp
+using Microsoft.UI.Xaml;
+
+#if MCP_ENABLED
+using Marionette.Adapter.WinUI;
+using Marionette.Generated;
+#endif
+
+namespace MyApp;
+
+public partial class App : Application
+{
+    private Window? _mainWindow;
+
+    public App() => InitializeComponent();
+
+    protected override void OnLaunched(LaunchActivatedEventArgs args)
+    {
+        _mainWindow = new MainWindow();
+        _mainWindow.Activate();
+
+#if MCP_ENABLED
+        var argv = Environment.GetCommandLineArgs();
+        var argsExceptExe = argv.Length > 1 ? argv[1..] : Array.Empty<string>();
+        MarionetteWinUI.AttachTo(this, _mainWindow, GeneratedManifest.Roots, argsExceptExe);
+#endif
+    }
+}
+```
+
+**TFM choice for WinUI adopters:** `net10.0-windows10.0.<sdk>.0`, where `<sdk>` matches the Windows App SDK package's bundled SDK ref (the FormLab sample uses `19041.0`, matching `Microsoft.WindowsAppSDK 1.8.x`'s `Microsoft.Windows.SDK.NET.Ref` projection). WinUI 3 is Windows-only; there is no cross-platform variant.
+
+**Unpackaged-first:** the Phase 3.2 sample sets `<WindowsPackageType>None</WindowsPackageType>` so the app ships as a regular `.exe`. Adopters who need MSIX packaging override that (and provide a `Package.appxmanifest`); the adapter is identical either way.
+
+**simulate_input on WinUI:** for `kind:"click"` the adapter uses the `ButtonAutomationPeer.Invoke()` path (works unpackaged + unelevated). For `kind:"key_*"`/`"type_text"` (on non-TextBox targets) / `"mouse_move"` the adapter uses `Windows.UI.Input.Preview.Injection.InputInjector`, which may return null without:
+- elevation, OR
+- the `inputInjectionBrokered` capability declared in the app manifest (`uap5:Capability` element).
+
+When InputInjector isn't usable the simulator returns `success:false` with a logged limitation. Adopters who need keyboard automation in unelevated WinUI scenarios should prefer the `simulate_input(kind:"type_text")` path on a target TextBox (which sets `TextBox.Text` directly via the semantic API) or decorate the underlying handler with `[McpCallable]` and invoke via invoke_method.
+
+### Non-Window root binding (WinUI)
+
+Same pattern as WPF and Avalonia — non-`Window` roots need an explicit factory rewrite:
+
+```csharp
+var roots = GeneratedManifest.Roots
+    .Select(r => r.TypeName == typeof(MyViewModel).FullName
+        ? r with { Create = static () => MyViewModel.Shared }
+        : r)
+    .ToList();
+
+MarionetteWinUI.AttachTo(this, _mainWindow, roots);
+```
+
+See `samples/Sample.WinUI.FormLab/App.xaml.cs` for the working reference.
 
 ---
 

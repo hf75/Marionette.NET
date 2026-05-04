@@ -77,7 +77,7 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: StdioTest <path-to-sample.exe> [--gui] [--todoapp] [--avalonia] [--probe] [--simulate-input]");
+            Console.Error.WriteLine("Usage: StdioTest <path-to-sample.exe> [--gui] [--todoapp] [--avalonia] [--winui] [--probe] [--simulate-input]");
             return 2;
         }
 
@@ -86,6 +86,7 @@ internal static class Program
         var guiMode = false;
         var todoAppMode = false;
         var avaloniaMode = false;
+        var winuiMode = false;
         var simulateInputMode = false;
         for (var ai = 1; ai < args.Length; ai++)
         {
@@ -93,6 +94,7 @@ internal static class Program
             else if (args[ai] == "--gui") guiMode = true;
             else if (args[ai] == "--todoapp") todoAppMode = true;
             else if (args[ai] == "--avalonia") avaloniaMode = true;
+            else if (args[ai] == "--winui") winuiMode = true;
             else if (args[ai] == "--simulate-input") simulateInputMode = true;
         }
         // --simulate-input only makes sense with a GUI sample (the input
@@ -115,11 +117,13 @@ internal static class Program
         // where the captured PNG provides a visual sanity check that the
         // TodoListViewModel UI rendered correctly.
 
-        var phaseLabel = avaloniaMode
-            ? "Phase 2.1 Avalonia Dashboard stdio handshake harness"
-            : (todoAppMode
-                ? "Phase 1.4 TodoApp stdio handshake harness"
-                : (guiMode ? "Phase 1.3 stdio + GUI screenshot harness" : "Phase 1.2 stdio handshake harness"));
+        var phaseLabel = winuiMode
+            ? "Phase 3.2 WinUI FormLab stdio handshake harness"
+            : (avaloniaMode
+                ? "Phase 2.1 Avalonia Dashboard stdio handshake harness"
+                : (todoAppMode
+                    ? "Phase 1.4 TodoApp stdio handshake harness"
+                    : (guiMode ? "Phase 1.3 stdio + GUI screenshot harness" : "Phase 1.2 stdio handshake harness")));
         Console.WriteLine($"=== {phaseLabel} ===");
         Console.WriteLine($"Child: {exePath}");
         Console.WriteLine($"Args:  --mcp{(guiMode ? string.Empty : " --headless")}");
@@ -285,28 +289,38 @@ internal static class Program
                 // the very first tools/list response (the SDK gets them
                 // staged in DynamicToolRegistry.RegisterInitial before the
                 // run loop starts).
-                string[] expectedDynamicTools = avaloniaMode
+                string[] expectedDynamicTools = winuiMode
                     ? new[]
                     {
-                        "DashboardViewModel.UpsertMetric",
-                        "DashboardViewModel.RemoveMetric",
-                        "DashboardViewModel.ResetAll",
-                        "DashboardViewModel.TogglePaused",
-                        "DashboardViewModel.RefreshAsync",
+                        "FormLabViewModel.SetName",
+                        "FormLabViewModel.SetAge",
+                        "FormLabViewModel.ToggleNotifications",
+                        "FormLabViewModel.SetTheme",
+                        "FormLabViewModel.Submit",
+                        "FormLabViewModel.Reset",
                     }
-                    : (todoAppMode
+                    : (avaloniaMode
                         ? new[]
                         {
-                            "TodoListViewModel.AddTodo",
-                            "TodoListViewModel.RemoveTodo",
-                            "TodoListViewModel.ToggleDone",
-                            "TodoListViewModel.ClearCompleted",
-                            "TodoListViewModel.RenameTodo",
+                            "DashboardViewModel.UpsertMetric",
+                            "DashboardViewModel.RemoveMetric",
+                            "DashboardViewModel.ResetAll",
+                            "DashboardViewModel.TogglePaused",
+                            "DashboardViewModel.RefreshAsync",
                         }
-                        : new[]
-                        {
-                            "MainWindow.Add",
-                        });
+                        : (todoAppMode
+                            ? new[]
+                            {
+                                "TodoListViewModel.AddTodo",
+                                "TodoListViewModel.RemoveTodo",
+                                "TodoListViewModel.ToggleDone",
+                                "TodoListViewModel.ClearCompleted",
+                                "TodoListViewModel.RenameTodo",
+                            }
+                            : new[]
+                            {
+                                "MainWindow.Add",
+                            }));
                 var missingDyn = new System.Collections.Generic.List<string>();
                 foreach (var t in expectedDynamicTools)
                 {
@@ -325,7 +339,306 @@ internal static class Program
             }
 
             // -------- Sample-specific tool-call assertions --------
-            if (avaloniaMode)
+            if (winuiMode)
+            {
+                // ============ WinUI FormLab Phase-3.2 assertion suite ============
+                //
+                // Mirror of the Dashboard suite, but for Sample.WinUI.FormLab's
+                // FormLabViewModel root. FormLab exposes:
+                //   * 6 [McpCallable]: SetName, SetAge, ToggleNotifications, SetTheme, Submit, Reset
+                //   * 5 [McpObservable]: Name (watchable), Age (watchable),
+                //                        NotificationsEnabled (watchable), Theme (non-watchable),
+                //                        HasSubmitted (non-watchable)
+                //   * 1 [McpEvent]: FormSubmitted (with FormSubmittedEventArgs payload)
+                //
+                // Headless mode: ViewModel starts with name="", age=0,
+                // notifications=true, theme="Default", hasSubmitted=false.
+                // The harness asserts:
+                //   * inspect_app_api lists FormLabViewModel with all 6 callables + 5 observables + 1 event.
+                //   * read_observable for each baseline value returns the expected default.
+                //   * invoke_method SetName("Test"), SetAge(30), ToggleNotifications(),
+                //     SetTheme("Dark") all succeed.
+                //   * Re-reads of the observables show the new values.
+                //   * resources/subscribe to events/FormSubmitted + Submit() produces an
+                //     event notification with args.Name == "Test", args.Age == 30, etc.
+                //   * read_observable HasSubmitted returns true after Submit.
+                //   * capture_screenshot returns 'screenshot_not_supported' (NoOpAdapter in --headless).
+                var inspectId = Interlocked.Increment(ref _nextRequestId);
+                var inspectReq = new
+                {
+                    jsonrpc = "2.0",
+                    id = inspectId,
+                    method = "tools/call",
+                    @params = new { name = "inspect_app_api", arguments = new { } },
+                };
+                await SendAsync(child, inspectReq);
+                var inspectResp = await WaitForResponseAsync(stdoutMessages, inspectId, TimeSpan.FromSeconds(10));
+                if (inspectResp is null)
+                {
+                    Console.Error.WriteLine("FAIL — no response to inspect_app_api within 10s");
+                    failures++;
+                }
+                else
+                {
+                    string manifestErr = "no inspect_app_api text content";
+                    bool manifestOk = TryReadToolText(inspectResp.RootElement, out var inspectText) &&
+                                      TryParseFormLabManifest(inspectText, out manifestErr);
+                    if (manifestOk)
+                    {
+                        Console.WriteLine("PASS — inspect_app_api returned FormLabViewModel manifest with all 6 callables + 5 observables + 1 event");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"FAIL — inspect_app_api manifest mismatch: {manifestErr}. Raw: {inspectResp.RootElement.GetRawText()}");
+                        failures++;
+                    }
+                    inspectResp.Dispose();
+                }
+
+                // ---- baseline reads
+                var initName = await ReadObservableString(child, stdoutMessages, "FormLabViewModel", "Name");
+                if (initName == "")
+                {
+                    Console.WriteLine("PASS — read_observable Name initially returned empty string");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — read_observable Name initial = '{initName ?? "<error>"}', expected ''");
+                    failures++;
+                }
+
+                var initAge = await ReadObservableInt(child, stdoutMessages, "FormLabViewModel", "Age");
+                if (initAge == 0)
+                {
+                    Console.WriteLine("PASS — read_observable Age initially returned 0");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — read_observable Age initial = {initAge?.ToString() ?? "<error>"}, expected 0");
+                    failures++;
+                }
+
+                var initNotif = await ReadObservableBool(child, stdoutMessages, "FormLabViewModel", "NotificationsEnabled");
+                if (initNotif == true)
+                {
+                    Console.WriteLine("PASS — read_observable NotificationsEnabled initially returned true");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — read_observable NotificationsEnabled initial = {initNotif?.ToString() ?? "<error>"}, expected true");
+                    failures++;
+                }
+
+                var initSubmitted = await ReadObservableBool(child, stdoutMessages, "FormLabViewModel", "HasSubmitted");
+                if (initSubmitted == false)
+                {
+                    Console.WriteLine("PASS — read_observable HasSubmitted initially returned false");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — read_observable HasSubmitted initial = {initSubmitted?.ToString() ?? "<error>"}, expected false");
+                    failures++;
+                }
+
+                // ---- invoke_method SetName("Test")
+                var setNameOk = await InvokeMethodAsync(child, stdoutMessages,
+                    "FormLabViewModel", "SetName", new { name = "Test" });
+                if (setNameOk.Success)
+                {
+                    Console.WriteLine("PASS — invoke_method SetName(\"Test\") succeeded");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — invoke_method SetName failed: {setNameOk.Detail}");
+                    failures++;
+                }
+
+                var afterName = await ReadObservableString(child, stdoutMessages, "FormLabViewModel", "Name");
+                if (afterName == "Test")
+                {
+                    Console.WriteLine("PASS — read_observable Name returned 'Test' after SetName");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — read_observable Name after SetName = '{afterName ?? "<error>"}', expected 'Test'");
+                    failures++;
+                }
+
+                // ---- invoke_method SetAge(30)
+                var setAgeOk = await InvokeMethodAsync(child, stdoutMessages,
+                    "FormLabViewModel", "SetAge", new { age = 30 });
+                if (setAgeOk.Success)
+                {
+                    Console.WriteLine("PASS — invoke_method SetAge(30) succeeded");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — invoke_method SetAge failed: {setAgeOk.Detail}");
+                    failures++;
+                }
+
+                var afterAge = await ReadObservableInt(child, stdoutMessages, "FormLabViewModel", "Age");
+                if (afterAge == 30)
+                {
+                    Console.WriteLine("PASS — read_observable Age returned 30 after SetAge");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — read_observable Age after SetAge = {afterAge?.ToString() ?? "<error>"}, expected 30");
+                    failures++;
+                }
+
+                // ---- invoke_method ToggleNotifications()
+                var toggleOk = await InvokeMethodAsync(child, stdoutMessages,
+                    "FormLabViewModel", "ToggleNotifications", new { });
+                if (toggleOk.Success)
+                {
+                    Console.WriteLine("PASS — invoke_method ToggleNotifications() succeeded");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — invoke_method ToggleNotifications failed: {toggleOk.Detail}");
+                    failures++;
+                }
+
+                var afterToggle = await ReadObservableBool(child, stdoutMessages, "FormLabViewModel", "NotificationsEnabled");
+                if (afterToggle == false)
+                {
+                    Console.WriteLine("PASS — read_observable NotificationsEnabled returned false after ToggleNotifications");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — NotificationsEnabled after Toggle = {afterToggle?.ToString() ?? "<error>"}, expected false");
+                    failures++;
+                }
+
+                // ---- subscribe to events/FormSubmitted BEFORE the Submit call
+                var eventUri = "marionette://FormLabViewModel/events/FormSubmitted";
+                var evSubId = Interlocked.Increment(ref _nextRequestId);
+                var evSubReq = new
+                {
+                    jsonrpc = "2.0",
+                    id = evSubId,
+                    method = "resources/subscribe",
+                    @params = new { uri = eventUri },
+                };
+                await SendAsync(child, evSubReq);
+                var evSubResp = await WaitForResponseAsync(stdoutMessages, evSubId, TimeSpan.FromSeconds(10));
+                bool evSubOk = evSubResp is not null && evSubResp.RootElement.TryGetProperty("result", out _);
+                evSubResp?.Dispose();
+                if (!evSubOk)
+                {
+                    Console.Error.WriteLine($"FAIL — resources/subscribe to {eventUri} did not return a result.");
+                    failures++;
+                }
+                else
+                {
+                    var evWatcher = StartNotificationWatcher(stdoutMessages);
+                    var submitOk = await InvokeMethodAsync(child, stdoutMessages,
+                        "FormLabViewModel", "Submit", new { });
+                    if (!submitOk.Success)
+                    {
+                        Console.Error.WriteLine($"FAIL — invoke_method Submit failed: {submitOk.Detail}");
+                        failures++;
+                    }
+                    else
+                    {
+                        var gotEvUpdate = await WaitForResourceUpdate(evWatcher, eventUri, TimeSpan.FromSeconds(5));
+                        if (!gotEvUpdate)
+                        {
+                            Console.Error.WriteLine($"FAIL — no notifications/resources/updated for {eventUri} within 5s after Submit.");
+                            failures++;
+                        }
+                        else
+                        {
+                            // Read the resource and confirm the args carry the snapshot.
+                            var readId = Interlocked.Increment(ref _nextRequestId);
+                            var readReq = new
+                            {
+                                jsonrpc = "2.0",
+                                id = readId,
+                                method = "resources/read",
+                                @params = new { uri = eventUri },
+                            };
+                            await SendAsync(child, readReq);
+                            var readResp = await WaitForResponseAsync(stdoutMessages, readId, TimeSpan.FromSeconds(5));
+                            bool readOk = false;
+                            string readDetail = "no resources/read response";
+                            if (readResp is not null && readResp.RootElement.TryGetProperty("result", out var rr) &&
+                                rr.TryGetProperty("contents", out var cs) && cs.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var c in cs.EnumerateArray())
+                                {
+                                    if (!c.TryGetProperty("text", out var txt)) continue;
+                                    var text = txt.GetString() ?? string.Empty;
+                                    try
+                                    {
+                                        using var inner = JsonDocument.Parse(text);
+                                        if (inner.RootElement.TryGetProperty("events", out var evArr) &&
+                                            evArr.ValueKind == JsonValueKind.Array && evArr.GetArrayLength() > 0)
+                                        {
+                                            bool found = false;
+                                            int len = evArr.GetArrayLength();
+                                            foreach (var ev in evArr.EnumerateArray())
+                                            {
+                                                if (ev.TryGetProperty("args", out var argsEl) &&
+                                                    argsEl.TryGetProperty("Name", out var nameEl) &&
+                                                    nameEl.GetString() == "Test" &&
+                                                    argsEl.TryGetProperty("Age", out var ageEl) &&
+                                                    ageEl.GetInt32() == 30)
+                                                {
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+                                            if (found)
+                                            {
+                                                readOk = true;
+                                                readDetail = $"sequence={(inner.RootElement.TryGetProperty("sequence", out var sq) ? sq.GetInt64() : -1)}, count={len}, args.Name=\"Test\", args.Age=30 present";
+                                            }
+                                            else
+                                            {
+                                                readDetail = "no event with args.Name='Test' AND args.Age=30 found in buffer";
+                                            }
+                                        }
+                                        else
+                                        {
+                                            readDetail = "no events array or empty";
+                                        }
+                                    }
+                                    catch (JsonException ex)
+                                    {
+                                        readDetail = $"events resource text not JSON: {ex.Message}";
+                                    }
+                                }
+                            }
+                            readResp?.Dispose();
+                            if (readOk)
+                            {
+                                Console.WriteLine($"PASS — resources/subscribe + Submit produced an event notification on {eventUri} ({readDetail})");
+                            }
+                            else
+                            {
+                                Console.Error.WriteLine($"FAIL — event resource read mismatch: {readDetail}");
+                                failures++;
+                            }
+                        }
+                    }
+                }
+
+                // ---- HasSubmitted now true
+                var afterSubmittedFlag = await ReadObservableBool(child, stdoutMessages, "FormLabViewModel", "HasSubmitted");
+                if (afterSubmittedFlag == true)
+                {
+                    Console.WriteLine("PASS — read_observable HasSubmitted returned true after Submit");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — HasSubmitted after Submit = {afterSubmittedFlag?.ToString() ?? "<error>"}, expected true");
+                    failures++;
+                }
+            }
+            else if (avaloniaMode)
             {
                 // ============ Avalonia Dashboard Phase-2.1 assertion suite ============
                 //
@@ -1339,11 +1652,13 @@ internal static class Program
         Console.WriteLine($"stderr total: {stderrLines.Count} lines");
 
         Console.WriteLine();
-        var verdictLabel = avaloniaMode
-            ? "Phase 2.1 Avalonia Dashboard handshake"
-            : (todoAppMode
-                ? "Phase 1.4 TodoApp handshake"
-                : (guiMode ? "Phase 1.3 GUI handshake" : "Phase 1.2 handshake"));
+        var verdictLabel = winuiMode
+            ? "Phase 3.2 WinUI FormLab handshake"
+            : (avaloniaMode
+                ? "Phase 2.1 Avalonia Dashboard handshake"
+                : (todoAppMode
+                    ? "Phase 1.4 TodoApp handshake"
+                    : (guiMode ? "Phase 1.3 GUI handshake" : "Phase 1.2 handshake")));
         if (failures == 0)
         {
             Console.WriteLine($"=== {verdictLabel}: PASS ===");
@@ -1414,6 +1729,83 @@ internal static class Program
                 if (!actualObservables.Contains(o))
                 {
                     error = $"missing observable '{o}'; got [{string.Join(",", actualObservables)}]";
+                    return false;
+                }
+            }
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            error = $"manifest is not valid JSON: {ex.Message}";
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Validate that the inspect_app_api response describes the WinUI FormLab's
+    /// expected manifest: FormLabViewModel root with six callables (SetName,
+    /// SetAge, ToggleNotifications, SetTheme, Submit, Reset), five observables
+    /// (Name, Age, NotificationsEnabled, Theme, HasSubmitted), and one event
+    /// (FormSubmitted).
+    /// </summary>
+    private static bool TryParseFormLabManifest(string inspectText, out string error)
+    {
+        error = string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(inspectText);
+            var root = doc.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Array)
+            {
+                error = $"expected array of roots, got {root.ValueKind}";
+                return false;
+            }
+
+            JsonElement? formLab = null;
+            foreach (var entry in root.EnumerateArray())
+            {
+                if (entry.TryGetProperty("name", out var n) && n.GetString() == "FormLabViewModel")
+                {
+                    formLab = entry;
+                    break;
+                }
+            }
+            if (formLab is null)
+            {
+                error = "no root named 'FormLabViewModel' in manifest";
+                return false;
+            }
+
+            var expectedCallables = new[] { "SetName", "SetAge", "ToggleNotifications", "SetTheme", "Submit", "Reset" };
+            var expectedObservables = new[] { "Name", "Age", "NotificationsEnabled", "Theme", "HasSubmitted" };
+            var expectedEvents = new[] { "FormSubmitted" };
+
+            var actualCallables = ExtractNames(formLab.Value, "callables");
+            var actualObservables = ExtractNames(formLab.Value, "observables");
+            var actualEvents = ExtractNames(formLab.Value, "events");
+
+            foreach (var c in expectedCallables)
+            {
+                if (!actualCallables.Contains(c))
+                {
+                    error = $"missing callable '{c}'; got [{string.Join(",", actualCallables)}]";
+                    return false;
+                }
+            }
+            foreach (var o in expectedObservables)
+            {
+                if (!actualObservables.Contains(o))
+                {
+                    error = $"missing observable '{o}'; got [{string.Join(",", actualObservables)}]";
+                    return false;
+                }
+            }
+            foreach (var ev in expectedEvents)
+            {
+                if (!actualEvents.Contains(ev))
+                {
+                    error = $"missing event '{ev}'; got [{string.Join(",", actualEvents)}]";
                     return false;
                 }
             }
@@ -1544,6 +1936,90 @@ internal static class Program
                 return n;
             }
             return null;
+        }
+        finally
+        {
+            resp.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Read a single string observable. Returns null on failure;
+    /// distinguishes empty string ("") from a missing read by returning the
+    /// empty string when JSON's "" was the response.
+    /// </summary>
+    private static async Task<string?> ReadObservableString(
+        Process child,
+        BlockingCollection<JsonDocument> queue,
+        string root,
+        string property)
+    {
+        var id = Interlocked.Increment(ref _nextRequestId);
+        var req = new
+        {
+            jsonrpc = "2.0",
+            id,
+            method = "tools/call",
+            @params = new { name = "read_observable", arguments = new { root, property } },
+        };
+        await SendAsync(child, req);
+        var resp = await WaitForResponseAsync(queue, id, TimeSpan.FromSeconds(10));
+        if (resp is null) return null;
+        try
+        {
+            if (!TryReadToolText(resp.RootElement, out var text)) return null;
+            // Runtime serialises strings as JSON-escaped values: "" -> `""`,
+            // "Test" -> `"Test"`. Parse to extract the unescaped value.
+            try
+            {
+                using var inner = JsonDocument.Parse(text);
+                if (inner.RootElement.ValueKind == JsonValueKind.String)
+                {
+                    return inner.RootElement.GetString() ?? string.Empty;
+                }
+                return text.Trim();
+            }
+            catch (JsonException)
+            {
+                return text.Trim();
+            }
+        }
+        finally
+        {
+            resp.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Read a single bool observable. Returns null on failure.
+    /// </summary>
+    private static async Task<bool?> ReadObservableBool(
+        Process child,
+        BlockingCollection<JsonDocument> queue,
+        string root,
+        string property)
+    {
+        var id = Interlocked.Increment(ref _nextRequestId);
+        var req = new
+        {
+            jsonrpc = "2.0",
+            id,
+            method = "tools/call",
+            @params = new { name = "read_observable", arguments = new { root, property } },
+        };
+        await SendAsync(child, req);
+        var resp = await WaitForResponseAsync(queue, id, TimeSpan.FromSeconds(10));
+        if (resp is null) return null;
+        try
+        {
+            if (!TryReadToolText(resp.RootElement, out var text)) return null;
+            var trimmed = text.Trim();
+            return trimmed switch
+            {
+                "true" => true,
+                "false" => false,
+                _ => (bool?)null,
+            };
         }
         finally
         {

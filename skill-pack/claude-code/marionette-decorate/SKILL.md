@@ -208,13 +208,14 @@ Run `dotnet build` against the project. The source generator emits diagnostics w
 
 Surface every diagnostic to the user. Don't silently strip attributes to make the build green.
 
-### 8. Wire the host (one-line in App.OnStartup for WPF, or App.OnFrameworkInitializationCompleted for Avalonia)
+### 8. Wire the host (one-line in App.OnStartup for WPF, App.OnFrameworkInitializationCompleted for Avalonia, or App.OnLaunched for WinUI)
 
 The attributes alone don't start the MCP server — the host has to be wired. Detect the framework from the user's csproj first:
 
 - `<UseWPF>true</UseWPF>` -> WPF -> use `MarionetteWpf.AttachTo`.
 - `<PackageReference Include="Avalonia"` -> Avalonia -> use `MarionetteAvalonia.AttachTo`.
-- WinUI / MAUI / Uno -> not in Phase 2.1 yet.
+- `<UseWinUI>true</UseWinUI>` OR `<PackageReference Include="Microsoft.WindowsAppSDK"` -> WinUI 3 -> use `MarionetteWinUI.AttachTo`.
+- MAUI / Uno -> not in Phase 3.2 yet.
 
 Show the user the canonical wiring snippet for their framework:
 
@@ -253,13 +254,37 @@ public override void OnFrameworkInitializationCompleted()
 }
 ```
 
-For non-Window roots (custom ViewModels), see `samples/Sample.Wpf.TodoApp/App.xaml.cs` (WPF) or `samples/Sample.Avalonia.Dashboard/App.axaml.cs` (Avalonia) in the Marionette repo for the descriptor-factory rewrite pattern that wires the runtime's instance to the same singleton your DataContext uses.
+**WinUI 3:**
+
+```csharp
+// In App.xaml.cs
+private Window? _mainWindow;
+
+protected override void OnLaunched(LaunchActivatedEventArgs args)
+{
+    _mainWindow = new MainWindow();
+    _mainWindow.Activate();
+
+#if MCP_ENABLED
+    var argv = Environment.GetCommandLineArgs();
+    var argsExceptExe = argv.Length > 1 ? argv[1..] : Array.Empty<string>();
+    Marionette.Adapter.WinUI.MarionetteWinUI.AttachTo(
+        this,
+        _mainWindow,
+        Marionette.Generated.GeneratedManifest.Roots,
+        argsExceptExe);
+#endif
+}
+```
+
+For non-Window roots (custom ViewModels), see `samples/Sample.Wpf.TodoApp/App.xaml.cs` (WPF), `samples/Sample.Avalonia.Dashboard/App.axaml.cs` (Avalonia), or `samples/Sample.WinUI.FormLab/App.xaml.cs` (WinUI) in the Marionette repo for the descriptor-factory rewrite pattern that wires the runtime's instance to the same singleton your DataContext uses.
 
 Also need:
-- A `<StartupObject>` that handles `--mcp` / `--mcp --headless` flags (see `samples/Sample.Wpf.TodoApp/Program.cs` (WPF) or `samples/Sample.Avalonia.Dashboard/Program.cs` (Avalonia) as templates).
-- WPF: `<EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>` so the SDK doesn't auto-emit a competing `Main`. Avalonia uses `<OutputType>Exe</OutputType>` (NOT WinExe) and a custom `Main` that wires `BuildAvaloniaApp().StartWithClassicDesktopLifetime(args)`.
-- TFM: WPF requires `net10.0-windows`. Avalonia adopters should use `net10.0` (NOT `net10.0-windows`) because Avalonia is cross-platform.
+- A `<StartupObject>` that handles `--mcp` / `--mcp --headless` flags (see `samples/Sample.Wpf.TodoApp/Program.cs` (WPF), `samples/Sample.Avalonia.Dashboard/Program.cs` (Avalonia), or `samples/Sample.WinUI.FormLab/Program.cs` (WinUI) as templates).
+- WPF: `<EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>` so the SDK doesn't auto-emit a competing `Main`. Avalonia uses `<OutputType>Exe</OutputType>` (NOT WinExe) and a custom `Main` that wires `BuildAvaloniaApp().StartWithClassicDesktopLifetime(args)`. WinUI uses `<DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>` to suppress the XAML compiler's auto-emitted `Program.Main`.
+- TFM: WPF requires `net10.0-windows`. Avalonia adopters should use `net10.0` (NOT `net10.0-windows`) because Avalonia is cross-platform. WinUI 3 requires `net10.0-windows10.0.<sdk>.0` (e.g. `net10.0-windows10.0.19041.0` for Windows App SDK 1.8.x) plus `<UseWinUI>true</UseWinUI>` and `<WindowsPackageType>None</WindowsPackageType>` for unpackaged deployment.
 - The `EnableMcpAutomation` MSBuild property (defaults to Debug=on, Release=off via `build/Marionette.NET.props`).
+- WinUI's `simulate_input` may need `inputInjectionBrokered` capability or elevation for full kind coverage; click variants work unpackaged + unelevated via the `ButtonAutomationPeer.Invoke` path.
 
 ### 9. Encourage running the test skill
 

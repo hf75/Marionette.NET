@@ -110,7 +110,7 @@ Skip the "Marionette is a library that..." preamble. The user has the server con
 
 ## Compatible apps
 
-Phase 2.1 validated this skill against both **WPF** and **Avalonia** Marionette adopters. The same MCP tool surface (`inspect_app_api`, `invoke_method`, `read_observable`, `capture_screenshot`) works against both frameworks unchanged - the adapter is invisible at the protocol level.
+Phase 3.2 validated this skill against **WPF**, **Avalonia**, and **WinUI 3** Marionette adopters. The same MCP tool surface (`inspect_app_api`, `invoke_method`, `read_observable`, `capture_screenshot`, plus the Phase 3.1 `simulate_input` and `raise_event`) works against all three frameworks unchanged - the adapter is invisible at the protocol level.
 
 ## Reference
 

@@ -1,0 +1,85 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Phase 3.2 - Sample.WinUI.FormLab
+    The canonical WinUI 3 adopter-reference. A real, decorated, INPC-plumbed
+    settings-form sample showcasing diverse decorations and simulate_input
+    capability via WinUI's InputInjector / ButtonAutomationPeer paths.
+
+    Defaults for EnableMcpAutomation come from build/Marionette.NET.props
+    (Debug => true, Release => false).
+  -->
+  <Import Project="..\..\build\Marionette.NET.props" />
+
+  <PropertyGroup>
+    <!--
+      WinUI 3 desktop app. WinExe so no console window appears in normal GUI
+      mode. The custom Program.cs handles the headless MCP mode by branching
+      before WinUI's bootstrap; in headless mode the host runs on stdio
+      without an Application instance.
+
+      TFM matches the adapter (10.0.19041.0). Adopters whose own product needs
+      a higher SDK (for newer WinUI APIs) can override.
+    -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <RootNamespace>Sample.WinUI.FormLab</RootNamespace>
+    <AssemblyName>Sample.WinUI.FormLab</AssemblyName>
+    <StartupObject>Sample.WinUI.FormLab.Program</StartupObject>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!--
+      Setting these makes the sample a single-file unpackaged WinUI exe (no
+      MSIX registration required). Adopters who want packaged builds set
+      WindowsPackageType=MSIX in their own csproj instead.
+    -->
+    <UseRidGraph>true</UseRidGraph>
+    <RuntimeIdentifiers>win-x64;win-x86;win-arm64</RuntimeIdentifiers>
+
+    <!--
+      Suppress the XAML compiler's auto-generated `Program.Main`. We ship our
+      own custom Main in Program.cs so the same .exe runs as a regular WinUI
+      GUI, an MCP server with GUI (mcp flag), or a headless MCP server (mcp +
+      headless flags). DefineConstants is the canonical seam (the XAML
+      compiler emits the generated Main inside `#if !DISABLE_XAML_GENERATED_MAIN`).
+    -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+  </PropertyGroup>
+
+  <!-- Always reference Abstractions; attributes survive into Release as markup. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />
+  </ItemGroup>
+
+  <!-- Source generator wiring. Same shape as TodoApp / Dashboard. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.SourceGenerator\Marionette.NET.SourceGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- Adapter (and transitively Runtime + ModelContextProtocol) only when MCP is on. -->
+  <ItemGroup Condition="'$(EnableMcpAutomation)'=='true'">
+    <ProjectReference Include="..\..\src\Marionette.NET.Adapter.WinUI\Marionette.NET.Adapter.WinUI.csproj" />
+  </ItemGroup>
+
+  <!-- Windows App SDK. Pinned to the same stable version as the adapter. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260416003" />
+  </ItemGroup>
+
+  <!-- Emit Marionette.g.cs to disk so adopters can see what the generator produced. -->
+  <PropertyGroup>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+
+  <!-- MCP_ENABLED constant + (no-op for WinUI) WPF trim-error suppression. -->
+  <Import Project="..\..\build\Marionette.NET.targets" />
+
+</Project>
