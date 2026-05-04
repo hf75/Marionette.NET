@@ -166,6 +166,14 @@ internal enum JsonTypeKind
     Object,
     Primitive,
     Nullable,
+    /// <summary>
+    /// Phase 8.3: enum types. Emitted via
+    /// <c>JsonMetadataServices.CreateValueInfo&lt;TEnum&gt;</c> with a
+    /// <c>JsonStringEnumConverter&lt;TEnum&gt;</c>-derived converter so the
+    /// JSON output matches the schema string emitted by
+    /// <see cref="JsonSchemaWriter"/> (<c>"type":"string","enum":[...]</c>).
+    /// </summary>
+    Enum,
 }
 
 /// <summary>

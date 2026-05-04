@@ -157,11 +157,30 @@ internal sealed class JsonTypeCollector
             return primKey;
         }
 
+        // Phase 8.3: enums first — they're concrete value types but the
+        // emitter needs a different shape (CreateValueInfo + an enum
+        // converter), so handle them before the object branch.
+        if (unannotated is INamedTypeSymbol enumSym && enumSym.TypeKind == TypeKind.Enum)
+        {
+            var enumFqn = enumSym.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            var enumKey = EncodePropertyName(enumFqn);
+            if (!_types.ContainsKey(enumKey))
+            {
+                _types[enumKey] = new JsonTypeModel(
+                    TypeFullName: enumFqn,
+                    PropertyName: enumKey,
+                    Kind: JsonTypeKind.Enum,
+                    PrimitiveConverter: null,
+                    UnderlyingTypeFullName: null,
+                    Properties: EquatableArray<JsonPropertyModel>.Empty);
+            }
+            return enumKey;
+        }
+
         // Reject non-object shapes early.
         if (unannotated is not INamedTypeSymbol obj) return null;
         if (obj.IsAbstract || obj.IsStatic) return null;
         if (obj.TypeKind == TypeKind.Interface) return null;
-        if (obj.TypeKind == TypeKind.Enum) return null;          // slice 2+
         if (obj.TypeKind == TypeKind.Array) return null;          // slice 2+
         if (obj.IsGenericType && !obj.IsUnboundGenericType)
         {
@@ -194,6 +213,15 @@ internal sealed class JsonTypeCollector
             if (prop.IsIndexer) continue;
             if (prop.GetMethod is null) continue;
             if (prop.GetMethod.DeclaredAccessibility != Accessibility.Public) continue;
+            // Phase 8.3: honour [JsonIgnore]. The attribute is matched by
+            // metadata-name string (we cannot reference STJ from a
+            // netstandard2.0 analyzer that doesn't reference the runtime
+            // assembly directly). [JsonIgnore(Condition = ...)] sub-modes
+            // are not differentiated — any non-default Condition is treated
+            // as "always ignore" for source-gen purposes; adopters who need
+            // conditional ignoring should keep the property out of the
+            // generated context entirely.
+            if (HasJsonIgnoreAttribute(prop)) continue;
 
             var childName = TryRegister(prop.Type, visiting, depth + 1);
             if (childName is null)
@@ -274,6 +302,23 @@ internal sealed class JsonTypeCollector
             "global::System.Version" => ("VersionConverter", "System.Version"),
             _ => ((string?)null, (string?)null),
         };
+    }
+
+    /// <summary>
+    /// Phase 8.3: detect <c>[JsonIgnore]</c> on a property. We match by
+    /// metadata-name string because the generator may run in a Roslyn host
+    /// that doesn't reference <c>System.Text.Json</c> directly. The actual
+    /// <c>Condition</c> property is not inspected — adopters who need
+    /// conditional ignoring should not rely on source-gen for that property.
+    /// </summary>
+    private static bool HasJsonIgnoreAttribute(IPropertySymbol prop)
+    {
+        foreach (var attr in prop.GetAttributes())
+        {
+            if (attr.AttributeClass?.ToDisplayString() == "System.Text.Json.Serialization.JsonIgnoreAttribute")
+                return true;
+        }
+        return false;
     }
 
     /// <summary>

@@ -133,6 +133,12 @@ internal sealed class MarionetteJsonContext : global::System.Text.Json.Serializa
     public MarionetteJsonContext(global::System.Text.Json.JsonSerializerOptions options)
         : base(options) { }
 
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::Demo.Severity>? _Demo_Severity;
+    public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::Demo.Severity> Demo_Severity => _Demo_Severity ??= 
+        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::Demo.Severity>(
+            Options,
+            (global::System.Text.Json.Serialization.JsonConverter<global::Demo.Severity>)new global::System.Text.Json.Serialization.JsonStringEnumConverter<global::Demo.Severity>().CreateConverter(typeof(global::Demo.Severity), Options));
+
     private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Boolean>? _System_Boolean;
     public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Boolean> System_Boolean => _System_Boolean ??= 
         global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::System.Boolean>(Options, global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.BooleanConverter);
@@ -150,6 +156,7 @@ internal sealed class MarionetteJsonContext : global::System.Text.Json.Serializa
 
     public override global::System.Text.Json.Serialization.Metadata.JsonTypeInfo? GetTypeInfo(global::System.Type type)
     {
+        if (type == typeof(global::Demo.Severity)) return Demo_Severity;
         if (type == typeof(global::System.Boolean)) return System_Boolean;
         if (type == typeof(global::System.Int32)) return System_Int32;
         if (type == typeof(global::System.String)) return System_String;

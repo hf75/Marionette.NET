@@ -169,9 +169,34 @@ internal static class JsonContextEmitter
             case JsonTypeKind.Object:
                 EmitObjectCreation(sb, type);
                 break;
+            case JsonTypeKind.Enum:
+                EmitEnumCreation(sb, type);
+                break;
         }
 
         sb.AppendLine();
+    }
+
+    private static void EmitEnumCreation(StringBuilder sb, JsonTypeModel type)
+    {
+        // Phase 8.3: emit a string-encoded enum JsonTypeInfo so the runtime
+        // JSON output matches the schema string emitted by JsonSchemaWriter
+        // (<c>"type":"string","enum":[...]</c>). The default
+        // JsonMetadataServices.GetEnumConverter<TEnum> would emit integers —
+        // we use JsonStringEnumConverter<TEnum> via CreateConverter to get
+        // a typed JsonConverter<TEnum> that's AOT-safe (.NET 8+).
+        var fqn = StripGlobalPrefix(type.TypeFullName);
+        sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::");
+        sb.Append(fqn);
+        sb.AppendLine(">(");
+        sb.AppendLine("            Options,");
+        sb.Append("            (global::System.Text.Json.Serialization.JsonConverter<global::");
+        sb.Append(fqn);
+        sb.Append(">)new global::System.Text.Json.Serialization.JsonStringEnumConverter<global::");
+        sb.Append(fqn);
+        sb.Append(">().CreateConverter(typeof(global::");
+        sb.Append(fqn);
+        sb.AppendLine("), Options));");
     }
 
     private static void EmitPrimitiveCreation(StringBuilder sb, JsonTypeModel type)

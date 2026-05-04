@@ -201,7 +201,13 @@ public sealed class MarionetteTools
             var value = await adapter.DispatchAsync(
                 () => obs.Read(instance),
                 cancellationToken).ConfigureAwait(false);
-            return SerializeResult(value);
+            // Phase 8.3: prefer the descriptor's source-gen-emitted typed
+            // SerializeValue lambda. Fallback to the legacy reflection-based
+            // path remains available for adopter-handcrafted descriptors and
+            // observable types the JsonTypeCollector does not yet support.
+            return obs.SerializeValue is { } typed
+                ? typed(value)
+                : SerializeResult(value);
         }
         catch (Exception ex)
         {
