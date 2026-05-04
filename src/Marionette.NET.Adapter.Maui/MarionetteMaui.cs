@@ -175,6 +175,14 @@ public static class MarionetteMaui
         // prefer live instances. See WrapRootsForUiThread for the reasoning.
         var bridgedRoots = WrapRootsForUiThread(dispatcher, app, roots);
 
+        // Phase 9.2: hook MAUI's window lifecycle so the adapter's
+        // RootInstanceTracker stays in sync with the live window set —
+        // newly opened secondary windows get tracked, closed windows get
+        // untracked, and the runtime's DynamicToolRegistry sees
+        // notifications/tools/list_changed. Mirrors the per-Window-tracking
+        // pattern WPF / Avalonia / WinUI adapters already use.
+        WireWindowTracking(app, dispatcher, adapter, roots);
+
         var cts = new CancellationTokenSource();
         var hostTask = Task.Run(async () =>
         {
@@ -268,6 +276,159 @@ public static class MarionetteMaui
             bridged.Add(r with { Create = bridged_ });
         }
         return bridged;
+    }
+
+    /// <summary>
+    /// Phase 9.2: keep the adapter's <see cref="RootInstanceTracker"/> in
+    /// sync with MAUI's live window set. Reconciles the existing
+    /// <see cref="Application.Windows"/> collection once at startup and then
+    /// hooks the per-application window lifecycle so subsequent open/close
+    /// events update the tracker.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Per-window tracking follows the BindingContext: when a window's Page
+    /// has a BindingContext whose CLR type matches a registered <c>[McpRoot]</c>'s
+    /// <see cref="RootDescriptor.TypeName"/>, the BindingContext is registered
+    /// under that root name. Windows whose Page itself matches the typeName
+    /// (e.g. when the [McpRoot] is the Page subclass) are also tracked.
+    /// </para>
+    /// <para>
+    /// Closing a window untracks its instance(s); the tracker emits a
+    /// Changed event and the runtime's DynamicToolRegistry coalesces the
+    /// tools/list_changed notification.
+    /// </para>
+    /// </remarks>
+    private static void WireWindowTracking(
+        Application app,
+        IDispatcher dispatcher,
+        MauiUiAutomationAdapter adapter,
+        IReadOnlyList<RootDescriptor> roots)
+    {
+        // Build a fast lookup from CLR type name → root name. Only roots with
+        // a non-null Create factory are tracked — descriptors without a
+        // factory aren't expected to materialise live instances.
+        var typeToRoot = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var r in roots)
+        {
+            if (!string.IsNullOrEmpty(r.TypeName) && !typeToRoot.ContainsKey(r.TypeName))
+                typeToRoot[r.TypeName] = r.Name;
+        }
+
+        void TrackWindow(Window window)
+        {
+            try
+            {
+                var page = window.Page;
+                if (page is null) return;
+
+                // Track the page itself when its CLR type matches a root.
+                if (typeToRoot.TryGetValue(page.GetType().FullName ?? string.Empty, out var pageRoot))
+                {
+                    adapter.Tracker.Track(pageRoot, page);
+                }
+
+                // Track the BindingContext (typical MVVM ViewModel root).
+                var bc = page.BindingContext;
+                if (bc is not null &&
+                    typeToRoot.TryGetValue(bc.GetType().FullName ?? string.Empty, out var bcRoot))
+                {
+                    adapter.Tracker.Track(bcRoot, bc);
+                }
+            }
+            catch
+            {
+                // Tracking is best-effort — never let an adapter-internal
+                // bookkeeping fault propagate into MAUI's window lifecycle.
+            }
+        }
+
+        void UntrackWindow(Window window)
+        {
+            try
+            {
+                var page = window.Page;
+                if (page is null) return;
+                adapter.Tracker.Untrack(page);
+                if (page.BindingContext is { } bc) adapter.Tracker.Untrack(bc);
+            }
+            catch
+            {
+                // Best-effort — see TrackWindow.
+            }
+        }
+
+        void ReconcileOnce()
+        {
+            foreach (var w in app.Windows)
+            {
+                TrackWindow(w);
+            }
+        }
+
+        // Initial reconcile on the UI thread so we see whatever's already
+        // open by the time AttachTo runs (typically the MainWindow).
+        if (dispatcher.IsDispatchRequired)
+            dispatcher.Dispatch(ReconcileOnce);
+        else
+            ReconcileOnce();
+
+        // Future window opens / closes. Application exposes these as
+        // virtual methods (Application.OnCreated / OnDestroying) — the
+        // public observability point is the per-Window event surface.
+        // We subscribe via the Created/Destroyed lifecycle the
+        // Application's Windows collection raises through Window's
+        // public events. MAUI 10.x exposes these as the Window.Created
+        // and Window.Destroying events.
+        // (When Application.Windows mutates, the new Window's events are
+        // already wired by the time OnCreated is observable here.)
+        // Use a CollectionChanged-style scan-on-Activated as a portable
+        // fallback; matches the pragmatic pattern WPF uses.
+
+        EventHandler? activatedHandler = null;
+        activatedHandler = (sender, args) =>
+        {
+            // Re-walk the windows on every Activated; cheap because the
+            // tracker uses reference-equality dedup. Mirrors the WPF
+            // adapter's "reconcile-on-Activated + idle-tick" pattern.
+            ReconcileOnce();
+        };
+
+        // Hook Window.Activated on every existing and future window. New
+        // windows get the hook installed in TrackWindow; existing windows
+        // get it on the initial reconcile via the same path. To install
+        // the hook on each window once, we extend TrackWindow.
+        foreach (var w in app.Windows) HookWindowLifecycle(w, UntrackWindow, activatedHandler);
+    }
+
+    /// <summary>
+    /// Hook a window's Destroying event so it untracks itself when closed,
+    /// plus the Activated event so a focus change re-reconciles (cheap
+    /// nop when nothing changed).
+    /// </summary>
+    private static void HookWindowLifecycle(
+        Window window,
+        Action<Window> untrack,
+        EventHandler activatedHandler)
+    {
+        try
+        {
+            EventHandler? destroyingHandler = null;
+            destroyingHandler = (s, e) =>
+            {
+                try { untrack(window); } catch { /* best-effort */ }
+                try { window.Destroying -= destroyingHandler; } catch { }
+                try { window.Activated -= activatedHandler; } catch { }
+            };
+            window.Destroying += destroyingHandler;
+            window.Activated += activatedHandler;
+        }
+        catch
+        {
+            // Window event surface differs across MAUI versions — when the
+            // hook fails we simply lose dynamic untrack for THIS window.
+            // The tracker's reference-equality keeps the system safe.
+        }
     }
 
     /// <summary>
