@@ -126,10 +126,37 @@ public sealed class ManifestGenerator : IIncrementalGenerator
                     diags.Add(orphan);
                 }
 
+                // Phase 8.1: union the per-root JSON-type sets into a single
+                // assembly-wide collection. Deduplicate by encoded property
+                // name (the same args type referenced by two [McpEvent]s on
+                // different roots produces the same JsonTypeModel; we keep
+                // the first occurrence). Order is alphabetical so the
+                // generated context is deterministic across builds and the
+                // snapshot tests stay stable.
+                var allJsonTypes = new System.Collections.Generic.SortedDictionary<string, JsonTypeModel>(System.StringComparer.Ordinal);
+                var argsRootNames = ImmutableArray.CreateBuilder<string>();
+                var argsRootSeen = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
+
+                foreach (var root in roots)
+                {
+                    foreach (var jt in root.EventArgsJsonTypes.AsEnumerable())
+                    {
+                        if (!allJsonTypes.ContainsKey(jt.PropertyName))
+                            allJsonTypes[jt.PropertyName] = jt;
+                    }
+                    foreach (var ev in root.Events.AsEnumerable())
+                    {
+                        if (ev.JsonRootContextName is { } name && argsRootSeen.Add(name))
+                            argsRootNames.Add(name);
+                    }
+                }
+
                 return (Model: new ManifestModel(
                             AssemblyName: asmName,
                             Roots: roots.ToImmutable().ToEquatableArray(),
-                            Diagnostics: diags.ToImmutable().ToEquatableArray()),
+                            Diagnostics: diags.ToImmutable().ToEquatableArray(),
+                            EventArgsJsonTypes: allJsonTypes.Values.ToImmutableArray().ToEquatableArray(),
+                            EventArgsRootTypes: argsRootNames.ToImmutable().ToEquatableArray()),
                         McpEnabled: mcpOn);
             });
 

@@ -75,6 +75,9 @@ internal static class Validator
         var observables = ImmutableArray.CreateBuilder<ObservableModel>();
         var triggerables = ImmutableArray.CreateBuilder<TriggerableModel>();
         var events = ImmutableArray.CreateBuilder<EventModel>();
+        // Phase 8.1: collector for the [McpEvent] args graph. Per-root scope —
+        // ManifestGenerator unions across roots in the combine step.
+        var jsonTypes = new JsonTypeCollector();
 
         foreach (var member in typeSymbol.GetMembers())
         {
@@ -96,7 +99,7 @@ internal static class Validator
                     break;
 
                 case IEventSymbol ev when HasAttribute(ev, McpEventAttribute):
-                    var evt = ValidateEvent(ev, diags);
+                    var evt = ValidateEvent(ev, diags, jsonTypes);
                     if (evt is not null) events.Add(evt);
                     break;
             }
@@ -139,7 +142,8 @@ internal static class Validator
             Callables: callables.ToImmutable().ToEquatableArray(),
             Observables: observables.ToImmutable().ToEquatableArray(),
             Triggerables: triggerables.ToImmutable().ToEquatableArray(),
-            Events: events.ToImmutable().ToEquatableArray());
+            Events: events.ToImmutable().ToEquatableArray(),
+            EventArgsJsonTypes: jsonTypes.AllTypes.ToEquatableArray());
     }
 
     // -------------------------------------------------------------------------
@@ -351,7 +355,8 @@ internal static class Validator
 
     private static EventModel? ValidateEvent(
         IEventSymbol ev,
-        ImmutableArray<DiagnosticInfo>.Builder diags)
+        ImmutableArray<DiagnosticInfo>.Builder diags,
+        JsonTypeCollector jsonTypes)
     {
         // ---- MAR010: must be EventHandler or EventHandler<T> ----
         // We accept the standard EventHandler (no T) AND any closed
@@ -406,6 +411,18 @@ internal static class Validator
             ? JsonSchemaWriter.WriteSchema(argsType)
             : JsonSchemaWriter.EmptyObjectSchema();
 
+        // Phase 8.1: try to register the args type into the JSON-context
+        // collector. Success means the entire transitive graph is
+        // source-gen-eligible and the emitter can wire a typed SerializeArgs
+        // lambda. Failure (any unsupported shape anywhere in the graph) leaves
+        // jsonRootName null and the descriptor falls back to the legacy
+        // reflection-based JsonSerializer.Serialize path.
+        string? jsonRootName = null;
+        if (hasArgs)
+        {
+            jsonTypes.TryAdd(argsType, out jsonRootName);
+        }
+
         return new EventModel(
             EventName: ev.Name,
             Description: description,
@@ -414,7 +431,8 @@ internal static class Validator
             ArgsJsonSchema: schema,
             MinIntervalMs: minIntervalMs,
             MaxQueueSize: maxQueueSize,
-            CoalesceWindowMs: coalesceWindowMs);
+            CoalesceWindowMs: coalesceWindowMs,
+            JsonRootContextName: jsonRootName);
     }
 
     /// <summary>

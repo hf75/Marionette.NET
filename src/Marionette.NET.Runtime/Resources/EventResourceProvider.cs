@@ -96,10 +96,12 @@ public sealed class EventResourceProvider : IAsyncDisposable
     /// the ring buffer plus the current monotonic sequence head.
     /// </summary>
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-        Justification = "Phase 4.2: forwards into SerializeArgsToNode which has the same suppression. " +
-                        "The cascading warning surfaces at MarionetteHost.RunAsync.")]
+        Justification = "Phase 8.1: prefers the descriptor's source-gen-emitted SerializeArgs lambda " +
+                        "(AOT-clean) and only falls through to the legacy reflection path for events " +
+                        "whose args type is not source-gen-eligible. Cascading warning surfaces at " +
+                        "MarionetteHost.RunAsync.")]
     [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-        Justification = "Phase 4.2: same reasoning.")]
+        Justification = "Phase 8.1: same reasoning as IL2026 above.")]
     public Task<ReadResourceResult> ReadAsync(string uri, CancellationToken ct)
     {
         if (!_entries.TryGetValue(uri, out var entry))
@@ -115,13 +117,16 @@ public sealed class EventResourceProvider : IAsyncDisposable
                 $"Event '{entry.RootName}.{entry.EventName}' is registered but has no snapshot — root may be unavailable."));
         }
 
-        // Build a compact JSON payload. Args are passed straight through STJ;
-        // serializers handle most user-defined records and primitives via the
-        // default options.
+        // Build a compact JSON payload. Phase 8.1: prefer the descriptor's
+        // typed SerializeArgs lambda (source-generator-emitted, AOT-clean);
+        // when null, fall back to the legacy reflection-based path which
+        // remains correct under JIT but may trim unsafely.
         var eventsArr = new JsonArray();
         foreach (var rec in snapshot.Events)
         {
-            var argsNode = SerializeArgsToNode(rec.Args);
+            var argsNode = entry.Descriptor.SerializeArgs is { } typed
+                ? typed(rec.Args)
+                : SerializeArgsToNode(rec.Args);
             eventsArr.Add(new JsonObject
             {
                 ["sequence"] = rec.Sequence,

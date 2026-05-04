@@ -27,10 +27,31 @@ namespace Marionette.SourceGenerator.Model;
 /// Top-level pipeline value: one emit unit per user assembly. Carries every
 /// validated root and the diagnostics produced while validating them.
 /// </summary>
+/// <param name="AssemblyName">The user assembly's logical name.</param>
+/// <param name="Roots">Validated [McpRoot]-decorated classes.</param>
+/// <param name="Diagnostics">Diagnostics produced during validation.</param>
+/// <param name="EventArgsJsonTypes">
+/// Phase 8.1: types that need a typed <c>JsonTypeInfo&lt;T&gt;</c> in the
+/// generated <c>MarionetteEventArgsJsonContext</c>. Discovered by walking
+/// every [McpEvent] args type's public properties recursively. Empty when
+/// no [McpEvent] declares an args type, or when the type graph contains
+/// something the slice does not (yet) support — in which case the runtime
+/// keeps the existing reflection-based serialisation path with the
+/// <c>[RequiresUnreferencedCode]</c> annotation honoured.
+/// </param>
+/// <param name="EventArgsRootTypes">
+/// Phase 8.1: the subset of [McpEvent] args types that are top-level
+/// "root" types of the JSON graph — i.e. the descriptor's <c>SerializeArgs</c>
+/// lambda references their <see cref="JsonTypeModel.PropertyName"/> directly.
+/// Stored separately so the emitter can quickly decide whether to wire a
+/// typed <c>SerializeArgs</c> lambda or leave it default-null.
+/// </param>
 internal sealed record ManifestModel(
     string AssemblyName,
     EquatableArray<RootModel> Roots,
-    EquatableArray<DiagnosticInfo> Diagnostics);
+    EquatableArray<DiagnosticInfo> Diagnostics,
+    EquatableArray<JsonTypeModel> EventArgsJsonTypes = default,
+    EquatableArray<string> EventArgsRootTypes = default);
 
 /// <summary>
 /// One [McpRoot]-decorated class plus its callable / observable / triggerable
@@ -44,7 +65,12 @@ internal sealed record RootModel(
     EquatableArray<CallableModel> Callables,
     EquatableArray<ObservableModel> Observables,
     EquatableArray<TriggerableModel> Triggerables,
-    EquatableArray<EventModel> Events);
+    EquatableArray<EventModel> Events,
+    // Phase 8.1: closed transitive set of types that need JsonTypeInfo for
+    // [McpEvent] args serialisation on this root. Empty when no [McpEvent]
+    // declares an args type or every encountered graph contained an
+    // unsupported shape (caller falls back to runtime serialisation).
+    EquatableArray<JsonTypeModel> EventArgsJsonTypes = default);
 
 /// <summary>
 /// One [McpCallable] method. The generator emits an Invoke lambda that boxes
@@ -94,6 +120,83 @@ internal sealed record TriggerableModel(
     string ControlTypeFullName);
 
 /// <summary>
+/// Phase 8.1: classifies how a <see cref="JsonTypeModel"/> is materialised in
+/// the generated <c>JsonSerializerContext</c>:
+/// <list type="bullet">
+///   <item><description><see cref="Object"/> — public class/record with public
+///     get-only or init properties; emitted via
+///     <c>JsonMetadataServices.CreateObjectInfo&lt;T&gt;</c>.</description></item>
+///   <item><description><see cref="Primitive"/> — string / int / bool / DateTime /
+///     etc. emitted via <c>JsonMetadataServices.CreateValueInfo&lt;T&gt;</c>
+///     with the matching built-in converter.</description></item>
+///   <item><description><see cref="Nullable"/> — <c>Nullable&lt;TInner&gt;</c>;
+///     emitted via <c>JsonMetadataServices.CreateNullableInfo&lt;TInner&gt;</c>.
+///     The inner type is stored separately under
+///     <see cref="JsonTypeModel.UnderlyingTypeFullName"/>.</description></item>
+/// </list>
+/// </summary>
+internal enum JsonTypeKind
+{
+    Object,
+    Primitive,
+    Nullable,
+}
+
+/// <summary>
+/// Phase 8.1: one type that needs a typed <c>JsonTypeInfo&lt;T&gt;</c> in the
+/// generated <c>JsonSerializerContext</c>. Also carries the property metadata
+/// needed by the emitter to construct <c>JsonObjectInfoValues&lt;T&gt;</c> /
+/// <c>JsonPropertyInfoValues&lt;TProperty&gt;</c> at compile time — the runtime
+/// path is fully reflection-free.
+/// </summary>
+/// <param name="TypeFullName">Fully-qualified CLR type name (with <c>global::</c>).</param>
+/// <param name="PropertyName">
+/// Encoded JSON-context property identifier (<c>'.' </c>replaced with
+/// <c>'_'</c>). E.g. <c>Demo.AppointmentAddedEventArgs</c> becomes
+/// <c>Demo_AppointmentAddedEventArgs</c>.
+/// </param>
+/// <param name="Kind">Object / Primitive / Nullable shape selector.</param>
+/// <param name="PrimitiveConverter">
+/// Non-null for <see cref="JsonTypeKind.Primitive"/>: the
+/// <c>JsonMetadataServices.&lt;X&gt;Converter</c> identifier name (e.g.
+/// <c>StringConverter</c>, <c>Int32Converter</c>, <c>DateTimeConverter</c>).
+/// </param>
+/// <param name="UnderlyingTypeFullName">
+/// Non-null for <see cref="JsonTypeKind.Nullable"/>: the wrapped value-type
+/// full name (e.g. <c>global::System.DateTime</c> for <c>DateTime?</c>).
+/// </param>
+/// <param name="Properties">
+/// For <see cref="JsonTypeKind.Object"/>: the type's public, JSON-relevant
+/// properties in declaration order. Empty for primitive/nullable kinds.
+/// </param>
+internal sealed record JsonTypeModel(
+    string TypeFullName,
+    string PropertyName,
+    JsonTypeKind Kind,
+    string? PrimitiveConverter,
+    string? UnderlyingTypeFullName,
+    EquatableArray<JsonPropertyModel> Properties);
+
+/// <summary>
+/// Phase 8.1: a single property on a Json-context-tracked object type. The
+/// emitter renders a typed getter lambda <c>static (obj) => ((T)obj).Name</c>
+/// plus a reference to the property type's own <c>JsonTypeInfo</c>.
+/// </summary>
+/// <param name="Name">Property name as declared (PascalCase).</param>
+/// <param name="DeclaringTypeFullName">The owning type's full name.</param>
+/// <param name="PropertyTypeFullName">The property's type full name.</param>
+/// <param name="PropertyTypeContextName">
+/// The encoded <c>JsonTypeInfo</c> property name on the generated context
+/// (e.g. <c>System_String</c>, <c>System_DateTime</c>). The emitter uses this
+/// to wire the <c>PropertyTypeInfo</c> field of <c>JsonPropertyInfoValues</c>.
+/// </param>
+internal sealed record JsonPropertyModel(
+    string Name,
+    string DeclaringTypeFullName,
+    string PropertyTypeFullName,
+    string PropertyTypeContextName);
+
+/// <summary>
 /// One [McpEvent] event (Phase 1.6). Carries the delegate shape information
 /// (HasArgsType + ArgsTypeFullName) so the emitter can write either an
 /// <c>EventHandler</c> or <c>EventHandler&lt;T&gt;</c> typed bridge, plus the
@@ -107,7 +210,15 @@ internal sealed record EventModel(
     string ArgsJsonSchema,                 // single-line JSON, deterministic
     int MinIntervalMs,
     int MaxQueueSize,
-    int CoalesceWindowMs);
+    int CoalesceWindowMs,
+    // Phase 8.1: encoded property name on MarionetteEventArgsJsonContext. Set
+    // when the args type's transitive graph is fully source-gen-eligible and
+    // the JsonTypeCollector successfully registered it; the emitter then
+    // wires a typed SerializeArgs lambda referencing
+    // MarionetteEventArgsJsonContext.Default.<JsonRootContextName>. Null when
+    // the args type is unsupported (System.EventArgs, generic, abstract, …)
+    // and the runtime falls back to the legacy reflection-based path.
+    string? JsonRootContextName = null);
 
 /// <summary>
 /// Carries enough information to reconstruct a Roslyn Diagnostic at the

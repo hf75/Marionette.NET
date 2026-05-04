@@ -80,6 +80,12 @@ public static class GeneratedManifest
                         global::System.EventHandler<global::Demo.ItemAddedEventArgs> handler = (s, e) => callback(e);
                         typed.ItemAdded += handler;
                         return new global::Marionette.NET.Runtime.Internal.HandlerDisposable(() => typed.ItemAdded -= handler);
+                    },
+                    SerializeArgs: static (value) =>
+                    {
+                        if (value is null) return null;
+                        var __json = global::System.Text.Json.JsonSerializer.Serialize<global::Demo.ItemAddedEventArgs>((global::Demo.ItemAddedEventArgs)value, global::Marionette.Generated.MarionetteEventArgsJsonContext.Default.Demo_ItemAddedEventArgs);
+                        return global::System.Text.Json.Nodes.JsonNode.Parse(__json);
                     }),
                 new EventDescriptor(
                     Name: "Refreshed",
@@ -99,4 +105,118 @@ public static class GeneratedManifest
             }
         ),
     };
+}
+
+/// <summary>
+/// Phase 8.1: AOT-clean JSON serialisation context for [McpEvent] args.
+/// All <c>JsonTypeInfo&lt;T&gt;</c> properties are built via
+/// <c>JsonMetadataServices</c> factories at compile time — no runtime
+/// reflection. Property names encode the originating CLR full name with
+/// '.' replaced by '_' so that the registered set is collision-free.
+/// </summary>
+internal sealed class MarionetteEventArgsJsonContext : global::System.Text.Json.Serialization.JsonSerializerContext
+{
+    private static MarionetteEventArgsJsonContext? _default;
+    public static MarionetteEventArgsJsonContext Default
+        => _default ??= new MarionetteEventArgsJsonContext(new global::System.Text.Json.JsonSerializerOptions());
+
+    public MarionetteEventArgsJsonContext(global::System.Text.Json.JsonSerializerOptions options)
+        : base(options) { }
+
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::Demo.ItemAddedEventArgs>? _Demo_ItemAddedEventArgs;
+    public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::Demo.ItemAddedEventArgs> Demo_ItemAddedEventArgs => _Demo_ItemAddedEventArgs ??= 
+        Create_Demo_ItemAddedEventArgs();
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::Demo.ItemAddedEventArgs> Create_Demo_ItemAddedEventArgs()
+    {
+        var info = new global::System.Text.Json.Serialization.Metadata.JsonObjectInfoValues<global::Demo.ItemAddedEventArgs>
+        {
+            ObjectCreator = null,
+            ObjectWithParameterizedConstructorCreator = null,
+            ConstructorParameterMetadataInitializer = null,
+            SerializeHandler = null,
+            NumberHandling = default,
+            PropertyMetadataInitializer = (_) => new global::System.Text.Json.Serialization.Metadata.JsonPropertyInfo[]
+            {
+                global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreatePropertyInfo<global::System.String>(
+                    Options,
+                    new global::System.Text.Json.Serialization.Metadata.JsonPropertyInfoValues<global::System.String>
+                    {
+                        IsProperty = true,
+                        IsPublic = true,
+                        IsVirtual = false,
+                        DeclaringType = typeof(global::Demo.ItemAddedEventArgs),
+                        Converter = null,
+                        Getter = static (obj) => ((global::Demo.ItemAddedEventArgs)obj).ItemName,
+                        Setter = null,
+                        IgnoreCondition = null,
+                        HasJsonInclude = false,
+                        IsExtensionData = false,
+                        NumberHandling = null,
+                        PropertyName = "ItemName",
+                        JsonPropertyName = null,
+                    }),
+                global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreatePropertyInfo<global::System.Int32>(
+                    Options,
+                    new global::System.Text.Json.Serialization.Metadata.JsonPropertyInfoValues<global::System.Int32>
+                    {
+                        IsProperty = true,
+                        IsPublic = true,
+                        IsVirtual = false,
+                        DeclaringType = typeof(global::Demo.ItemAddedEventArgs),
+                        Converter = null,
+                        Getter = static (obj) => ((global::Demo.ItemAddedEventArgs)obj).Count,
+                        Setter = null,
+                        IgnoreCondition = null,
+                        HasJsonInclude = false,
+                        IsExtensionData = false,
+                        NumberHandling = null,
+                        PropertyName = "Count",
+                        JsonPropertyName = null,
+                    }),
+                global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreatePropertyInfo<global::System.DateTime>(
+                    Options,
+                    new global::System.Text.Json.Serialization.Metadata.JsonPropertyInfoValues<global::System.DateTime>
+                    {
+                        IsProperty = true,
+                        IsPublic = true,
+                        IsVirtual = false,
+                        DeclaringType = typeof(global::Demo.ItemAddedEventArgs),
+                        Converter = null,
+                        Getter = static (obj) => ((global::Demo.ItemAddedEventArgs)obj).AddedAt,
+                        Setter = null,
+                        IgnoreCondition = null,
+                        HasJsonInclude = false,
+                        IsExtensionData = false,
+                        NumberHandling = null,
+                        PropertyName = "AddedAt",
+                        JsonPropertyName = null,
+                    }),
+            },
+        };
+        return global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateObjectInfo<global::Demo.ItemAddedEventArgs>(Options, info);
+    }
+
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.DateTime>? _System_DateTime;
+    public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.DateTime> System_DateTime => _System_DateTime ??= 
+        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::System.DateTime>(Options, global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.DateTimeConverter);
+
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Int32>? _System_Int32;
+    public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Int32> System_Int32 => _System_Int32 ??= 
+        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::System.Int32>(Options, global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.Int32Converter);
+
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.String>? _System_String;
+    public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.String> System_String => _System_String ??= 
+        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::System.String>(Options, global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.StringConverter);
+
+
+    protected override global::System.Text.Json.JsonSerializerOptions? GeneratedSerializerOptions => Options;
+
+    public override global::System.Text.Json.Serialization.Metadata.JsonTypeInfo? GetTypeInfo(global::System.Type type)
+    {
+        if (type == typeof(global::Demo.ItemAddedEventArgs)) return Demo_ItemAddedEventArgs;
+        if (type == typeof(global::System.DateTime)) return System_DateTime;
+        if (type == typeof(global::System.Int32)) return System_Int32;
+        if (type == typeof(global::System.String)) return System_String;
+        return null;
+    }
 }

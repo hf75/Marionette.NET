@@ -36,6 +36,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Nodes;
 
 namespace Marionette.Runtime.Manifest;
 
@@ -187,6 +188,18 @@ public sealed record TriggerableDescriptor(
 /// argument). Returns an <see cref="IDisposable"/> the runtime disposes at
 /// shutdown to detach the handler.
 /// </param>
+/// <param name="SerializeArgs">
+/// Phase 8.1: optional source-generator-emitted typed JSON serialiser for the
+/// event's args. Receives the boxed args (or <see langword="null"/>) and
+/// returns a <see cref="JsonNode"/> tree the resource provider stitches into
+/// the outer payload, matching the shape <c>EventResourceProvider</c>'s legacy
+/// reflection-based path produces. When non-null, the runtime uses this typed
+/// lambda instead of <c>JsonSerializer.Serialize(args, args.GetType(),
+/// options)</c> — closing the <c>IL2026</c>/<c>IL3050</c> warnings on the
+/// args path. Bound at compile time to
+/// <c>MarionetteEventArgsJsonContext.Default.&lt;TypeName&gt;</c> emitted by
+/// the source generator; AOT-clean.
+/// </param>
 public sealed record EventDescriptor(
     string Name,
     string Description,
@@ -195,4 +208,5 @@ public sealed record EventDescriptor(
     int MinIntervalMs,
     int MaxQueueSize,
     int CoalesceWindowMs,
-    Func<object, Action<object?>, IDisposable> Subscribe);
+    Func<object, Action<object?>, IDisposable> Subscribe,
+    Func<object?, JsonNode?>? SerializeArgs = null);

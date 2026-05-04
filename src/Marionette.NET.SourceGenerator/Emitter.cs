@@ -56,6 +56,18 @@ internal static class Emitter
 
         EmitGeneratedManifestClass(sb, model);
 
+        // Phase 8.1: emit a hand-written JsonSerializerContext for [McpEvent]
+        // args types. Skipped when no event has a source-gen-eligible args
+        // type — the runtime then falls back to its legacy reflection-based
+        // serialisation path (which carries the [RequiresUnreferencedCode]
+        // annotation honoured at the MarionetteHost.RunAsync boundary).
+        var jsonTypes = model.EventArgsJsonTypes.AsEnumerable()
+            .ToList();
+        if (jsonTypes.Count > 0)
+        {
+            JsonContextEmitter.Emit(sb, jsonTypes);
+        }
+
         return sb.ToString();
     }
 
@@ -524,7 +536,31 @@ internal static class Emitter
             sb.AppendLine(" -= handler);");
         }
 
-        sb.AppendLine("                    }),");
+        // Phase 8.1: emit a typed SerializeArgs lambda when the args type's
+        // transitive graph is fully source-gen-eligible (the validator's
+        // JsonTypeCollector returned a non-null context property name).
+        // Otherwise the descriptor's SerializeArgs stays default-null and the
+        // runtime falls back to the legacy reflection-based path.
+        if (ev.JsonRootContextName is { } jsonRoot)
+        {
+            sb.AppendLine("                    },");
+            sb.AppendLine("                    SerializeArgs: static (value) =>");
+            sb.AppendLine("                    {");
+            sb.AppendLine("                        if (value is null) return null;");
+            sb.Append("                        var __json = global::System.Text.Json.JsonSerializer.Serialize<");
+            sb.Append(ev.ArgsTypeFullName);
+            sb.Append(">((");
+            sb.Append(ev.ArgsTypeFullName);
+            sb.Append(")value, global::Marionette.Generated.MarionetteEventArgsJsonContext.Default.");
+            sb.Append(jsonRoot);
+            sb.AppendLine(");");
+            sb.AppendLine("                        return global::System.Text.Json.Nodes.JsonNode.Parse(__json);");
+            sb.AppendLine("                    }),");
+        }
+        else
+        {
+            sb.AppendLine("                    }),");
+        }
     }
 
     // -------------------------------------------------------------------------
