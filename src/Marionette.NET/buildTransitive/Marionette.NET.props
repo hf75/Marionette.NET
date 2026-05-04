@@ -1,0 +1,9 @@
+<Project>
+
+  <PropertyGroup>
+    <MarionetteNETPackageVersion Condition="'$(MarionetteNETPackageVersion)'==''">0.1.0-preview.1</MarionetteNETPackageVersion>
+    <EnableMcpAutomation Condition="'$(EnableMcpAutomation)'=='' AND '$(Configuration)'=='Debug'">true</EnableMcpAutomation>
+    <EnableMcpAutomation Condition="'$(EnableMcpAutomation)'==''">false</EnableMcpAutomation>
+  </PropertyGroup>
+
+</Project>

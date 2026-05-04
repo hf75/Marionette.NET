@@ -1,0 +1,11 @@
+<Project>
+
+  <PropertyGroup Condition="'$(EnableMcpAutomation)'=='true'">
+    <DefineConstants>$(DefineConstants);MCP_ENABLED</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(UseWPF)'=='true' and '$(PublishAot)'=='true'">
+    <_SuppressWpfTrimError>true</_SuppressWpfTrimError>
+  </PropertyGroup>
+
+</Project>

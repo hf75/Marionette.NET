@@ -12,11 +12,23 @@
     <Authors>Marionette.NET contributors</Authors>
     <Copyright>Copyright (c) 2026 Marionette.NET contributors</Copyright>
     <NeutralLanguage>en-US</NeutralLanguage>
-    <!--
-      During Spike A nothing ships, so we leave version bookkeeping minimal.
-      Phase 1 will introduce versioning + central package management.
-    -->
-    <Version>0.0.1-spike</Version>
+    <Version>0.1.0-preview.1</Version>
+    <PackageVersion>$(Version)</PackageVersion>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>marionette;mcp;desktop;automation;testing;wpf;avalonia;winui;maui</PackageTags>
+    <PackageProjectUrl>https://github.com/marionette-dotnet/marionette.net</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/marionette-dotnet/marionette.net</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReleaseNotes>Local v0.1 preview: source generator, runtime, WPF/Avalonia/WinUI/MAUI adapters, testing toolkit, skill-pack v2, and local dogfooding assets.</PackageReleaseNotes>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)'!='false'">
+    <None Include="$(MSBuildThisFileDirectory)README.md"
+          Pack="true"
+          PackagePath="/"
+          Link="README.md"
+          Visible="false" />
+  </ItemGroup>
 
 </Project>

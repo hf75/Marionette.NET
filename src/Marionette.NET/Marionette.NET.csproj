@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Marionette.NET</PackageId>
+    <AssemblyName>Marionette.NET</AssemblyName>
+    <RootNamespace>Marionette</RootNamespace>
+    <Description>Meta-package for Marionette.NET. Adds the attribute surface, source generator, MSBuild defaults, skill-pack assets, and documentation.</Description>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />
+    <ProjectReference Include="..\Marionette.NET.Runtime\Marionette.NET.Runtime.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="buildTransitive\Marionette.NET.props"
+          Pack="true"
+          PackagePath="buildTransitive\Marionette.NET.props"
+          Visible="false" />
+    <None Include="buildTransitive\Marionette.NET.targets"
+          Pack="true"
+          PackagePath="buildTransitive\Marionette.NET.targets"
+          Visible="false" />
+    <None Include="buildTransitive\Marionette.NET.props"
+          Pack="true"
+          PackagePath="build\Marionette.NET.props"
+          Visible="false" />
+    <None Include="buildTransitive\Marionette.NET.targets"
+          Pack="true"
+          PackagePath="build\Marionette.NET.targets"
+          Visible="false" />
+    <None Include="..\Marionette.NET.SourceGenerator\bin\$(Configuration)\netstandard2.0\Marionette.NET.SourceGenerator.dll"
+          Pack="true"
+          PackagePath="analyzers\dotnet\cs\Marionette.NET.SourceGenerator.dll"
+          Visible="false" />
+    <None Include="..\..\skill-pack\**\*"
+          Pack="true"
+          PackagePath="contentFiles\any\any\skill-pack\"
+          Visible="false" />
+    <None Include="..\..\docs\**\*.md"
+          Pack="true"
+          PackagePath="contentFiles\any\any\docs\"
+          Visible="false" />
+  </ItemGroup>
+
+  <Target Name="BuildSourceGeneratorForPack" BeforeTargets="Pack" Condition="'$(NoBuild)'!='true'">
+    <MSBuild Projects="..\Marionette.NET.SourceGenerator\Marionette.NET.SourceGenerator.csproj"
+             Targets="Build"
+             Properties="Configuration=$(Configuration)" />
+  </Target>
+
+</Project>
