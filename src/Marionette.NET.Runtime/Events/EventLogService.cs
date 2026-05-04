@@ -28,6 +28,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
+using Marionette.Runtime.Adapters;
 using Marionette.Runtime.Manifest;
 
 using Microsoft.Extensions.Logging;
@@ -43,6 +44,7 @@ namespace Marionette.Runtime.Events;
 public sealed class EventLogService : IDisposable
 {
     private readonly ManifestRegistry _registry;
+    private readonly IUiAutomationAdapter _adapter;
     private readonly ILogger<EventLogService> _log;
     private readonly Dictionary<string, EventBucket> _buckets = new(StringComparer.Ordinal);
     private readonly List<IDisposable> _handlers = new();
@@ -50,8 +52,17 @@ public sealed class EventLogService : IDisposable
     private bool _disposed;
 
     public EventLogService(ManifestRegistry registry, ILogger<EventLogService> log)
+        : this(registry, new NoOpAdapter(), log)
+    {
+    }
+
+    public EventLogService(
+        ManifestRegistry registry,
+        IUiAutomationAdapter adapter,
+        ILogger<EventLogService> log)
     {
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+        _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         _log = log ?? throw new ArgumentNullException(nameof(log));
     }
 
@@ -66,23 +77,28 @@ public sealed class EventLogService : IDisposable
 
         foreach (var root in _registry.Roots)
         {
-            if (root.Instance is null) continue;
+            var instances = ResolveRootInstances(root);
+            if (instances.Count == 0) continue;
+
             foreach (var ev in root.Descriptor.Events)
             {
                 var key = MakeKey(root.Descriptor.Name, ev.Name);
                 var bucket = new EventBucket(root.Descriptor.Name, ev.Name, ev);
                 _buckets[key] = bucket;
 
-                try
+                foreach (var instance in instances)
                 {
-                    var sub = ev.Subscribe(root.Instance, args => OnFired(bucket, args));
-                    _handlers.Add(sub);
-                }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex,
-                        "EventLogService: Subscribe lambda for '{Root}.{Event}' threw at startup.",
-                        root.Descriptor.Name, ev.Name);
+                    try
+                    {
+                        var sub = ev.Subscribe(instance, args => OnFired(bucket, args));
+                        _handlers.Add(sub);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogWarning(ex,
+                            "EventLogService: Subscribe lambda for '{Root}.{Event}' threw at startup.",
+                            root.Descriptor.Name, ev.Name);
+                    }
                 }
             }
         }
@@ -149,6 +165,38 @@ public sealed class EventLogService : IDisposable
     private void OnFired(EventBucket bucket, object? args)
     {
         bucket.Append(args);
+    }
+
+    private List<object> ResolveRootInstances(RegisteredRoot root)
+    {
+        var result = new List<object>();
+        var rootName = root.Descriptor.Name;
+
+        void AddDistinct(object? instance)
+        {
+            if (instance is null) return;
+            foreach (var existing in result)
+            {
+                if (ReferenceEquals(existing, instance)) return;
+            }
+            result.Add(instance);
+        }
+
+        try
+        {
+            foreach (var windowId in _adapter.GetWindowIds(rootName))
+            {
+                AddDistinct(_adapter.GetRootInstance(rootName, windowId));
+            }
+            AddDistinct(_adapter.GetRootInstance(rootName, windowId: null));
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "EventLogService: adapter instance lookup failed for root '{Root}'.", rootName);
+        }
+
+        AddDistinct(root.Instance);
+        return result;
     }
 
     private static string MakeKey(string root, string ev) => root + "/" + ev;

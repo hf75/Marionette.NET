@@ -47,7 +47,8 @@ public static class GeneratedManifest
                     Invoke: static (instance, args) =>
                     {
                         var typed = (global::Demo.EventRoot)instance;
-                        var name = (string)args["name"]!;
+                        var __raw_name = args["name"];
+                        string name = __raw_name is global::System.Text.Json.JsonElement __json_name ? global::System.Text.Json.JsonSerializer.Deserialize<string>(__json_name.GetRawText())! : (string)__raw_name!;
                         typed.AddItem(name);
                         return null;
                     }),

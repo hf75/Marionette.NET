@@ -49,9 +49,19 @@ public static class GeneratedManifest
                     Invoke: static (instance, args) =>
                     {
                         var typed = (global::Demo.ParamsRoot)instance;
-                        var name = (string)args["name"]!;
-                        var count = (int)args["count"]!;
-                        var flag = args.TryGetValue("flag", out var __raw_flag) ? (bool)__raw_flag! : (bool)(true);
+                        var __raw_name = args["name"];
+                        string name = __raw_name is global::System.Text.Json.JsonElement __json_name ? global::System.Text.Json.JsonSerializer.Deserialize<string>(__json_name.GetRawText())! : (string)__raw_name!;
+                        var __raw_count = args["count"];
+                        int count = __raw_count is global::System.Text.Json.JsonElement __json_count ? global::System.Text.Json.JsonSerializer.Deserialize<int>(__json_count.GetRawText())! : (int)__raw_count!;
+                        bool flag;
+                        if (args.TryGetValue("flag", out var __raw_flag))
+                        {
+                            flag = __raw_flag is global::System.Text.Json.JsonElement __json_flag ? global::System.Text.Json.JsonSerializer.Deserialize<bool>(__json_flag.GetRawText())! : (bool)__raw_flag!;
+                        }
+                        else
+                        {
+                            flag = (bool)(true);
+                        }
                         return typed.Combo(name, count, flag);
                     }),
                 new CallableDescriptor(
@@ -69,8 +79,10 @@ public static class GeneratedManifest
                     Invoke: static (instance, args) =>
                     {
                         var typed = (global::Demo.ParamsRoot)instance;
-                        var level = (global::Demo.Severity)args["level"]!;
-                        var tags = (string[])args["tags"]!;
+                        var __raw_level = args["level"];
+                        global::Demo.Severity level = __raw_level is global::System.Text.Json.JsonElement __json_level ? (global::Demo.Severity)global::System.Enum.Parse(typeof(global::Demo.Severity), __json_level.ValueKind == global::System.Text.Json.JsonValueKind.String ? __json_level.GetString()! : __json_level.GetRawText()) : (global::Demo.Severity)__raw_level!;
+                        var __raw_tags = args["tags"];
+                        string[] tags = __raw_tags is global::System.Text.Json.JsonElement __json_tags ? global::System.Text.Json.JsonSerializer.Deserialize<string[]>(__json_tags.GetRawText())! : (string[])__raw_tags!;
                         typed.Tagged(level, tags);
                         return null;
                     }),

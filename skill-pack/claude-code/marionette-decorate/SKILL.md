@@ -1,6 +1,6 @@
 ---
 name: marionette-decorate
-description: Add Marionette.NET MCP-control attributes to an existing .NET desktop application's source code. Use this skill whenever the user asks to "make this Marionette-controllable", "add MCP attributes", "decorate this for Claude", "expose this app to Claude", "wire up Marionette in my app", or otherwise wants their existing C# WPF / Avalonia / WinUI / MAUI / Uno project to become driveable from an LLM. The skill identifies likely root classes, suggests [McpCallable] / [McpObservable] / [McpTriggerable] / [McpEvent] placements, edits the source files, and verifies the project still builds.
+description: Add Marionette.NET MCP-control attributes to an existing .NET desktop application's source code. Use this skill whenever the user asks "/decorate-app", "make this Marionette-controllable", "add MCP attributes", "decorate this for Claude", "expose this app to Claude", "wire up Marionette in my app", or otherwise wants their existing C# WPF / Avalonia / WinUI / MAUI / Uno project to become driveable from an LLM. The skill identifies likely root classes, suggests [McpCallable] / [McpObservable] / [McpTriggerable] / [McpEvent] placements, edits the source files, and verifies the project still builds.
 ---
 
 # Marionette: Decorate an Existing App
@@ -12,6 +12,7 @@ The user has an existing C# desktop app and wants to make it MCP-controllable. Y
 Use this skill when the user says any of:
 
 - "make this Marionette-controllable", "add MCP attributes", "decorate this for Claude"
+- `/decorate-app`
 - "expose this app to Claude", "wire up Marionette", "instrument this app"
 - "add Marionette to my [WPF/Avalonia/WinUI/MAUI/Uno] app"
 - After they've installed the `Marionette.NET` NuGet (Phase 7) or referenced the abstraction project locally and ask "now what?"
@@ -189,7 +190,7 @@ Then call `OnPropertyChanged(nameof(Count))` from every method that mutates the 
 
 ### 7. Verify the project still builds
 
-Run `dotnet build` against the project. The source generator emits diagnostics with the `MAR001`–`MAR012` prefix:
+Run `dotnet build` against the project. The source generator emits diagnostics with the `MAR001`–`MAR013` prefix:
 
 | ID | Severity | Meaning | Common fix |
 |---|---|---|---|
@@ -205,6 +206,7 @@ Run `dotnet build` against the project. The source generator emits diagnostics w
 | MAR010 | Error | `[McpEvent]` event delegate is not `EventHandler` or `EventHandler<T>` | Change delegate type or remove attribute |
 | MAR011 | Warning | `[McpEvent]` event's class lacks `[McpRoot]` | Add `[McpRoot]` to the class |
 | MAR012 | Warning | `[McpEvent]` throttling parameter out of range | Use `MaxQueueSize > 0` and `CoalesceWindowMs >= 0` |
+| MAR013 | Info | Public method on `[McpRoot]` could be `[McpCallable]` | Add `[McpCallable]` only if it is user-facing |
 
 Surface every diagnostic to the user. Don't silently strip attributes to make the build green.
 

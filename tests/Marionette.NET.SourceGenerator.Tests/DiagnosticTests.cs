@@ -76,6 +76,48 @@ public class DiagnosticTests
     }
 
     [Fact]
+    public void MAR014_GenericCallableMethod_IsRejected()
+    {
+        var source = """
+            using Marionette;
+            namespace Demo;
+
+            [McpRoot]
+            public class Root
+            {
+                [McpCallable("Echo")]
+                public T Echo<T>(T value) => value;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source);
+
+        Assert.Contains(result.GeneratorDiagnostics,
+            d => d.Id == "MAR014" && d.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void MAR014_ByRefCallableParameter_IsRejected()
+    {
+        var source = """
+            using Marionette;
+            namespace Demo;
+
+            [McpRoot]
+            public class Root
+            {
+                [McpCallable("Mutate")]
+                public void Mutate(ref int value) => value++;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source);
+
+        Assert.Contains(result.GeneratorDiagnostics,
+            d => d.Id == "MAR014" && d.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Fact]
     public void MAR003_CallableOnUnRootedClass_EmitsWarning()
     {
         var source = """
@@ -257,6 +299,30 @@ public class DiagnosticTests
             string.Join("\n", result.GeneratorDiagnostics.Select(d => $"{d.Id}: {d.GetMessage()}")));
         Assert.False(result.HasCompilationErrors,
             string.Join("\n", result.CompilationDiagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => $"{d.Id}: {d.GetMessage()}")));
+    }
+
+    [Fact]
+    public void MAR013_PublicRootMethodWithoutMcpCallable_EmitsInfo()
+    {
+        var source = """
+            using Marionette;
+            namespace Demo;
+
+            [McpRoot]
+            public class Root
+            {
+                public void ResetAll()
+                {
+                }
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source);
+
+        Assert.Contains(result.GeneratorDiagnostics,
+            d => d.Id == "MAR013" && d.Severity == DiagnosticSeverity.Info);
+        Assert.False(result.HasGeneratorErrors,
+            string.Join("\n", result.GeneratorDiagnostics.Select(d => $"{d.Id}: {d.GetMessage()}")));
     }
 
     // -------------------------------------------------------------------------

@@ -59,6 +59,7 @@ internal static class GeneratorRunner
             MetadataReference.CreateFromFile(typeof(System.Console).Assembly.Location),
             MetadataReference.CreateFromFile(typeof(System.Linq.Enumerable).Assembly.Location),
             MetadataReference.CreateFromFile(typeof(System.Threading.Tasks.Task).Assembly.Location),
+            MetadataReference.CreateFromFile(typeof(System.Text.Json.JsonSerializer).Assembly.Location),
             MetadataReference.CreateFromFile(typeof(System.ComponentModel.Component).Assembly.Location),
             MetadataReference.CreateFromFile(typeof(System.Collections.Generic.IReadOnlyDictionary<,>).Assembly.Location),
             // Marionette attributes.

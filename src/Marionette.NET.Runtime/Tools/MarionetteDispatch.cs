@@ -207,6 +207,8 @@ internal static class MarionetteDispatch
         Justification = "Phase 4.2: same reasoning — JsonElement deserialisation requires no dynamic code.")]
     internal static object? ConvertJsonToClr(JsonElement el, string clrTypeName, string paramName)
     {
+        if (el.ValueKind == JsonValueKind.Null) return null;
+
         var name = clrTypeName;
         if (name.EndsWith("?", StringComparison.Ordinal)) name = name[..^1];
         if (name.StartsWith("global::", StringComparison.Ordinal)) name = name["global::".Length..];
@@ -225,6 +227,12 @@ internal static class MarionetteDispatch
             case "byte":
             case "System.Byte":
                 return (byte)el.GetInt32();
+            case "sbyte":
+            case "System.SByte":
+                return (sbyte)el.GetInt32();
+            case "ushort":
+            case "System.UInt16":
+                return (ushort)el.GetInt32();
             case "uint":
             case "System.UInt32":
                 return el.GetUInt32();
@@ -252,10 +260,16 @@ internal static class MarionetteDispatch
                 return string.IsNullOrEmpty(s) ? '\0' : s![0];
             case "System.DateTime":
                 return el.GetDateTime();
+            case "System.DateTimeOffset":
+                return el.GetDateTimeOffset();
             case "System.Guid":
                 return el.GetGuid();
+            case "System.TimeSpan":
+                return TimeSpan.Parse(el.GetString() ?? string.Empty, System.Globalization.CultureInfo.InvariantCulture);
+            case "System.Text.Json.JsonElement":
+                return el.Clone();
             default:
-                return JsonSerializer.Deserialize<JsonElement>(el.GetRawText());
+                return el.Clone();
         }
     }
 

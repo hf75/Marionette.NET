@@ -71,7 +71,8 @@ internal sealed record ParameterModel(
     string Name,
     string TypeFullName,
     bool IsRequired,
-    string? DefaultLiteral);   // e.g. "0", "\"foo\"", "null", "1.5"
+    string? DefaultLiteral,    // e.g. "0", "\"foo\"", "null", "1.5"
+    string? EnumTypeFullName); // non-null for enum / Nullable<enum> parameters
 
 /// <summary>
 /// One [McpObservable] property. The generator emits a typed getter lambda.

@@ -295,38 +295,98 @@ internal static class Emitter
     private static void EmitParameterUnboxing(StringBuilder sb, ParameterModel p)
     {
         var ident = SafeIdentifier(p.Name);
+        var tempSuffix = TempIdentifierSuffix(ident);
         var type = p.TypeFullName;
+        var rawIdent = "__raw_" + tempSuffix;
+        var jsonIdent = "__json_" + tempSuffix;
 
         if (p.IsRequired)
         {
-            // Required: must be present.
+            // Required: must be present. Runtime-marshalled primitives arrive
+            // already typed; complex values arrive as JsonElement and are
+            // deserialized here where the exact generic CLR type is known.
             sb.Append("                        var ");
-            sb.Append(ident);
-            sb.Append(" = (");
-            sb.Append(type);
-            sb.Append(")args[\"");
+            sb.Append(rawIdent);
+            sb.Append(" = args[\"");
             sb.Append(EscapeString(p.Name));
-            sb.AppendLine("\"]!;");
+            sb.AppendLine("\"];");
+            sb.Append("                        ");
+            sb.Append(type);
+            sb.Append(' ');
+            sb.Append(ident);
+            sb.Append(" = ");
+            EmitJsonAwareConversion(sb, type, rawIdent, jsonIdent, p.EnumTypeFullName);
+            sb.AppendLine(";");
         }
         else
         {
             // Optional: try to read; fall back to default literal.
-            sb.Append("                        var ");
-            sb.Append(ident);
-            sb.Append(" = args.TryGetValue(\"");
-            sb.Append(EscapeString(p.Name));
-            sb.Append("\", out var __raw_");
-            sb.Append(ident);
-            sb.Append(") ? (");
+            sb.Append("                        ");
             sb.Append(type);
-            sb.Append(")__raw_");
+            sb.Append(' ');
             sb.Append(ident);
-            sb.Append("! : (");
+            sb.AppendLine(";");
+            sb.Append("                        if (args.TryGetValue(\"");
+            sb.Append(EscapeString(p.Name));
+            sb.Append("\", out var ");
+            sb.Append(rawIdent);
+            sb.AppendLine("))");
+            sb.AppendLine("                        {");
+            sb.Append("                            ");
+            sb.Append(ident);
+            sb.Append(" = ");
+            EmitJsonAwareConversion(sb, type, rawIdent, jsonIdent, p.EnumTypeFullName);
+            sb.AppendLine(";");
+            sb.AppendLine("                        }");
+            sb.AppendLine("                        else");
+            sb.AppendLine("                        {");
+            sb.Append("                            ");
+            sb.Append(ident);
+            sb.Append(" = (");
             sb.Append(type);
             sb.Append(")(");
             sb.Append(p.DefaultLiteral ?? "default(" + type + ")");
             sb.AppendLine(");");
+            sb.AppendLine("                        }");
         }
+    }
+
+    private static void EmitJsonAwareConversion(
+        StringBuilder sb,
+        string type,
+        string rawIdent,
+        string jsonIdent,
+        string? enumTypeFullName)
+    {
+        sb.Append(rawIdent);
+        sb.Append(" is global::System.Text.Json.JsonElement ");
+        sb.Append(jsonIdent);
+        if (enumTypeFullName is not null)
+        {
+            sb.Append(" ? (");
+            sb.Append(type);
+            sb.Append(")global::System.Enum.Parse(typeof(");
+            sb.Append(enumTypeFullName);
+            sb.Append("), ");
+            sb.Append(jsonIdent);
+            sb.Append(".ValueKind == global::System.Text.Json.JsonValueKind.String ? ");
+            sb.Append(jsonIdent);
+            sb.Append(".GetString()! : ");
+            sb.Append(jsonIdent);
+            sb.Append(".GetRawText()) : (");
+        }
+        else
+        {
+            sb.Append(" ? global::System.Text.Json.JsonSerializer.Deserialize<");
+            sb.Append(type);
+            sb.Append(">(");
+            sb.Append(jsonIdent);
+            sb.Append(".GetRawText())! : (");
+        }
+        sb.Append(type);
+        sb.Append(")");
+        sb.Append(rawIdent);
+        sb.Append('!');
     }
 
     /// <summary>
@@ -510,6 +570,9 @@ internal static class Emitter
         if (s_csharpKeywords.Contains(name)) return "@" + name;
         return name;
     }
+
+    private static string TempIdentifierSuffix(string ident) =>
+        ident.StartsWith("@", System.StringComparison.Ordinal) ? ident.Substring(1) : ident;
 
     private static readonly HashSet<string> s_csharpKeywords = new(System.StringComparer.Ordinal)
     {

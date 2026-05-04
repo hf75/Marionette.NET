@@ -1,6 +1,6 @@
 ---
 name: marionette-explore
-description: Discover what a running Marionette.NET-instrumented .NET desktop app exposes through MCP. Use this skill whenever the user asks to "explore this app", "what can this app do", "show me what's there", "list the manifest", "what's controllable", or whenever a Marionette MCP server (stdio) is connected and the user wants a tour of its surface. The skill calls inspect_app_api, formats the manifest in human-readable form, optionally captures a screenshot, and suggests concrete next-step tool calls.
+description: Discover what a running Marionette.NET-instrumented .NET desktop app exposes through MCP. Use this skill whenever the user asks "/explore-this-app", "explore this app", "what can this app do", "show me what's there", "list the manifest", "what's controllable", or whenever a Marionette MCP server (stdio) is connected and the user wants a tour of its surface. The skill calls inspect_app_api, formats the manifest in human-readable form, optionally captures a screenshot, and suggests concrete next-step tool calls.
 ---
 
 # Marionette: Explore an Instrumented App
@@ -12,6 +12,7 @@ You have a Marionette.NET MCP server connected (transport: stdio). The user want
 Use this skill when the user says any of:
 
 - "explore this app", "what can this app do", "show me what's there", "what's exposed"
+- `/explore-this-app`
 - "list the manifest", "list the tools", "what's controllable", "tour the app"
 - After the user runs `claude mcp add ...` against a Marionette EXE and asks "now what?"
 

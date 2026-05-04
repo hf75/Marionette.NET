@@ -48,8 +48,10 @@ public static class GeneratedManifest
                     Invoke: static (instance, args) =>
                     {
                         var typed = (global::Demo.Calculator)instance;
-                        var a = (int)args["a"]!;
-                        var b = (int)args["b"]!;
+                        var __raw_a = args["a"];
+                        int a = __raw_a is global::System.Text.Json.JsonElement __json_a ? global::System.Text.Json.JsonSerializer.Deserialize<int>(__json_a.GetRawText())! : (int)__raw_a!;
+                        var __raw_b = args["b"];
+                        int b = __raw_b is global::System.Text.Json.JsonElement __json_b ? global::System.Text.Json.JsonSerializer.Deserialize<int>(__json_b.GetRawText())! : (int)__raw_b!;
                         return typed.Add(a, b);
                     }),
                 new CallableDescriptor(
@@ -67,8 +69,10 @@ public static class GeneratedManifest
                     Invoke: static (instance, args) =>
                     {
                         var typed = (global::Demo.Calculator)instance;
-                        var numerator = (double)args["numerator"]!;
-                        var denominator = (double)args["denominator"]!;
+                        var __raw_numerator = args["numerator"];
+                        double numerator = __raw_numerator is global::System.Text.Json.JsonElement __json_numerator ? global::System.Text.Json.JsonSerializer.Deserialize<double>(__json_numerator.GetRawText())! : (double)__raw_numerator!;
+                        var __raw_denominator = args["denominator"];
+                        double denominator = __raw_denominator is global::System.Text.Json.JsonElement __json_denominator ? global::System.Text.Json.JsonSerializer.Deserialize<double>(__json_denominator.GetRawText())! : (double)__raw_denominator!;
                         return typed.Divide(numerator, denominator);
                     }),
                 new CallableDescriptor(

@@ -1,6 +1,6 @@
 ---
 name: marionette-test
-description: Smoke-test a running Marionette.NET-instrumented .NET app by calling every [McpCallable] with sensible synthetic inputs and verifying the [McpObservable] properties react meaningfully. Use this skill whenever the user asks to "test this app", "verify the app works", "smoke-test the Marionette app", "run a sanity check", "make sure the decoration is right", or whenever the user wants confidence the manifest holds together end-to-end. The skill discovers the surface, generates plausible test invocations, asserts observable responses, captures a final screenshot, and reports a structured PASS / FAIL summary.
+description: Smoke-test a running Marionette.NET-instrumented .NET app by calling every [McpCallable] with sensible synthetic inputs and verifying the [McpObservable] properties react meaningfully. Use this skill whenever the user asks "/test-this-app", "test this app", "verify the app works", "smoke-test the Marionette app", "run a sanity check", "make sure the decoration is right", or whenever the user wants confidence the manifest holds together end-to-end. The skill discovers the surface, generates plausible test invocations, asserts observable responses, captures a final screenshot, and reports a structured PASS / FAIL summary.
 ---
 
 # Marionette: Smoke-Test an Instrumented App
@@ -12,6 +12,7 @@ You have a Marionette.NET MCP server connected (transport: stdio) and the user w
 Use this skill when the user says any of:
 
 - "test this app", "verify the app works", "smoke-test", "sanity check"
+- `/test-this-app`
 - "run my Marionette decoration", "make sure the manifest holds together"
 - "did I wire it up right?", "does it actually work end-to-end?"
 - After running `marionette-decorate` — the natural next step.
@@ -132,7 +133,7 @@ Always print the summary line. The user reads it first; the per-step detail is f
 
 End the report with one bullet point acknowledging the limitation:
 
-> **Note:** test generation is heuristic, not exhaustive. A passing smoke test means decoration is wired and the obvious paths work; it does NOT guarantee correctness for arbitrary input or that all edge cases are handled. For property-based testing, write xUnit/NUnit tests against the ViewModel directly (Phase 6's `Marionette.NET.Testing` package will support in-process MCP simulation for this).
+> **Note:** test generation is heuristic, not exhaustive. A passing smoke test means decoration is wired and the obvious paths work; it does NOT guarantee correctness for arbitrary input or that all edge cases are handled. For property-based testing, write xUnit/NUnit tests against the ViewModel through `Marionette.NET.Testing` so the same runtime tool path is exercised in-process.
 
 ## Things NOT to do
 

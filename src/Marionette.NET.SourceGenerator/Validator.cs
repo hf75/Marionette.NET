@@ -102,6 +102,18 @@ internal static class Validator
             }
         }
 
+        foreach (var method in typeSymbol.GetMembers().OfType<IMethodSymbol>())
+        {
+            if (ShouldSuggestCallable(method))
+            {
+                diags.Add(MakeDiagnostic(
+                    Diagnostics.PublicMethodCouldBeCallable,
+                    method.Locations.FirstOrDefault(),
+                    method.ToDisplayString(),
+                    typeSymbol.ToDisplayString()));
+            }
+        }
+
         // ---- MAR008: root has no entrypoints ----
         if (callables.Count == 0 && observables.Count == 0 && triggerables.Count == 0 && events.Count == 0)
         {
@@ -146,6 +158,29 @@ internal static class Validator
                 method.Locations.FirstOrDefault(),
                 method.ToDisplayString()));
             return null;
+        }
+
+        if (method.IsGenericMethod)
+        {
+            diags.Add(MakeDiagnostic(
+                Diagnostics.CallableUnsupportedSignature,
+                method.Locations.FirstOrDefault(),
+                method.ToDisplayString(),
+                "generic methods cannot be dispatched from a JSON-RPC call because no runtime type arguments are available"));
+            return null;
+        }
+
+        foreach (var p in method.Parameters)
+        {
+            if (p.RefKind != RefKind.None)
+            {
+                diags.Add(MakeDiagnostic(
+                    Diagnostics.CallableUnsupportedSignature,
+                    p.Locations.FirstOrDefault(),
+                    method.ToDisplayString(),
+                    $"parameter '{p.Name}' uses {p.RefKind.ToString().ToLowerInvariant()} passing"));
+                return null;
+            }
         }
 
         // Pull the [McpCallable("description", OffUiThread = ?, TimeoutSeconds = ?)] data.
@@ -194,7 +229,8 @@ internal static class Validator
                 Name: p.Name,
                 TypeFullName: typeFullName,
                 IsRequired: !p.HasExplicitDefaultValue,
-                DefaultLiteral: defaultLiteral));
+                DefaultLiteral: defaultLiteral,
+                EnumTypeFullName: TryGetEnumTypeFullName(p.Type)));
 
             schemaInputs.Add((p.Name, p.Type, !p.HasExplicitDefaultValue));
         }
@@ -495,6 +531,53 @@ internal static class Validator
             if (b.ToDisplayString() == "System.IO.Stream") return true;
         }
         return false;
+    }
+
+    private static string? TryGetEnumTypeFullName(ITypeSymbol type)
+    {
+        if (type.TypeKind == TypeKind.Enum)
+        {
+            return type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        }
+
+        if (type is INamedTypeSymbol named &&
+            named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
+            named.TypeArguments.Length == 1 &&
+            named.TypeArguments[0].TypeKind == TypeKind.Enum)
+        {
+            return named.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        }
+
+        return null;
+    }
+
+    private static bool ShouldSuggestCallable(IMethodSymbol method)
+    {
+        if (method.MethodKind != MethodKind.Ordinary) return false;
+        if (method.DeclaredAccessibility != Accessibility.Public) return false;
+        if (method.IsStatic || method.IsAbstract || method.IsOverride) return false;
+        if (method.IsGenericMethod) return false;
+        if (HasAttribute(method, McpCallableAttribute)) return false;
+        if (method.Parameters.Any(p => p.RefKind != RefKind.None)) return false;
+
+        switch (method.Name)
+        {
+            case "Dispose":
+            case "Initialize":
+            case "OnInitialized":
+            case "OnLoaded":
+            case "OnUnloaded":
+                return false;
+        }
+
+        if (method.IsAsync && method.ReturnsVoid) return false;
+
+        foreach (var parameter in method.Parameters)
+        {
+            if (IsBlacklistedParamType(parameter.Type)) return false;
+        }
+
+        return true;
     }
 
     /// <summary>

@@ -88,6 +88,13 @@ namespace Marionette.Adapter.Wpf;
 /// </remarks>
 public static class MarionetteWpf
 {
+    private static readonly DependencyProperty WindowHookedProperty =
+        DependencyProperty.RegisterAttached(
+            "MarionetteWindowHooked",
+            typeof(bool),
+            typeof(MarionetteWpf),
+            new PropertyMetadata(false));
+
     // Phase 3.3: per-process adapter handle so adopters with non-Window roots
     // can call `MarionetteWpf.TrackInstance(rootName, instance)` to register a
     // second ViewModel for multi-window routing without having to plumb a
@@ -368,11 +375,10 @@ public static class MarionetteWpf
                 // Track is reference-equality idempotent.
                 tracker.Track(rootName, w);
 
-                // Hook Closed once. We tag with a sentinel attached property
-                // analogue: a closure-captured flag in the handler list. WPF
-                // doesn't dedup our handlers automatically, so we go through
-                // the Tag dictionary to record "already-hooked".
-                if (w.Tag is not WindowHookMarker)
+                // Hook Closed once. WPF doesn't dedup our handlers
+                // automatically, so we mark the Window with a private
+                // attached property instead of using adopter-owned Window.Tag.
+                if (!IsWindowHooked(w))
                 {
                     var capturedWindow = w;
                     EventHandler? closedHandler = null;
@@ -380,11 +386,10 @@ public static class MarionetteWpf
                     {
                         try { tracker.Untrack(capturedWindow); } catch { /* ignore */ }
                         try { if (closedHandler is not null) capturedWindow.Closed -= closedHandler; } catch { /* ignore */ }
+                        try { SetWindowHooked(capturedWindow, false); } catch { /* ignore */ }
                     };
                     w.Closed += closedHandler;
-                    // Preserve any existing Tag the adopter may have set on a
-                    // root window; only overwrite when it's null.
-                    if (w.Tag is null) w.Tag = WindowHookMarker.Instance;
+                    SetWindowHooked(w, true);
                 }
             }
         }
@@ -395,7 +400,7 @@ public static class MarionetteWpf
 
         // Reconcile on each Activated event (newly-shown Windows fire this
         // when they receive focus). Cheap; the dictionary lookup is O(1) per
-        // Window and we cap the per-Window work via WindowHookMarker.
+        // Window and we cap the per-Window work via WindowHookedProperty.
         app.Activated += (_, _) => ReconcileOnce();
 
         // Also reconcile on a Dispatcher idle tick so a window that was just
@@ -408,11 +413,11 @@ public static class MarionetteWpf
         _ = idleOp; // fire-and-forget
     }
 
-    private sealed class WindowHookMarker
-    {
-        public static readonly WindowHookMarker Instance = new();
-        private WindowHookMarker() { }
-    }
+    private static bool IsWindowHooked(Window window)
+        => window.GetValue(WindowHookedProperty) is true;
+
+    private static void SetWindowHooked(Window window, bool value)
+        => window.SetValue(WindowHookedProperty, value);
 
     private static string[] CommandLineArgsExceptExe()
     {

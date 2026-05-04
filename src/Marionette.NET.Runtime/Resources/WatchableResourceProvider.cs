@@ -142,7 +142,8 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
                 $"No watchable observable matches '{uri}'.");
         }
 
-        if (entry.Root.Instance is null)
+        var instance = ResolveRootInstance(entry);
+        if (instance is null)
         {
             return ErrorResult(uri, "root_unavailable",
                 $"Root '{entry.Root.Descriptor.Name}' has no live instance: {entry.Root.CreateError ?? "no factory"}.");
@@ -151,7 +152,7 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
         try
         {
             var value = await _adapter.DispatchAsync(
-                () => entry.Observable.Read(entry.Root.Instance!),
+                () => entry.Observable.Read(instance),
                 ct).ConfigureAwait(false);
 
             var text = JsonSerializer.Serialize(value, ModelContextProtocol.McpJsonUtilities.DefaultOptions);
@@ -187,15 +188,16 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
     public bool Subscribe(string uri)
     {
         if (!_entries.TryGetValue(uri, out var entry)) return false;
-        if (entry.Root.Instance is null) return false;
+        var instance = ResolveRootInstance(entry);
+        if (instance is null) return false;
 
-        var sub = _subs.GetOrAdd(uri, _ => new Subscription(entry));
+        var sub = _subs.GetOrAdd(uri, _ => new Subscription(entry, instance));
         if (sub.Started) return false;
 
         sub.Started = true;
 
         // Prefer INotifyPropertyChanged; fall back to polling.
-        if (entry.Root.Instance is INotifyPropertyChanged inpc)
+        if (instance is INotifyPropertyChanged inpc)
         {
             sub.InpcHandler = (s, e) =>
             {
@@ -220,7 +222,7 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
         // change, not on subscription itself.
         try
         {
-            sub.LastValueJson = ReadValueJsonInline(entry);
+            sub.LastValueJson = ReadValueJsonInline(entry, instance);
         }
         catch (Exception ex)
         {
@@ -274,7 +276,7 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
         {
             var current = await _adapter.DispatchAsync(
                 () => JsonSerializer.Serialize(
-                    sub.Entry.Observable.Read(sub.Entry.Root.Instance!),
+                    sub.Entry.Observable.Read(sub.Instance),
                     ModelContextProtocol.McpJsonUtilities.DefaultOptions),
                 ct).ConfigureAwait(false);
 
@@ -299,16 +301,19 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
         Justification = "Phase 4.2: STJ over [McpObservable] return value. Cascading warning at MarionetteHost.")]
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
         Justification = "Phase 4.2: same reasoning.")]
-    private string ReadValueJsonInline(WatchableEntry entry)
+    private string ReadValueJsonInline(WatchableEntry entry, object instance)
     {
         // Inline (no dispatch) — used for the initial-baseline read inside
         // Subscribe. The caller is the SDK's request thread; if the user
         // installed the WPF adapter, dispatching from here would deadlock
         // when the request happens on the UI thread already.
         return JsonSerializer.Serialize(
-            entry.Observable.Read(entry.Root.Instance!),
+            entry.Observable.Read(instance),
             ModelContextProtocol.McpJsonUtilities.DefaultOptions);
     }
+
+    private object? ResolveRootInstance(WatchableEntry entry)
+        => _adapter.GetRootInstance(entry.Root.Descriptor.Name, windowId: null) ?? entry.Root.Instance;
 
     private async Task PushUpdatedAsync(string uri, CancellationToken ct)
     {
@@ -370,9 +375,14 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
 
     private sealed class Subscription : IDisposable
     {
-        public Subscription(WatchableEntry entry) { Entry = entry; }
+        public Subscription(WatchableEntry entry, object instance)
+        {
+            Entry = entry;
+            Instance = instance;
+        }
 
         public WatchableEntry Entry { get; }
+        public object Instance { get; }
         public bool Started { get; set; }
         public string? LastValueJson { get; set; }
         public DateTime LastPushUtc { get; set; } = DateTime.MinValue;
@@ -385,7 +395,7 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
             try { Timer?.Dispose(); } catch { }
             try
             {
-                if (InpcHandler is not null && Entry.Root.Instance is INotifyPropertyChanged inpc)
+                if (InpcHandler is not null && Instance is INotifyPropertyChanged inpc)
                 {
                     inpc.PropertyChanged -= InpcHandler;
                 }

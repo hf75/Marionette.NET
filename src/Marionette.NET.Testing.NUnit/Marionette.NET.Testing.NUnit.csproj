@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Marionette.Testing.NUnit</RootNamespace>
+    <AssemblyName>Marionette.NET.Testing.NUnit</AssemblyName>
+    <Description>NUnit adapter helpers for Marionette.NET in-process testing.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Marionette.NET.Testing\Marionette.NET.Testing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NUnit" Version="4.6.0" />
+  </ItemGroup>
+
+</Project>

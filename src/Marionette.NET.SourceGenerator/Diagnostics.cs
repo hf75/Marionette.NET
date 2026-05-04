@@ -170,4 +170,32 @@ internal static class Diagnostics
         category: Category,
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR013: a public instance method on an <c>[McpRoot]</c> has a
+    /// Marionette-compatible signature but is not decorated. This is a DX
+    /// hint only; public methods often exist for UI/framework plumbing and
+    /// should not always become LLM-facing tools.
+    /// </summary>
+    public static readonly DiagnosticDescriptor PublicMethodCouldBeCallable = new(
+        id: "MAR013",
+        title: "Public method could be exposed with [McpCallable]",
+        messageFormat: "Public method '{0}' is on [McpRoot] '{1}' and has a Marionette-compatible signature; add [McpCallable] if this is a user-facing action",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Info,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR014: an <c>[McpCallable]</c> method has a signature the generator
+    /// cannot emit safely. Generic methods need type-argument inference at
+    /// runtime, and by-ref parameters need call-site modifiers that are not
+    /// compatible with JSON-RPC argument bags.
+    /// </summary>
+    public static readonly DiagnosticDescriptor CallableUnsupportedSignature = new(
+        id: "MAR014",
+        title: "[McpCallable] method signature is not supported",
+        messageFormat: "[McpCallable] method '{0}' is not supported: {1}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
 }

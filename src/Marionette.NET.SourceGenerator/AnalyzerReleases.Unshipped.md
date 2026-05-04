@@ -17,3 +17,5 @@ MAR009  | Marionette.Generator | Error    | [McpEvent] only applies to C# event 
 MAR010  | Marionette.Generator | Error    | [McpEvent] requires EventHandler or EventHandler<T>.
 MAR011  | Marionette.Generator | Warning  | [McpEvent] on un-rooted class is ignored.
 MAR012  | Marionette.Generator | Warning  | [McpEvent] throttling parameter out of range.
+MAR013  | Marionette.Generator | Info     | Public method on [McpRoot] could be exposed with [McpCallable].
+MAR014  | Marionette.Generator | Error    | [McpCallable] method signature is not supported.
