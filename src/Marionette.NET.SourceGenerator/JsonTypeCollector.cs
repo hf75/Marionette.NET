@@ -114,6 +114,8 @@ internal sealed class JsonTypeCollector
         var unannotated = type.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
 
         // Nullable<T>: register the wrapped value type, then the wrapper.
+        // We canonicalise the wrapper's full name from the inner JsonTypeModel
+        // so primitives don't leak C# aliases (e.g. `int?` -> `System.Int32?`).
         if (unannotated is INamedTypeSymbol named && IsNullableValueType(named, out var inner))
         {
             var innerName = TryRegister(inner!, visiting, depth + 1);
@@ -121,12 +123,13 @@ internal sealed class JsonTypeCollector
             var nullableKey = "Nullable_" + innerName;
             if (!_types.ContainsKey(nullableKey))
             {
+                var innerCanonical = _types[innerName].TypeFullName;
                 _types[nullableKey] = new JsonTypeModel(
-                    TypeFullName: unannotated.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                    TypeFullName: innerCanonical + "?",
                     PropertyName: nullableKey,
                     Kind: JsonTypeKind.Nullable,
                     PrimitiveConverter: null,
-                    UnderlyingTypeFullName: inner!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                    UnderlyingTypeFullName: innerCanonical,
                     Properties: EquatableArray<JsonPropertyModel>.Empty);
             }
             return nullableKey;

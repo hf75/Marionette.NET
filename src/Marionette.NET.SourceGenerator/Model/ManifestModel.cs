@@ -51,7 +51,14 @@ internal sealed record ManifestModel(
     EquatableArray<RootModel> Roots,
     EquatableArray<DiagnosticInfo> Diagnostics,
     EquatableArray<JsonTypeModel> EventArgsJsonTypes = default,
-    EquatableArray<string> EventArgsRootTypes = default);
+    EquatableArray<string> EventArgsRootTypes = default,
+    // Phase 8.2: parallel set for [McpObservable] property values and
+    // [McpCallable] return types. Lives in MarionetteJsonContext (camelCase
+    // naming policy, matching McpJsonUtilities.DefaultOptions). Built from
+    // a separate JsonTypeCollector so the type graphs don't cross-pollute
+    // and the two contexts each carry independent JsonTypeInfo<T> instances.
+    EquatableArray<JsonTypeModel> ValueJsonTypes = default,
+    EquatableArray<string> ValueRootTypes = default);
 
 /// <summary>
 /// One [McpRoot]-decorated class plus its callable / observable / triggerable
@@ -70,7 +77,11 @@ internal sealed record RootModel(
     // [McpEvent] args serialisation on this root. Empty when no [McpEvent]
     // declares an args type or every encountered graph contained an
     // unsupported shape (caller falls back to runtime serialisation).
-    EquatableArray<JsonTypeModel> EventArgsJsonTypes = default);
+    EquatableArray<JsonTypeModel> EventArgsJsonTypes = default,
+    // Phase 8.2: parallel set for [McpObservable] values and [McpCallable]
+    // sync return types on this root. Feeds the camelCase
+    // MarionetteJsonContext.
+    EquatableArray<JsonTypeModel> ValueJsonTypes = default);
 
 /// <summary>
 /// One [McpCallable] method. The generator emits an Invoke lambda that boxes
@@ -87,7 +98,13 @@ internal sealed record CallableModel(
     bool ReturnsTaskOfT,
     string? TaskResultTypeFullName,
     EquatableArray<ParameterModel> Parameters,
-    string ParametersJsonSchema); // Phase 2.2: pre-computed input schema for the per-method MCP tool
+    string ParametersJsonSchema, // Phase 2.2: pre-computed input schema for the per-method MCP tool
+    // Phase 8.2: encoded property name on MarionetteJsonContext for the
+    // method's return type (or T from Task<T> / ValueTask<T>). Set when the
+    // type's transitive graph is fully source-gen-eligible; null forces the
+    // runtime to fall back to the legacy reflection-based MarionetteDispatch
+    // serialiser.
+    string? JsonReturnContextName = null);
 
 /// <summary>
 /// One parameter to an [McpCallable] method. DefaultValue is captured as a
@@ -98,7 +115,12 @@ internal sealed record ParameterModel(
     string TypeFullName,
     bool IsRequired,
     string? DefaultLiteral,    // e.g. "0", "\"foo\"", "null", "1.5"
-    string? EnumTypeFullName); // non-null for enum / Nullable<enum> parameters
+    string? EnumTypeFullName,  // non-null for enum / Nullable<enum> parameters
+    // Phase 8.2: encoded property name on MarionetteJsonContext for the
+    // parameter type. Lets the emitter switch from the AOT-unsafe
+    // JsonSerializer.Deserialize<T>(string) overload to the typed
+    // Deserialize<T>(string, JsonTypeInfo<T>) overload.
+    string? JsonContextName = null);
 
 /// <summary>
 /// One [McpObservable] property. The generator emits a typed getter lambda.
@@ -108,7 +130,11 @@ internal sealed record ObservableModel(
     string Description,
     bool Watchable,
     int PollingIntervalMs,
-    string PropertyTypeFullName);
+    string PropertyTypeFullName,
+    // Phase 8.2: encoded property name on MarionetteJsonContext for the
+    // observable's value type. Same semantics as
+    // <see cref="CallableModel.JsonReturnContextName"/>.
+    string? JsonValueContextName = null);
 
 /// <summary>
 /// One [McpTriggerable] property. The generator emits a typed control resolver.

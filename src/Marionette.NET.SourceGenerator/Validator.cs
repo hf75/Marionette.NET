@@ -78,18 +78,23 @@ internal static class Validator
         // Phase 8.1: collector for the [McpEvent] args graph. Per-root scope —
         // ManifestGenerator unions across roots in the combine step.
         var jsonTypes = new JsonTypeCollector();
+        // Phase 8.2: parallel collector for [McpObservable] values and
+        // [McpCallable] sync return types. Lives in the camelCase
+        // MarionetteJsonContext so naming policy stays consistent with
+        // McpJsonUtilities.DefaultOptions.
+        var valueTypes = new JsonTypeCollector();
 
         foreach (var member in typeSymbol.GetMembers())
         {
             switch (member)
             {
                 case IMethodSymbol method when HasAttribute(method, McpCallableAttribute):
-                    var callable = ValidateCallable(method, diags);
+                    var callable = ValidateCallable(method, diags, valueTypes);
                     if (callable is not null) callables.Add(callable);
                     break;
 
                 case IPropertySymbol observableProp when HasAttribute(observableProp, McpObservableAttribute):
-                    var observable = ValidateObservable(observableProp, diags);
+                    var observable = ValidateObservable(observableProp, diags, valueTypes);
                     if (observable is not null) observables.Add(observable);
                     break;
 
@@ -143,7 +148,8 @@ internal static class Validator
             Observables: observables.ToImmutable().ToEquatableArray(),
             Triggerables: triggerables.ToImmutable().ToEquatableArray(),
             Events: events.ToImmutable().ToEquatableArray(),
-            EventArgsJsonTypes: jsonTypes.AllTypes.ToEquatableArray());
+            EventArgsJsonTypes: jsonTypes.AllTypes.ToEquatableArray(),
+            ValueJsonTypes: valueTypes.AllTypes.ToEquatableArray());
     }
 
     // -------------------------------------------------------------------------
@@ -152,7 +158,8 @@ internal static class Validator
 
     private static CallableModel? ValidateCallable(
         IMethodSymbol method,
-        ImmutableArray<DiagnosticInfo>.Builder diags)
+        ImmutableArray<DiagnosticInfo>.Builder diags,
+        JsonTypeCollector valueTypes)
     {
         // ---- MAR002: must be public ----
         if (method.DeclaredAccessibility != Accessibility.Public)
@@ -229,12 +236,21 @@ internal static class Validator
                 defaultLiteral = FormatLiteral(p.ExplicitDefaultValue, p.Type);
             }
 
+            // Phase 8.2: register the parameter type on the value collector
+            // so the emitter can switch the JsonElement-deserialization path
+            // from the reflection-based JsonSerializer.Deserialize<T>(string)
+            // overload to the typed JsonTypeInfo<T> path. Failure leaves
+            // jsonParamName null and the generator keeps emitting the
+            // legacy untyped overload (with its IL2026/IL3050 warning).
+            valueTypes.TryAdd(p.Type, out var jsonParamName);
+
             paramBuilder.Add(new ParameterModel(
                 Name: p.Name,
                 TypeFullName: typeFullName,
                 IsRequired: !p.HasExplicitDefaultValue,
                 DefaultLiteral: defaultLiteral,
-                EnumTypeFullName: TryGetEnumTypeFullName(p.Type)));
+                EnumTypeFullName: TryGetEnumTypeFullName(p.Type),
+                JsonContextName: jsonParamName));
 
             schemaInputs.Add((p.Name, p.Type, !p.HasExplicitDefaultValue));
         }
@@ -245,12 +261,29 @@ internal static class Validator
         //   * Task (non-generic)             → ReturnsTask = true,  ReturnsTaskOfT = false
         //   * Task<T> / ValueTask<T>         → ReturnsTask = true,  ReturnsTaskOfT = true, TaskResultTypeFullName = T
         var returnTypeFullName = method.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        var (returnsTask, returnsTaskOfT, taskResultTypeFullName) = ClassifyReturnType(method.ReturnType);
+        var (returnsTask, returnsTaskOfT, taskResultTypeFullName, taskResultSymbol) = ClassifyReturnType(method.ReturnType);
 
         // Phase 2.2: pre-compute the JSON schema for this callable's
         // parameter object. The runtime stamps it onto the per-method
         // McpServerTool's InputSchema; runtime never re-walks symbols.
         var parametersSchema = JsonSchemaWriter.WriteParametersSchema(schemaInputs);
+
+        // Phase 8.2: register the serialisable return type on the value
+        // collector so the emitted MarionetteJsonContext carries a typed
+        // JsonTypeInfo<T>. Skip void / Task-without-T (no value to serialise);
+        // for Task<T> and ValueTask<T> we register T (the awaited result).
+        // Failure (unsupported transitive shape) leaves jsonReturnName null
+        // and the runtime falls back to the legacy reflection-based path.
+        string? jsonReturnName = null;
+        if (returnsTaskOfT && taskResultSymbol is not null)
+        {
+            valueTypes.TryAdd(taskResultSymbol, out jsonReturnName);
+        }
+        else if (!returnsTask &&
+                 method.ReturnType.SpecialType != SpecialType.System_Void)
+        {
+            valueTypes.TryAdd(method.ReturnType, out jsonReturnName);
+        }
 
         return new CallableModel(
             MethodName: method.Name,
@@ -262,7 +295,8 @@ internal static class Validator
             ReturnsTaskOfT: returnsTaskOfT,
             TaskResultTypeFullName: taskResultTypeFullName,
             Parameters: paramBuilder.ToImmutable().ToEquatableArray(),
-            ParametersJsonSchema: parametersSchema);
+            ParametersJsonSchema: parametersSchema,
+            JsonReturnContextName: jsonReturnName);
     }
 
     // -------------------------------------------------------------------------
@@ -271,7 +305,8 @@ internal static class Validator
 
     private static ObservableModel? ValidateObservable(
         IPropertySymbol prop,
-        ImmutableArray<DiagnosticInfo>.Builder diags)
+        ImmutableArray<DiagnosticInfo>.Builder diags,
+        JsonTypeCollector valueTypes)
     {
         // ---- MAR005: must have a getter ----
         if (prop.GetMethod is null)
@@ -306,12 +341,19 @@ internal static class Validator
         bool watchable = TryGetNamedBool(attr, "Watchable", false);
         int pollingMs = TryGetNamedInt(attr, "PollingIntervalMs", 500);
 
+        // Phase 8.2: register the property's type on the value collector.
+        // Failure (unsupported transitive shape — generic, array, abstract,
+        // …) leaves jsonValueName null and the runtime keeps the legacy
+        // reflection-based JsonSerializer.Serialize path.
+        valueTypes.TryAdd(prop.Type, out var jsonValueName);
+
         return new ObservableModel(
             PropertyName: prop.Name,
             Description: description,
             Watchable: watchable,
             PollingIntervalMs: pollingMs,
-            PropertyTypeFullName: prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+            PropertyTypeFullName: prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            JsonValueContextName: jsonValueName);
     }
 
     // -------------------------------------------------------------------------
@@ -626,13 +668,13 @@ internal static class Validator
         return false;
     }
 
-    private static (bool returnsTask, bool returnsTaskOfT, string? taskResultType) ClassifyReturnType(ITypeSymbol returnType)
+    private static (bool returnsTask, bool returnsTaskOfT, string? taskResultType, ITypeSymbol? taskResultSymbol) ClassifyReturnType(ITypeSymbol returnType)
     {
         var fq = returnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         if (fq == "global::System.Threading.Tasks.Task" ||
             fq == "global::System.Threading.Tasks.ValueTask")
         {
-            return (true, false, null);
+            return (true, false, null, null);
         }
         if (returnType is INamedTypeSymbol named && named.IsGenericType)
         {
@@ -640,10 +682,11 @@ internal static class Validator
             if (genericFq == "global::System.Threading.Tasks.Task<>" ||
                 genericFq == "global::System.Threading.Tasks.ValueTask<>")
             {
-                return (true, true, named.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+                var taskArg = named.TypeArguments[0];
+                return (true, true, taskArg.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), taskArg);
             }
         }
-        return (false, false, null);
+        return (false, false, null, null);
     }
 
     /// <summary>

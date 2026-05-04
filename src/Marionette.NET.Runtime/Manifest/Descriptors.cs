@@ -99,6 +99,15 @@ public sealed record RootDescriptor(
 ///   <item><description>the <see cref="System.Threading.Tasks.Task"/> / <see cref="System.Threading.Tasks.ValueTask"/> instance for async methods (the runtime awaits).</description></item>
 /// </list>
 /// </param>
+/// <param name="SerializeResult">
+/// Phase 8.2: optional source-generator-emitted typed JSON serialiser for
+/// the callable's sync return value (or T from <c>Task&lt;T&gt;</c> /
+/// <c>ValueTask&lt;T&gt;</c>). Receives the boxed result and returns the
+/// JSON string. Bound at compile time to
+/// <c>MarionetteJsonContext.Default.&lt;TypeName&gt;</c>; AOT-clean. When
+/// non-null, <c>MarionetteDispatch.SerializeResult</c> uses this lambda
+/// instead of <c>JsonSerializer.Serialize(object?, options)</c>.
+/// </param>
 public sealed record CallableDescriptor(
     string Name,
     string Description,
@@ -107,7 +116,8 @@ public sealed record CallableDescriptor(
     bool IsAsync,
     IReadOnlyList<ParamDescriptor> Parameters,
     string ParametersJsonSchema,
-    Func<object, IReadOnlyDictionary<string, object?>, object?> Invoke);
+    Func<object, IReadOnlyDictionary<string, object?>, object?> Invoke,
+    Func<object?, string>? SerializeResult = null);
 
 /// <summary>
 /// One parameter on a <see cref="CallableDescriptor"/>.
@@ -135,13 +145,22 @@ public sealed record ParamDescriptor(
 /// <param name="PollingIntervalMs">Polling interval used when <see cref="Watchable"/> is set and the declaring type does not implement <c>INotifyPropertyChanged</c>.</param>
 /// <param name="ClrTypeName">Short CLR type name — used for shape information shown to the LLM.</param>
 /// <param name="Read">Compile-time emitted getter lambda. Receives the root instance, returns the (boxed) property value.</param>
+/// <param name="SerializeValue">
+/// Phase 8.2: optional source-generator-emitted typed JSON serialiser for
+/// the property's value type. Receives the boxed value (or
+/// <see langword="null"/>) and returns a JSON string. Bound at compile time
+/// to <c>MarionetteJsonContext.Default.&lt;TypeName&gt;</c>. When non-null,
+/// <c>WatchableResourceProvider</c> uses this lambda instead of
+/// <c>JsonSerializer.Serialize(value, options)</c>.
+/// </param>
 public sealed record ObservableDescriptor(
     string Name,
     string Description,
     bool Watchable,
     int PollingIntervalMs,
     string ClrTypeName,
-    Func<object, object?> Read);
+    Func<object, object?> Read,
+    Func<object?, string>? SerializeValue = null);
 
 /// <summary>
 /// Describes a single <c>[McpTriggerable]</c> property whose value is a UI

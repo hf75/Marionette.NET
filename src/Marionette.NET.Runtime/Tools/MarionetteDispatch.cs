@@ -138,7 +138,12 @@ internal static class MarionetteDispatch
                 result = await AwaitAndUnwrapAsync(result).ConfigureAwait(false);
             }
 
-            return SerializeResult(result);
+            // Phase 8.2: prefer the descriptor's typed SerializeResult lambda
+            // when the return type is source-gen-eligible; fall back to the
+            // legacy reflection-based path otherwise.
+            return callable.SerializeResult is { } typed
+                ? typed(result)
+                : SerializeResult(result);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

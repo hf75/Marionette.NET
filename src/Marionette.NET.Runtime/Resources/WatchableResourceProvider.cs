@@ -155,7 +155,13 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
                 () => entry.Observable.Read(instance),
                 ct).ConfigureAwait(false);
 
-            var text = JsonSerializer.Serialize(value, ModelContextProtocol.McpJsonUtilities.DefaultOptions);
+            // Phase 8.2: prefer the descriptor's source-gen-emitted typed
+            // SerializeValue lambda (AOT-clean). Fall back to the legacy
+            // reflection-based path when the property type is not
+            // source-gen-eligible (generics, arrays, abstract bases, …).
+            var text = entry.Observable.SerializeValue is { } typedSerialise
+                ? typedSerialise(value)
+                : JsonSerializer.Serialize(value, ModelContextProtocol.McpJsonUtilities.DefaultOptions);
             return new ReadResourceResult
             {
                 Contents = new List<ResourceContents>
@@ -274,10 +280,15 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
 
         try
         {
+            // Phase 8.2: prefer the descriptor's typed SerializeValue lambda.
             var current = await _adapter.DispatchAsync(
-                () => JsonSerializer.Serialize(
-                    sub.Entry.Observable.Read(sub.Instance),
-                    ModelContextProtocol.McpJsonUtilities.DefaultOptions),
+                () =>
+                {
+                    var raw = sub.Entry.Observable.Read(sub.Instance);
+                    return sub.Entry.Observable.SerializeValue is { } typed
+                        ? typed(raw)
+                        : JsonSerializer.Serialize(raw, ModelContextProtocol.McpJsonUtilities.DefaultOptions);
+                },
                 ct).ConfigureAwait(false);
 
             // Skip identical values — STJ-stable byte equality.
@@ -301,15 +312,17 @@ public sealed class WatchableResourceProvider : IAsyncDisposable
         Justification = "Phase 4.2: STJ over [McpObservable] return value. Cascading warning at MarionetteHost.")]
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
         Justification = "Phase 4.2: same reasoning.")]
-    private string ReadValueJsonInline(WatchableEntry entry, object instance)
+    private static string ReadValueJsonInline(WatchableEntry entry, object instance)
     {
         // Inline (no dispatch) — used for the initial-baseline read inside
         // Subscribe. The caller is the SDK's request thread; if the user
         // installed the WPF adapter, dispatching from here would deadlock
         // when the request happens on the UI thread already.
-        return JsonSerializer.Serialize(
-            entry.Observable.Read(instance),
-            ModelContextProtocol.McpJsonUtilities.DefaultOptions);
+        // Phase 8.2: prefer the typed SerializeValue lambda.
+        var raw = entry.Observable.Read(instance);
+        return entry.Observable.SerializeValue is { } typed
+            ? typed(raw)
+            : JsonSerializer.Serialize(raw, ModelContextProtocol.McpJsonUtilities.DefaultOptions);
     }
 
     private object? ResolveRootInstance(WatchableEntry entry)

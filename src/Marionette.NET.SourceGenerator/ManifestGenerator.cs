@@ -126,28 +126,46 @@ public sealed class ManifestGenerator : IIncrementalGenerator
                     diags.Add(orphan);
                 }
 
-                // Phase 8.1: union the per-root JSON-type sets into a single
-                // assembly-wide collection. Deduplicate by encoded property
-                // name (the same args type referenced by two [McpEvent]s on
-                // different roots produces the same JsonTypeModel; we keep
-                // the first occurrence). Order is alphabetical so the
-                // generated context is deterministic across builds and the
-                // snapshot tests stay stable.
-                var allJsonTypes = new System.Collections.Generic.SortedDictionary<string, JsonTypeModel>(System.StringComparer.Ordinal);
+                // Phase 8.1/8.2: union the per-root JSON-type sets into two
+                // assembly-wide collections — one per generated context.
+                // Deduplicate by encoded property name; ordered alphabetically
+                // so the generated source is deterministic and snapshot tests
+                // stay stable.
+                var allArgsTypes = new System.Collections.Generic.SortedDictionary<string, JsonTypeModel>(System.StringComparer.Ordinal);
                 var argsRootNames = ImmutableArray.CreateBuilder<string>();
                 var argsRootSeen = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
+
+                var allValueTypes = new System.Collections.Generic.SortedDictionary<string, JsonTypeModel>(System.StringComparer.Ordinal);
+                var valueRootNames = ImmutableArray.CreateBuilder<string>();
+                var valueRootSeen = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
 
                 foreach (var root in roots)
                 {
                     foreach (var jt in root.EventArgsJsonTypes.AsEnumerable())
                     {
-                        if (!allJsonTypes.ContainsKey(jt.PropertyName))
-                            allJsonTypes[jt.PropertyName] = jt;
+                        if (!allArgsTypes.ContainsKey(jt.PropertyName))
+                            allArgsTypes[jt.PropertyName] = jt;
                     }
                     foreach (var ev in root.Events.AsEnumerable())
                     {
                         if (ev.JsonRootContextName is { } name && argsRootSeen.Add(name))
                             argsRootNames.Add(name);
+                    }
+
+                    foreach (var jt in root.ValueJsonTypes.AsEnumerable())
+                    {
+                        if (!allValueTypes.ContainsKey(jt.PropertyName))
+                            allValueTypes[jt.PropertyName] = jt;
+                    }
+                    foreach (var obs in root.Observables.AsEnumerable())
+                    {
+                        if (obs.JsonValueContextName is { } name && valueRootSeen.Add(name))
+                            valueRootNames.Add(name);
+                    }
+                    foreach (var call in root.Callables.AsEnumerable())
+                    {
+                        if (call.JsonReturnContextName is { } name && valueRootSeen.Add(name))
+                            valueRootNames.Add(name);
                     }
                 }
 
@@ -155,8 +173,10 @@ public sealed class ManifestGenerator : IIncrementalGenerator
                             AssemblyName: asmName,
                             Roots: roots.ToImmutable().ToEquatableArray(),
                             Diagnostics: diags.ToImmutable().ToEquatableArray(),
-                            EventArgsJsonTypes: allJsonTypes.Values.ToImmutableArray().ToEquatableArray(),
-                            EventArgsRootTypes: argsRootNames.ToImmutable().ToEquatableArray()),
+                            EventArgsJsonTypes: allArgsTypes.Values.ToImmutableArray().ToEquatableArray(),
+                            EventArgsRootTypes: argsRootNames.ToImmutable().ToEquatableArray(),
+                            ValueJsonTypes: allValueTypes.Values.ToImmutableArray().ToEquatableArray(),
+                            ValueRootTypes: valueRootNames.ToImmutable().ToEquatableArray()),
                         McpEnabled: mcpOn);
             });
 

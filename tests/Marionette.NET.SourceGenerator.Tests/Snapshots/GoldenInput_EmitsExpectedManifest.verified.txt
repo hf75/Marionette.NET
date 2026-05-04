@@ -49,10 +49,15 @@ public static class GeneratedManifest
                     {
                         var typed = (global::Demo.Calculator)instance;
                         var __raw_a = args["a"];
-                        int a = __raw_a is global::System.Text.Json.JsonElement __json_a ? global::System.Text.Json.JsonSerializer.Deserialize<int>(__json_a.GetRawText())! : (int)__raw_a!;
+                        int a = __raw_a is global::System.Text.Json.JsonElement __json_a ? global::System.Text.Json.JsonSerializer.Deserialize<int>(__json_a.GetRawText(), global::Marionette.Generated.MarionetteJsonContext.Default.System_Int32)! : (int)__raw_a!;
                         var __raw_b = args["b"];
-                        int b = __raw_b is global::System.Text.Json.JsonElement __json_b ? global::System.Text.Json.JsonSerializer.Deserialize<int>(__json_b.GetRawText())! : (int)__raw_b!;
+                        int b = __raw_b is global::System.Text.Json.JsonElement __json_b ? global::System.Text.Json.JsonSerializer.Deserialize<int>(__json_b.GetRawText(), global::Marionette.Generated.MarionetteJsonContext.Default.System_Int32)! : (int)__raw_b!;
                         return typed.Add(a, b);
+                    },
+                    SerializeResult: static (value) =>
+                    {
+                        if (value is null) return "null";
+                        return global::System.Text.Json.JsonSerializer.Serialize<int>((int)value, global::Marionette.Generated.MarionetteJsonContext.Default.System_Int32);
                     }),
                 new CallableDescriptor(
                     Name: "Divide",
@@ -70,10 +75,15 @@ public static class GeneratedManifest
                     {
                         var typed = (global::Demo.Calculator)instance;
                         var __raw_numerator = args["numerator"];
-                        double numerator = __raw_numerator is global::System.Text.Json.JsonElement __json_numerator ? global::System.Text.Json.JsonSerializer.Deserialize<double>(__json_numerator.GetRawText())! : (double)__raw_numerator!;
+                        double numerator = __raw_numerator is global::System.Text.Json.JsonElement __json_numerator ? global::System.Text.Json.JsonSerializer.Deserialize<double>(__json_numerator.GetRawText(), global::Marionette.Generated.MarionetteJsonContext.Default.System_Double)! : (double)__raw_numerator!;
                         var __raw_denominator = args["denominator"];
-                        double denominator = __raw_denominator is global::System.Text.Json.JsonElement __json_denominator ? global::System.Text.Json.JsonSerializer.Deserialize<double>(__json_denominator.GetRawText())! : (double)__raw_denominator!;
+                        double denominator = __raw_denominator is global::System.Text.Json.JsonElement __json_denominator ? global::System.Text.Json.JsonSerializer.Deserialize<double>(__json_denominator.GetRawText(), global::Marionette.Generated.MarionetteJsonContext.Default.System_Double)! : (double)__raw_denominator!;
                         return typed.Divide(numerator, denominator);
+                    },
+                    SerializeResult: static (value) =>
+                    {
+                        if (value is null) return "null";
+                        return global::System.Text.Json.JsonSerializer.Serialize<double>((double)value, global::Marionette.Generated.MarionetteJsonContext.Default.System_Double);
                     }),
                 new CallableDescriptor(
                     Name: "Reset",
@@ -106,6 +116,11 @@ public static class GeneratedManifest
                             return (object?)__r;
                         }
                         return __wrapAsync();
+                    },
+                    SerializeResult: static (value) =>
+                    {
+                        if (value is null) return "null";
+                        return global::System.Text.Json.JsonSerializer.Serialize<int>((int)value, global::Marionette.Generated.MarionetteJsonContext.Default.System_Int32);
                     }),
             },
             Observables: new ObservableDescriptor[]
@@ -116,17 +131,62 @@ public static class GeneratedManifest
                     Watchable: false,
                     PollingIntervalMs: 500,
                     ClrTypeName: "double",
-                    Read: static (instance) => ((global::Demo.Calculator)instance).LastResult),
+                    Read: static (instance) => ((global::Demo.Calculator)instance).LastResult,
+                    SerializeValue: static (value) =>
+                    {
+                        if (value is null) return "null";
+                        return global::System.Text.Json.JsonSerializer.Serialize<double>((double)value, global::Marionette.Generated.MarionetteJsonContext.Default.System_Double);
+                    }),
                 new ObservableDescriptor(
                     Name: "OperationCount",
                     Description: "Total operations performed.",
                     Watchable: true,
                     PollingIntervalMs: 250,
                     ClrTypeName: "int",
-                    Read: static (instance) => ((global::Demo.Calculator)instance).OperationCount),
+                    Read: static (instance) => ((global::Demo.Calculator)instance).OperationCount,
+                    SerializeValue: static (value) =>
+                    {
+                        if (value is null) return "null";
+                        return global::System.Text.Json.JsonSerializer.Serialize<int>((int)value, global::Marionette.Generated.MarionetteJsonContext.Default.System_Int32);
+                    }),
             },
             Triggerables: global::System.Array.Empty<TriggerableDescriptor>(),
             Events: global::System.Array.Empty<EventDescriptor>()
         ),
     };
+}
+
+/// <summary>
+/// Phase 8.2: AOT-clean JSON serialisation context for [McpObservable] values and [McpCallable] return types. camelCase property naming matches McpJsonUtilities.DefaultOptions for protocol consistency.
+/// All <c>JsonTypeInfo&lt;T&gt;</c> properties are built via
+/// <c>JsonMetadataServices</c> factories at compile time — no runtime
+/// reflection. Property names encode the originating CLR full name with
+/// '.' replaced by '_' so that the registered set is collision-free.
+/// </summary>
+internal sealed class MarionetteJsonContext : global::System.Text.Json.Serialization.JsonSerializerContext
+{
+    private static MarionetteJsonContext? _default;
+    public static MarionetteJsonContext Default
+        => _default ??= new MarionetteJsonContext(new global::System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = global::System.Text.Json.JsonNamingPolicy.CamelCase });
+
+    public MarionetteJsonContext(global::System.Text.Json.JsonSerializerOptions options)
+        : base(options) { }
+
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Double>? _System_Double;
+    public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Double> System_Double => _System_Double ??= 
+        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::System.Double>(Options, global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.DoubleConverter);
+
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Int32>? _System_Int32;
+    public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Int32> System_Int32 => _System_Int32 ??= 
+        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::System.Int32>(Options, global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.Int32Converter);
+
+
+    protected override global::System.Text.Json.JsonSerializerOptions? GeneratedSerializerOptions => Options;
+
+    public override global::System.Text.Json.Serialization.Metadata.JsonTypeInfo? GetTypeInfo(global::System.Type type)
+    {
+        if (type == typeof(global::System.Double)) return System_Double;
+        if (type == typeof(global::System.Int32)) return System_Int32;
+        return null;
+    }
 }

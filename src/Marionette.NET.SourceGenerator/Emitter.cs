@@ -61,12 +61,13 @@ internal static class Emitter
         // type — the runtime then falls back to its legacy reflection-based
         // serialisation path (which carries the [RequiresUnreferencedCode]
         // annotation honoured at the MarionetteHost.RunAsync boundary).
-        var jsonTypes = model.EventArgsJsonTypes.AsEnumerable()
-            .ToList();
-        if (jsonTypes.Count > 0)
-        {
-            JsonContextEmitter.Emit(sb, jsonTypes);
-        }
+        var argsTypes = model.EventArgsJsonTypes.AsEnumerable().ToList();
+        JsonContextEmitter.EmitEventArgsContext(sb, argsTypes);
+
+        // Phase 8.2: emit the parallel camelCase context for [McpObservable]
+        // values and [McpCallable] return types. Same skip-on-empty semantics.
+        var valueTypes = model.ValueJsonTypes.AsEnumerable().ToList();
+        JsonContextEmitter.EmitValueContext(sb, valueTypes);
 
         return sb.ToString();
     }
@@ -301,7 +302,36 @@ internal static class Emitter
             sb.AppendLine(");");
         }
 
-        sb.AppendLine("                    }),");
+        // Phase 8.2: emit a typed SerializeResult lambda when the return
+        // type's transitive graph is source-gen-eligible. The Invoke lambda
+        // closes one line later than the no-SerializeResult path so we can
+        // append the new positional argument after it.
+        if (call.JsonReturnContextName is { } jsonReturn)
+        {
+            sb.AppendLine("                    },");
+            // For Task<T> / ValueTask<T> the SerializeResult lambda receives
+            // the awaited T (the runtime unwraps the typed Task<object?>
+            // before calling SerializeResult). For sync non-void it receives
+            // the boxed return value directly.
+            var serialiseTypeFullName = call.ReturnsTaskOfT
+                ? call.TaskResultTypeFullName!
+                : call.ReturnTypeFullName;
+            sb.AppendLine("                    SerializeResult: static (value) =>");
+            sb.AppendLine("                    {");
+            sb.AppendLine("                        if (value is null) return \"null\";");
+            sb.Append("                        return global::System.Text.Json.JsonSerializer.Serialize<");
+            sb.Append(serialiseTypeFullName);
+            sb.Append(">((");
+            sb.Append(serialiseTypeFullName);
+            sb.Append(")value, global::Marionette.Generated.MarionetteJsonContext.Default.");
+            sb.Append(jsonReturn);
+            sb.AppendLine(");");
+            sb.AppendLine("                    }),");
+        }
+        else
+        {
+            sb.AppendLine("                    }),");
+        }
     }
 
     private static void EmitParameterUnboxing(StringBuilder sb, ParameterModel p)
@@ -327,7 +357,7 @@ internal static class Emitter
             sb.Append(' ');
             sb.Append(ident);
             sb.Append(" = ");
-            EmitJsonAwareConversion(sb, type, rawIdent, jsonIdent, p.EnumTypeFullName);
+            EmitJsonAwareConversion(sb, type, rawIdent, jsonIdent, p.EnumTypeFullName, p.JsonContextName);
             sb.AppendLine(";");
         }
         else
@@ -347,7 +377,7 @@ internal static class Emitter
             sb.Append("                            ");
             sb.Append(ident);
             sb.Append(" = ");
-            EmitJsonAwareConversion(sb, type, rawIdent, jsonIdent, p.EnumTypeFullName);
+            EmitJsonAwareConversion(sb, type, rawIdent, jsonIdent, p.EnumTypeFullName, p.JsonContextName);
             sb.AppendLine(";");
             sb.AppendLine("                        }");
             sb.AppendLine("                        else");
@@ -368,7 +398,8 @@ internal static class Emitter
         string type,
         string rawIdent,
         string jsonIdent,
-        string? enumTypeFullName)
+        string? enumTypeFullName,
+        string? jsonContextName)
     {
         sb.Append(rawIdent);
         sb.Append(" is global::System.Text.Json.JsonElement ");
@@ -387,8 +418,27 @@ internal static class Emitter
             sb.Append(jsonIdent);
             sb.Append(".GetRawText()) : (");
         }
+        else if (jsonContextName is not null)
+        {
+            // Phase 8.2: typed JsonTypeInfo path — AOT-clean. The runtime
+            // JsonSerializer.Deserialize<T>(string, JsonTypeInfo<T>) overload
+            // does not require dynamic code; the linker sees through it.
+            sb.Append(" ? global::System.Text.Json.JsonSerializer.Deserialize<");
+            sb.Append(type);
+            sb.Append(">(");
+            sb.Append(jsonIdent);
+            sb.Append(".GetRawText(), global::Marionette.Generated.MarionetteJsonContext.Default.");
+            sb.Append(jsonContextName);
+            sb.Append(")! : (");
+        }
         else
         {
+            // Legacy fallback for parameter types the JsonTypeCollector
+            // doesn't yet support (slice 3 expansion). Emits the
+            // reflection-based JsonSerializer.Deserialize<T>(string)
+            // overload — preserves backward-compatible runtime behaviour;
+            // surfaces the existing IL2026/IL3050 warnings adopters were
+            // already seeing.
             sb.Append(" ? global::System.Text.Json.JsonSerializer.Deserialize<");
             sb.Append(type);
             sb.Append(">(");
@@ -433,11 +483,40 @@ internal static class Emitter
             sb.Append("                    Watchable: "); sb.Append(obs.Watchable ? "true" : "false"); sb.AppendLine(",");
             sb.Append("                    PollingIntervalMs: "); sb.Append(obs.PollingIntervalMs.ToString(CultureInfo.InvariantCulture)); sb.AppendLine(",");
             sb.Append("                    ClrTypeName: \""); sb.Append(EscapeString(StripGlobalPrefix(obs.PropertyTypeFullName))); sb.AppendLine("\",");
-            sb.Append("                    Read: static (instance) => ((");
-            sb.Append(root.TypeFullName);
-            sb.Append(")instance).");
-            sb.Append(obs.PropertyName);
-            sb.AppendLine("),");
+
+            // Phase 8.2: when the property type's transitive graph is
+            // source-gen-eligible, emit a typed SerializeValue lambda
+            // referencing MarionetteJsonContext. Otherwise stop after Read —
+            // the descriptor's SerializeValue stays default-null and the
+            // runtime falls back to the legacy JsonSerializer.Serialize
+            // path with the existing [RequiresUnreferencedCode] suppression.
+            if (obs.JsonValueContextName is { } jsonValue)
+            {
+                sb.Append("                    Read: static (instance) => ((");
+                sb.Append(root.TypeFullName);
+                sb.Append(")instance).");
+                sb.Append(obs.PropertyName);
+                sb.AppendLine(",");
+                sb.AppendLine("                    SerializeValue: static (value) =>");
+                sb.AppendLine("                    {");
+                sb.AppendLine("                        if (value is null) return \"null\";");
+                sb.Append("                        return global::System.Text.Json.JsonSerializer.Serialize<");
+                sb.Append(obs.PropertyTypeFullName);
+                sb.Append(">((");
+                sb.Append(obs.PropertyTypeFullName);
+                sb.Append(")value, global::Marionette.Generated.MarionetteJsonContext.Default.");
+                sb.Append(jsonValue);
+                sb.AppendLine(");");
+                sb.AppendLine("                    }),");
+            }
+            else
+            {
+                sb.Append("                    Read: static (instance) => ((");
+                sb.Append(root.TypeFullName);
+                sb.Append(")instance).");
+                sb.Append(obs.PropertyName);
+                sb.AppendLine("),");
+            }
         }
         sb.AppendLine("            },");
     }

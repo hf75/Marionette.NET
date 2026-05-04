@@ -4,13 +4,27 @@ Date: 2026-05-04
 
 ## Status
 
-**Phase 8.1 (event args) GREEN.** The source generator now emits a hand-written
-`MarionetteEventArgsJsonContext : JsonSerializerContext` populated via
-`JsonMetadataServices` factory calls, and each `[McpEvent]` descriptor carries
-a typed `SerializeArgs` lambda referencing it. `EventResourceProvider.ReadAsync`
-prefers the lambda; the legacy reflection path is the fallback. AOT publish on
-`Sample.Maui.PocketPlanner` (which carries `AppointmentAddedEventArgs`) emits
-**0 IL2026/IL3050/IL2070/IL2075/IL2046 warnings** across the entire publish.
+**Phase 8.1 + 8.2 GREEN.** The source generator emits two hand-written
+`JsonSerializerContext`-derived classes populated via `JsonMetadataServices`
+factory calls:
+- `MarionetteEventArgsJsonContext` — PascalCase property naming (matches the
+  `ArgsJsonSchema` advertised through `inspect_app_api`); used by every
+  `[McpEvent]` whose args graph is source-gen-eligible.
+- `MarionetteJsonContext` — camelCase property naming (matches
+  `McpJsonUtilities.DefaultOptions`); used by every `[McpObservable]` value,
+  every `[McpCallable]` return type (sync, `Task<T>`, `ValueTask<T>`), and
+  every `[McpCallable]` parameter type whose value arrives as a `JsonElement`.
+
+Each affected descriptor carries a typed `SerializeArgs` /
+`SerializeValue` / `SerializeResult` lambda referencing the right context
+member; the runtime prefers the typed lambda and falls back to the legacy
+reflection-based path only for types the JsonTypeCollector does not yet
+support (slice 3 expansion).
+
+AOT publish on `Sample.Maui.PocketPlanner` (which carries an
+`AppointmentAddedEventArgs` event, four observables incl. `DateTime?`, and
+five callables): **0 IL2026/IL3050/IL2070/IL2075/IL2046 warnings** across
+the entire publish. Marionette code itself emits zero linker warnings.
 
 ## What was tried before this design
 
@@ -138,32 +152,97 @@ Adopters whose `[McpEvent]` args types live within the slice-1 supported
 shape (primitives + plain user records/classes + Nullable<T>) now get a
 compile-time guarantee instead of a hopeful trim attempt.
 
-## Remaining slice 2 scope
+## What landed in Phase 8.2
 
-- `[McpObservable]` typed `SerializeValue` lambdas → `MarionetteJsonContext`
-  (camelCase, matching `McpJsonUtilities.DefaultOptions` convention) for
-  observable property types.
-- `[McpCallable]` typed `SerializeResult` lambdas through the same context.
-- `EmitJsonAwareConversion` (parameter deserialisation) updated to use
-  context-bound `JsonSerializer.Deserialize` overloads.
-- Runtime: `WatchableResourceProvider.{ReadAsync,MaybePushUpdatedAsync,
-  ReadValueJsonInline}`, `MarionetteDispatch.SerializeResult` use the new
-  lambdas; existing IL2026/IL3050 suppressions narrowed.
+### Source generator additions
 
-Slice 3 (future): expand collector support to enums, arrays, and common
-collection generics (`List<T>`, `Dictionary<K, V>`).
+- **Second `JsonTypeCollector`** instance per root (`valueTypes`) parallel
+  to the args-graph collector. Same recursive walk, same rollback-on-failure
+  semantics, same supported shape (primitives + plain user records/classes
+  + `Nullable<T>`).
+- **`JsonContextEmitter` extended** with `EmitEventArgsContext` (PascalCase)
+  and `EmitValueContext` (camelCase via
+  `JsonNamingPolicy.CamelCase` baked into the constructor's
+  `JsonSerializerOptions`). The shared private helper renders the
+  `JsonSerializerContext` body — both contexts emit the same shape, only
+  the options differ.
+- **Per-descriptor lambdas**: `ObservableDescriptor.SerializeValue` and
+  `CallableDescriptor.SerializeResult` (both `Func<object?, string>?`).
+  When the property/return type's transitive graph is source-gen-eligible,
+  the emitter wires `JsonSerializer.Serialize<T>(value, context.Default.<X>)`;
+  otherwise the descriptor's lambda stays default-null.
+- **Parameter deserialisation** rewritten to use the typed
+  `JsonSerializer.Deserialize<T>(string, JsonTypeInfo<T>)` overload through
+  `MarionetteJsonContext.Default.<X>` — closes the IL2026/IL3050 warnings
+  that surfaced once the user assembly grew a custom
+  `JsonSerializerContext` (the AOT linker becomes more aggressive about
+  flagging non-source-gen `JsonSerializer.Deserialize<T>(string)` calls when
+  it sees a `JsonSerializerContext` derivative).
 
-## Known limitations of slice 1
+### Runtime additions
 
-- Args type with `[JsonIgnore]`-decorated properties: the slice-1 collector
-  does not honour the attribute and would emit a property the serializer
-  may then fail to bind. Mitigation: such types fall outside the supported
-  shape and the descriptor falls back to runtime serialisation. To be
-  addressed in slice 3 alongside enum support.
-- Args type with non-default ctor + init-only properties: serialisation
-  works (we only need a public getter); deserialisation is a slice-3
-  concern (parameters were always passed as JsonElement and only
-  deserialised at the runtime boundary).
-- Cycles in the args graph: collector breaks the recursion at depth 6 and
+- **`ObservableDescriptor.SerializeValue`** + **`CallableDescriptor.SerializeResult`** —
+  new optional positional parameters (default null). Adopters' hand-crafted
+  descriptors keep the legacy path; source-gen-emitted descriptors use the
+  typed lambdas.
+- **`WatchableResourceProvider`** (3 call sites — `ReadAsync`,
+  `MaybePushUpdatedAsync`, `ReadValueJsonInline`) prefers
+  `entry.Observable.SerializeValue` over the legacy
+  `JsonSerializer.Serialize(value, McpJsonUtilities.DefaultOptions)`.
+- **`MarionetteDispatch`** prefers `callable.SerializeResult` over
+  `MarionetteDispatch.SerializeResult(object?)`. Existing internal
+  suppressions narrowed in scope.
+
+### Verification
+
+- `dotnet build Marionette.NET.sln -c Debug` — 0 warnings, 0 errors across
+  18 projects.
+- `dotnet test tests/Marionette.NET.SourceGenerator.Tests` — 28/28 PASS
+  (3 snapshots updated for the new typed-deserialise paths).
+- `dotnet test tests/Marionette.NET.Testing.Tests` — 12/12 PASS.
+- `dotnet test tests/Marionette.NET.Integration` — 7 PASS + 3 GUI-skipped.
+- `dotnet publish samples/Sample.Maui.PocketPlanner ... -p:PublishAot=true` —
+  exit 0, **0 IL warnings** (any of IL2026/IL3050/IL2070/IL2075/IL2046)
+  across the publish. Marionette code itself emits zero linker warnings.
+
+## Use cases this unlocks (after 8.1 + 8.2)
+
+| # | Scenario | Before 8.0 | After 8.1 | After 8.2 |
+|---|---|---|---|---|
+| 4 | Frozen-Mode (`--mcp --headless`) | clean | clean | clean |
+| 7 | `raise_event` on framework controls | warn | warn | warn (architectural) |
+| 8 | `[McpEvent]` args complex types | trim-fragile | **AOT guarantee** | **AOT guarantee** |
+| 9 | `[McpObservable]` complex types | trim-fragile | trim-fragile | **AOT guarantee** |
+| — | `[McpCallable]` sync return values | trim-fragile | trim-fragile | **AOT guarantee** |
+| — | `[McpCallable]` `Task<T>` results | trim-fragile | trim-fragile | **AOT guarantee** |
+| — | `[McpCallable]` parameter deserialisation (JsonElement → T) | trim-fragile | trim-fragile | **AOT guarantee** |
+| 6 | Per-method dynamic tools under AOT | SDK blocker | SDK blocker | SDK blocker (`ModelContextProtocol`) |
+
+## Slice 3 scope (deferred)
+
+- **Enums** — JsonMetadataServices uses a different factory shape
+  (`GetEnumConverter<TEnum>` + `CreateValueInfo<TEnum>`); needs a fourth
+  `JsonTypeKind`.
+- **Arrays + collection generics** — `List<T>`, `Dictionary<K, V>`,
+  `T[]`, `IEnumerable<T>` → `JsonMetadataServices.CreateListInfo` /
+  `CreateArrayInfo` / `CreateDictionaryInfo`.
+- **`[JsonIgnore]` honouring** on object-kind types.
+- **`MarionetteTools.SerializeRoot`** (used by `inspect_app_api`) —
+  currently still on the legacy path; low-frequency call so impact is small.
+
+## Known limitations of slice 1 + 2
+
+- Type with `[JsonIgnore]`-decorated properties: the collector does not
+  honour the attribute and would emit a property STJ then expects to be
+  there. Mitigation: such types currently fall outside the supported shape
+  via the recursive walk failing on a sub-property's `[JsonIgnore]`-only
+  type — descriptor falls back to runtime serialisation. Proper handling
+  is slice 3 alongside enums.
+- Cycles in the type graph: collector breaks the recursion at depth 6 and
   bails out. The MaxDepth budget matches `JsonSchemaWriter` so the schema
   string and the JSON-context closure stay consistent.
+- Adopter hand-crafted descriptors: pre-Phase-8 callers that build
+  `CallableDescriptor` / `ObservableDescriptor` / `EventDescriptor` by
+  hand without setting the new optional `Serialize*` lambdas continue to
+  work — the runtime checks `is { } typed` and falls back to the legacy
+  reflection path. No source-breaking changes.

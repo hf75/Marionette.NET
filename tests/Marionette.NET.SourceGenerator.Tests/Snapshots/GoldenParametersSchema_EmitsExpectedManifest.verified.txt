@@ -50,19 +50,24 @@ public static class GeneratedManifest
                     {
                         var typed = (global::Demo.ParamsRoot)instance;
                         var __raw_name = args["name"];
-                        string name = __raw_name is global::System.Text.Json.JsonElement __json_name ? global::System.Text.Json.JsonSerializer.Deserialize<string>(__json_name.GetRawText())! : (string)__raw_name!;
+                        string name = __raw_name is global::System.Text.Json.JsonElement __json_name ? global::System.Text.Json.JsonSerializer.Deserialize<string>(__json_name.GetRawText(), global::Marionette.Generated.MarionetteJsonContext.Default.System_String)! : (string)__raw_name!;
                         var __raw_count = args["count"];
-                        int count = __raw_count is global::System.Text.Json.JsonElement __json_count ? global::System.Text.Json.JsonSerializer.Deserialize<int>(__json_count.GetRawText())! : (int)__raw_count!;
+                        int count = __raw_count is global::System.Text.Json.JsonElement __json_count ? global::System.Text.Json.JsonSerializer.Deserialize<int>(__json_count.GetRawText(), global::Marionette.Generated.MarionetteJsonContext.Default.System_Int32)! : (int)__raw_count!;
                         bool flag;
                         if (args.TryGetValue("flag", out var __raw_flag))
                         {
-                            flag = __raw_flag is global::System.Text.Json.JsonElement __json_flag ? global::System.Text.Json.JsonSerializer.Deserialize<bool>(__json_flag.GetRawText())! : (bool)__raw_flag!;
+                            flag = __raw_flag is global::System.Text.Json.JsonElement __json_flag ? global::System.Text.Json.JsonSerializer.Deserialize<bool>(__json_flag.GetRawText(), global::Marionette.Generated.MarionetteJsonContext.Default.System_Boolean)! : (bool)__raw_flag!;
                         }
                         else
                         {
                             flag = (bool)(true);
                         }
                         return typed.Combo(name, count, flag);
+                    },
+                    SerializeResult: static (value) =>
+                    {
+                        if (value is null) return "null";
+                        return global::System.Text.Json.JsonSerializer.Serialize<int>((int)value, global::Marionette.Generated.MarionetteJsonContext.Default.System_Int32);
                     }),
                 new CallableDescriptor(
                     Name: "Tagged",
@@ -98,6 +103,11 @@ public static class GeneratedManifest
                     {
                         var typed = (global::Demo.ParamsRoot)instance;
                         return typed.Ping();
+                    },
+                    SerializeResult: static (value) =>
+                    {
+                        if (value is null) return "null";
+                        return global::System.Text.Json.JsonSerializer.Serialize<string>((string)value, global::Marionette.Generated.MarionetteJsonContext.Default.System_String);
                     }),
             },
             Observables: global::System.Array.Empty<ObservableDescriptor>(),
@@ -105,4 +115,44 @@ public static class GeneratedManifest
             Events: global::System.Array.Empty<EventDescriptor>()
         ),
     };
+}
+
+/// <summary>
+/// Phase 8.2: AOT-clean JSON serialisation context for [McpObservable] values and [McpCallable] return types. camelCase property naming matches McpJsonUtilities.DefaultOptions for protocol consistency.
+/// All <c>JsonTypeInfo&lt;T&gt;</c> properties are built via
+/// <c>JsonMetadataServices</c> factories at compile time — no runtime
+/// reflection. Property names encode the originating CLR full name with
+/// '.' replaced by '_' so that the registered set is collision-free.
+/// </summary>
+internal sealed class MarionetteJsonContext : global::System.Text.Json.Serialization.JsonSerializerContext
+{
+    private static MarionetteJsonContext? _default;
+    public static MarionetteJsonContext Default
+        => _default ??= new MarionetteJsonContext(new global::System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = global::System.Text.Json.JsonNamingPolicy.CamelCase });
+
+    public MarionetteJsonContext(global::System.Text.Json.JsonSerializerOptions options)
+        : base(options) { }
+
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Boolean>? _System_Boolean;
+    public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Boolean> System_Boolean => _System_Boolean ??= 
+        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::System.Boolean>(Options, global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.BooleanConverter);
+
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Int32>? _System_Int32;
+    public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Int32> System_Int32 => _System_Int32 ??= 
+        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::System.Int32>(Options, global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.Int32Converter);
+
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.String>? _System_String;
+    public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.String> System_String => _System_String ??= 
+        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::System.String>(Options, global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.StringConverter);
+
+
+    protected override global::System.Text.Json.JsonSerializerOptions? GeneratedSerializerOptions => Options;
+
+    public override global::System.Text.Json.Serialization.Metadata.JsonTypeInfo? GetTypeInfo(global::System.Type type)
+    {
+        if (type == typeof(global::System.Boolean)) return System_Boolean;
+        if (type == typeof(global::System.Int32)) return System_Int32;
+        if (type == typeof(global::System.String)) return System_String;
+        return null;
+    }
 }

@@ -46,31 +46,73 @@ namespace Marionette.SourceGenerator;
 internal static class JsonContextEmitter
 {
     /// <summary>
-    /// Emit a <c>MarionetteEventArgsJsonContext</c> partial class containing
+    /// Emit the event-args context — PascalCase property naming so the JSON
+    /// payload mirrors the schema string the source generator advertises
+    /// through inspect_app_api.
+    /// </summary>
+    public static void EmitEventArgsContext(StringBuilder sb, IReadOnlyList<JsonTypeModel> types)
+        => EmitContext(sb, "MarionetteEventArgsJsonContext", types,
+            xmlDocSummary: "Phase 8.1: AOT-clean JSON serialisation context for [McpEvent] args. " +
+                           "PascalCase property naming preserved via default JsonSerializerOptions.",
+            optionsExpr: "new global::System.Text.Json.JsonSerializerOptions()");
+
+    /// <summary>
+    /// Emit the value context (Phase 8.2) — camelCase property naming so
+    /// observable/callable JSON payloads match
+    /// <c>McpJsonUtilities.DefaultOptions</c>'s convention. Used by
+    /// <see cref="ObservableDescriptor.SerializeValue"/> and
+    /// <see cref="CallableDescriptor.SerializeResult"/>.
+    /// </summary>
+    public static void EmitValueContext(StringBuilder sb, IReadOnlyList<JsonTypeModel> types)
+        => EmitContext(sb, "MarionetteJsonContext", types,
+            xmlDocSummary: "Phase 8.2: AOT-clean JSON serialisation context for [McpObservable] " +
+                           "values and [McpCallable] return types. camelCase property naming " +
+                           "matches McpJsonUtilities.DefaultOptions for protocol consistency.",
+            optionsExpr: "new global::System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = global::System.Text.Json.JsonNamingPolicy.CamelCase }");
+
+    /// <summary>
+    /// Emit a <c>JsonSerializerContext</c>-derived partial class containing
     /// hand-written <c>JsonTypeInfo&lt;T&gt;</c> properties for every type in
     /// <paramref name="types"/>. Returns nothing when the input is empty —
     /// the generator skips emission and the runtime keeps its legacy
     /// reflection-based serialisation path.
     /// </summary>
-    public static void Emit(StringBuilder sb, IReadOnlyList<JsonTypeModel> types)
+    private static void EmitContext(
+        StringBuilder sb,
+        string contextName,
+        IReadOnlyList<JsonTypeModel> types,
+        string xmlDocSummary,
+        string optionsExpr)
     {
         if (types.Count == 0) return;
 
         sb.AppendLine();
         sb.AppendLine("/// <summary>");
-        sb.AppendLine("/// Phase 8.1: AOT-clean JSON serialisation context for [McpEvent] args.");
+        sb.Append("/// "); sb.AppendLine(xmlDocSummary);
         sb.AppendLine("/// All <c>JsonTypeInfo&lt;T&gt;</c> properties are built via");
         sb.AppendLine("/// <c>JsonMetadataServices</c> factories at compile time — no runtime");
         sb.AppendLine("/// reflection. Property names encode the originating CLR full name with");
         sb.AppendLine("/// '.' replaced by '_' so that the registered set is collision-free.");
         sb.AppendLine("/// </summary>");
-        sb.AppendLine("internal sealed class MarionetteEventArgsJsonContext : global::System.Text.Json.Serialization.JsonSerializerContext");
+        sb.Append("internal sealed class ");
+        sb.Append(contextName);
+        sb.AppendLine(" : global::System.Text.Json.Serialization.JsonSerializerContext");
         sb.AppendLine("{");
-        sb.AppendLine("    private static MarionetteEventArgsJsonContext? _default;");
-        sb.AppendLine("    public static MarionetteEventArgsJsonContext Default");
-        sb.AppendLine("        => _default ??= new MarionetteEventArgsJsonContext(new global::System.Text.Json.JsonSerializerOptions());");
+        sb.Append("    private static ");
+        sb.Append(contextName);
+        sb.AppendLine("? _default;");
+        sb.Append("    public static ");
+        sb.Append(contextName);
+        sb.AppendLine(" Default");
+        sb.Append("        => _default ??= new ");
+        sb.Append(contextName);
+        sb.Append("(");
+        sb.Append(optionsExpr);
+        sb.AppendLine(");");
         sb.AppendLine();
-        sb.AppendLine("    public MarionetteEventArgsJsonContext(global::System.Text.Json.JsonSerializerOptions options)");
+        sb.Append("    public ");
+        sb.Append(contextName);
+        sb.AppendLine("(global::System.Text.Json.JsonSerializerOptions options)");
         sb.AppendLine("        : base(options) { }");
         sb.AppendLine();
 
@@ -144,16 +186,20 @@ internal static class JsonContextEmitter
 
     private static void EmitNullableCreation(StringBuilder sb, JsonTypeModel type)
     {
-        // CreateNullableInfo<TInner> takes the inner value-type's JsonTypeInfo.
-        // We've already registered the inner under its own property name; the
-        // nullable wrapper's PropertyName is "Nullable_<innerEncoded>".
+        // System.Text.Json doesn't expose a `CreateNullableInfo<T>` factory
+        // directly; the documented AOT-clean path is
+        // `CreateValueInfo<T?>(options, GetNullableConverter<T>(innerInfo))`.
+        // The wrapper's PropertyName is "Nullable_<innerEncoded>" so we can
+        // recover the inner JsonTypeInfo property by stripping the prefix.
         var inner = StripGlobalPrefix(type.UnderlyingTypeFullName!);
         var innerProp = type.PropertyName.Substring("Nullable_".Length);
-        sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateNullableInfo<global::");
+        sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::");
         sb.Append(inner);
-        sb.Append(">(Options, ");
+        sb.Append("?>(Options, global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.GetNullableConverter<global::");
+        sb.Append(inner);
+        sb.Append(">(");
         sb.Append(innerProp);
-        sb.AppendLine(");");
+        sb.AppendLine("));");
     }
 
     private static void EmitObjectCreation(StringBuilder sb, JsonTypeModel type)

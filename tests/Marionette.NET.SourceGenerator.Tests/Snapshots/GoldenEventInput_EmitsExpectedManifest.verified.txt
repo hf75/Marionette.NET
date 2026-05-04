@@ -48,7 +48,7 @@ public static class GeneratedManifest
                     {
                         var typed = (global::Demo.EventRoot)instance;
                         var __raw_name = args["name"];
-                        string name = __raw_name is global::System.Text.Json.JsonElement __json_name ? global::System.Text.Json.JsonSerializer.Deserialize<string>(__json_name.GetRawText())! : (string)__raw_name!;
+                        string name = __raw_name is global::System.Text.Json.JsonElement __json_name ? global::System.Text.Json.JsonSerializer.Deserialize<string>(__json_name.GetRawText(), global::Marionette.Generated.MarionetteJsonContext.Default.System_String)! : (string)__raw_name!;
                         typed.AddItem(name);
                         return null;
                     }),
@@ -61,7 +61,12 @@ public static class GeneratedManifest
                     Watchable: true,
                     PollingIntervalMs: 500,
                     ClrTypeName: "int",
-                    Read: static (instance) => ((global::Demo.EventRoot)instance).Count),
+                    Read: static (instance) => ((global::Demo.EventRoot)instance).Count,
+                    SerializeValue: static (value) =>
+                    {
+                        if (value is null) return "null";
+                        return global::System.Text.Json.JsonSerializer.Serialize<int>((int)value, global::Marionette.Generated.MarionetteJsonContext.Default.System_Int32);
+                    }),
             },
             Triggerables: global::System.Array.Empty<TriggerableDescriptor>(),
             Events: new EventDescriptor[]
@@ -108,7 +113,7 @@ public static class GeneratedManifest
 }
 
 /// <summary>
-/// Phase 8.1: AOT-clean JSON serialisation context for [McpEvent] args.
+/// Phase 8.1: AOT-clean JSON serialisation context for [McpEvent] args. PascalCase property naming preserved via default JsonSerializerOptions.
 /// All <c>JsonTypeInfo&lt;T&gt;</c> properties are built via
 /// <c>JsonMetadataServices</c> factories at compile time — no runtime
 /// reflection. Property names encode the originating CLR full name with
@@ -215,6 +220,41 @@ internal sealed class MarionetteEventArgsJsonContext : global::System.Text.Json.
     {
         if (type == typeof(global::Demo.ItemAddedEventArgs)) return Demo_ItemAddedEventArgs;
         if (type == typeof(global::System.DateTime)) return System_DateTime;
+        if (type == typeof(global::System.Int32)) return System_Int32;
+        if (type == typeof(global::System.String)) return System_String;
+        return null;
+    }
+}
+
+/// <summary>
+/// Phase 8.2: AOT-clean JSON serialisation context for [McpObservable] values and [McpCallable] return types. camelCase property naming matches McpJsonUtilities.DefaultOptions for protocol consistency.
+/// All <c>JsonTypeInfo&lt;T&gt;</c> properties are built via
+/// <c>JsonMetadataServices</c> factories at compile time — no runtime
+/// reflection. Property names encode the originating CLR full name with
+/// '.' replaced by '_' so that the registered set is collision-free.
+/// </summary>
+internal sealed class MarionetteJsonContext : global::System.Text.Json.Serialization.JsonSerializerContext
+{
+    private static MarionetteJsonContext? _default;
+    public static MarionetteJsonContext Default
+        => _default ??= new MarionetteJsonContext(new global::System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = global::System.Text.Json.JsonNamingPolicy.CamelCase });
+
+    public MarionetteJsonContext(global::System.Text.Json.JsonSerializerOptions options)
+        : base(options) { }
+
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Int32>? _System_Int32;
+    public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.Int32> System_Int32 => _System_Int32 ??= 
+        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::System.Int32>(Options, global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.Int32Converter);
+
+    private global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.String>? _System_String;
+    public global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<global::System.String> System_String => _System_String ??= 
+        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::System.String>(Options, global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.StringConverter);
+
+
+    protected override global::System.Text.Json.JsonSerializerOptions? GeneratedSerializerOptions => Options;
+
+    public override global::System.Text.Json.Serialization.Metadata.JsonTypeInfo? GetTypeInfo(global::System.Type type)
+    {
         if (type == typeof(global::System.Int32)) return System_Int32;
         if (type == typeof(global::System.String)) return System_String;
         return null;
