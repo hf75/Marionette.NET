@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:automation="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
         xmlns:local="clr-namespace:Sample.Wpf.TodoApp"
         mc:Ignorable="d"
         Title="Marionette TodoApp"
@@ -84,10 +85,15 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBox x:Name="NewTodoTextBox"
+                     automation:AutomationProperties.AutomationId="NewTodoTextBox"
                      Grid.Column="0"
                      Margin="0,0,8,0"
                      KeyDown="NewTodoTextBox_KeyDown" />
+            <!-- Phase 3.1: AutomationId="AddButton" so simulate_input / raise_event
+                 can resolve the button by a stable, AT-friendly name regardless
+                 of styling. See .phase3/3a-input-events.md for the test case. -->
             <Button x:Name="AddButton"
+                    automation:AutomationProperties.AutomationId="AddButton"
                     Grid.Column="1"
                     Content="Add"
                     Style="{StaticResource AccentButton}"

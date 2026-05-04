@@ -27,6 +27,7 @@
 // pattern). Stripped Release builds never see this type.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -180,6 +181,80 @@ public sealed class AvaloniaUiAutomationAdapter : IUiAutomationAdapter
             _log.LogDebug("ResolveControlAsync requested '{Control}' (rootHint='{Root}').", controlName, rootName);
             var fe = VisualTreeFinder.FindByName(_app, controlName, _log);
             return fe;
+        }, ct);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Phase 3.1 caveat: Avalonia 11.x makes the EventArgs ctors for
+    /// <c>PointerPressedEventArgs</c> / <c>KeyEventArgs</c> /
+    /// <c>TextInputEventArgs</c> internal, so the "test-automation-grade"
+    /// raw-input-pipeline path is not directly available. The Phase 3.1
+    /// Avalonia adapter handles the click variants by raising
+    /// <c>Button.ClickEvent</c> through the public RoutedEvent dispatcher
+    /// (which DOES drive the routed-event handler chain — bubbling /
+    /// tunneling included). Other kinds (key_press, type_text, mouse_move)
+    /// return <see langword="false"/> with a logged limitation. See
+    /// <c>AvaloniaInputSimulator</c> for the full rationale.
+    /// </remarks>
+    public Task<bool> SimulateInputAsync(
+        string rootName,
+        string controlName,
+        string kind,
+        IReadOnlyDictionary<string, object?>? args,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(controlName))
+            throw new ArgumentException("controlName must be non-empty.", nameof(controlName));
+        if (string.IsNullOrEmpty(kind))
+            throw new ArgumentException("kind must be non-empty.", nameof(kind));
+        _ = rootName;
+
+        return DispatchAsync(() =>
+        {
+            var fe = VisualTreeFinder.FindByName(_app, controlName, _log);
+            if (fe is null)
+            {
+                _log.LogInformation("simulate_input: could not resolve '{Control}'.", controlName);
+                return false;
+            }
+            _log.LogDebug("simulate_input '{Kind}' on {Type} (Name={Name}).", kind, fe.GetType().Name, fe.Name);
+            return AvaloniaInputSimulator.Simulate(fe, kind, args, _log);
+        }, ct);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// AOT note: <see cref="AvaloniaEventRaiser.Raise"/> walks the control's
+    /// type chain via reflection looking for static
+    /// <c>&lt;EventName&gt;Event</c> fields (the Avalonia idiom). Trimming
+    /// MAY remove unreferenced fields; framework controls keep theirs
+    /// rooted via XAML. Phase 5's AOT-hardening pass may surface a
+    /// source-gen alternative.
+    /// </remarks>
+    public Task<bool> RaiseEventAsync(
+        string rootName,
+        string controlName,
+        string eventName,
+        IReadOnlyDictionary<string, object?>? args,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(controlName))
+            throw new ArgumentException("controlName must be non-empty.", nameof(controlName));
+        if (string.IsNullOrEmpty(eventName))
+            throw new ArgumentException("eventName must be non-empty.", nameof(eventName));
+        _ = rootName;
+
+        return DispatchAsync(() =>
+        {
+            var fe = VisualTreeFinder.FindByName(_app, controlName, _log);
+            if (fe is null)
+            {
+                _log.LogInformation("raise_event: could not resolve '{Control}'.", controlName);
+                return false;
+            }
+            _log.LogDebug("raise_event '{Event}' on {Type} (Name={Name}).", eventName, fe.GetType().Name, fe.Name);
+            return AvaloniaEventRaiser.Raise(fe, eventName, args, _log);
         }, ct);
     }
 

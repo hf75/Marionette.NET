@@ -84,6 +84,22 @@ Call `capture_screenshot()`. Three outcomes:
 - **`screenshot_not_supported`** — note that the app is in headless mode; suggest re-running with the GUI mode (`--mcp` without `--headless`) to verify visual changes.
 - **Other error** — surface the message; flag as FAIL if the app's adapter is supposed to support screenshots (any non-NoOpAdapter).
 
+### 6b. (Phase 3.1) Drive the most prominent button via `simulate_input`
+
+For each root, identify the most prominent triggerable surface — typically a Button decorated with `AutomationProperties.AutomationId` (e.g. `AddButton`, `UpsertButton`, `RefreshButton`). One per root is enough; the goal is to demonstrate the input pipeline reaches the framework, not exhaustive coverage.
+
+For each candidate:
+
+1. **Capture a screenshot before** (only in non-headless mode; skip if `screenshot_not_supported`).
+2. Call `simulate_input(root, control, kind:"click")`.
+3. Record the response: `success:true` is a PASS; structured error is a FAIL but worth showing the user (often "control not found" → the AutomationId wasn't set, easy fix for the adopter).
+4. **Re-read every observable** that could reflect the click. For an "Add" button, this is typically `TotalCount` or `LastAddedTitle`. Compare to pre-click value.
+5. **Capture a screenshot after**, embed both inline. The visual delta is the smoking gun that the input pipeline drove the UI.
+
+Skip the simulate_input step entirely in `--mcp --headless` mode (no UI to drive). Note "headless mode skipped" in the report so the user knows what was deferred.
+
+For the `raise_event` path: call `raise_event(root, control, event:"Click")` after `simulate_input` to confirm BOTH input paths work. They should produce the same observable delta because the routed-event system fires the same handler chain.
+
 ### 7. Print the structured report
 
 Format:

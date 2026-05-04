@@ -1,13 +1,15 @@
-// Marionette.NET — the four Phase-1 MCP tools
+// Marionette.NET — the Phase-1 + Phase-3.1 MCP tools
 //
-// Per MASTERPLAN Phase 1, the runtime exposes:
+// Per MASTERPLAN Phase 1 + 3, the runtime exposes:
 //
-//   inspect_app_api(rootName?)         → JSON manifest
-//   invoke_method(root, method, args?) → object | structured error
-//   read_observable(root, property)    → object | structured error
-//   capture_screenshot(target?)        → image content block | structured error
+//   inspect_app_api(rootName?)                        → JSON manifest
+//   invoke_method(root, method, args?)                → object | structured error
+//   read_observable(root, property)                   → object | structured error
+//   capture_screenshot(target?)                       → image content block | structured error
+//   simulate_input(root, control, kind, args?)        → {success,errorCode?,message?}    [Phase 3.1]
+//   raise_event(root, control, event, args?)          → {success,errorCode?,message?}    [Phase 3.1]
 //
-// All four are registered via WithTools<MarionetteTools>() — the AOT-friendly
+// All are registered via WithTools<MarionetteTools>() — the AOT-friendly
 // path documented in PHASE0_FINDINGS implication 6. The methods are
 // instance-style on a [McpServerToolType] class; the SDK's reflection on
 // THIS type is the documented exception (the SDK has its own analyzer
@@ -248,6 +250,232 @@ public sealed class MarionetteTools
         }
     }
 
+    // -------------------------------------------------------------------------
+    // simulate_input  (Phase 3.1)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Drive a real input event through the framework's input pipeline against
+    /// the named control. Per MASTERPLAN tenet 8 ("Test-Automation-grade input
+    /// fidelity"), this is the path that pumps real mouse/keyboard events
+    /// through the framework's dispatcher so handlers, focus, capture, and
+    /// hover all behave as if the user clicked.
+    /// </summary>
+    [McpServerTool(Name = "simulate_input")]
+    [Description(
+        "Drives a real input event (click, key press, type text, ...) through the framework's " +
+        "input pipeline against a named control. The control is resolved via " +
+        "AutomationProperties.AutomationId or x:Name in any open window. " +
+        "Returns {success:true} or {success:false,errorCode,message}.")]
+    public static async Task<string> SimulateInputAsync(
+        ManifestRegistry registry,
+        IUiAutomationAdapter adapter,
+        LoopProtectionService loopGuard,
+        ILogger<MarionetteHostMarker> logger,
+        [Description("Manifest name of the [McpRoot] that owns the control (used as a multi-window disambiguation hint).")]
+        string root,
+        [Description("AutomationId or x:Name of the target control inside any currently-open window.")]
+        string control,
+        [Description("Input kind: click | double_click | right_click | key_press | key_down | key_up | type_text | mouse_move.")]
+        string kind,
+        [Description("Optional kind-specific arguments — e.g. {\"key\":\"Enter\"} for key_press, {\"text\":\"hello\"} for type_text, {\"x\":10,\"y\":20} for mouse_move.")]
+        JsonElement? args = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(root))
+            return MakeError("argument_marshalling_failed", "root must be non-empty.").ToJsonString();
+        if (string.IsNullOrEmpty(control))
+            return MakeError("argument_marshalling_failed", "control must be non-empty.").ToJsonString();
+        if (string.IsNullOrEmpty(kind))
+            return MakeError("argument_marshalling_failed", "kind must be non-empty.").ToJsonString();
+
+        // Loop-protection — same shape as invoke_method. Without this an
+        // Ai.Trigger -> simulate_input -> Ai.Trigger cycle could go wild.
+        var hop = loopGuard.TryEnterHop();
+        if (hop.Exceeded)
+        {
+            return new JsonObject
+            {
+                ["success"] = false,
+                ["errorCode"] = "loop_limit_exceeded",
+                ["message"] = $"Hop counter {hop.Hops} exceeds limit {loopGuard.MaxDepth}. " +
+                              "Loop-protection (MASTERPLAN Spielregel 3) refuses further invocations until the call chain decays.",
+                ["hops"] = hop.Hops,
+            }.ToJsonString();
+        }
+
+        // The runtime can dispatch / not dispatch; the adapter is responsible
+        // for routing onto the UI thread because input simulation is
+        // thread-affine in WPF and Avalonia. The token + timeout (default 10s)
+        // bound the call so a hung dispatcher doesn't lock the MCP loop.
+        IReadOnlyDictionary<string, object?>? argMap = null;
+        try
+        {
+            argMap = MaterialiseArgs(args);
+        }
+        catch (Exception ex)
+        {
+            return MakeError("argument_marshalling_failed", ex.Message).ToJsonString();
+        }
+
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
+            var ok = await adapter.SimulateInputAsync(root, control, kind, argMap, cts.Token).ConfigureAwait(false);
+            if (ok)
+            {
+                return new JsonObject
+                {
+                    ["success"] = true,
+                    ["root"] = root,
+                    ["control"] = control,
+                    ["kind"] = kind,
+                }.ToJsonString();
+            }
+            return MakeError("simulate_input_not_supported",
+                $"Adapter could not simulate '{kind}' on '{root}.{control}'. The control may not exist, the kind may not be supported by the active adapter, or the headless mode lacks a UI thread.")
+                .ToJsonString();
+        }
+        catch (OperationCanceledException)
+        {
+            return MakeError("cancelled", "simulate_input was cancelled or timed out (10s).").ToJsonString();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "simulate_input failed: {Root}.{Control} kind={Kind}", root, control, kind);
+            return MakeError("simulate_input_failed", ex.Message).ToJsonString();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // raise_event  (Phase 3.1)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Raise a routed/bubbling event on the named control. Bubbling/tunneling
+    /// is honoured by the framework — handlers on parent containers fire as
+    /// if the event came from a real source. Phase 3.1 defaults to
+    /// parameterless <see cref="System.Windows.RoutedEventArgs"/> (or the
+    /// Avalonia analogue); kind-specific args may be honoured in later
+    /// phases.
+    /// </summary>
+    [McpServerTool(Name = "raise_event")]
+    [Description(
+        "Raises a named routed event (e.g. Click) on a control resolved by AutomationId or x:Name. " +
+        "Bubbling and tunneling are honoured by the framework. Returns {success:true} or " +
+        "{success:false,errorCode,message}.")]
+    public static async Task<string> RaiseEventAsync(
+        ManifestRegistry registry,
+        IUiAutomationAdapter adapter,
+        LoopProtectionService loopGuard,
+        ILogger<MarionetteHostMarker> logger,
+        [Description("Manifest name of the [McpRoot] that owns the control (multi-window disambiguation hint).")]
+        string root,
+        [Description("AutomationId or x:Name of the target control.")]
+        string control,
+        [Description("Event name as declared in C# (e.g. \"Click\", \"MouseDown\"). Inherited events on base types resolve too.")]
+        string @event,
+        [Description("Optional EventArgs property bag. Phase 3.1 ships default-constructed args.")]
+        JsonElement? args = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(root))
+            return MakeError("argument_marshalling_failed", "root must be non-empty.").ToJsonString();
+        if (string.IsNullOrEmpty(control))
+            return MakeError("argument_marshalling_failed", "control must be non-empty.").ToJsonString();
+        if (string.IsNullOrEmpty(@event))
+            return MakeError("argument_marshalling_failed", "event must be non-empty.").ToJsonString();
+
+        var hop = loopGuard.TryEnterHop();
+        if (hop.Exceeded)
+        {
+            return new JsonObject
+            {
+                ["success"] = false,
+                ["errorCode"] = "loop_limit_exceeded",
+                ["message"] = $"Hop counter {hop.Hops} exceeds limit {loopGuard.MaxDepth}.",
+                ["hops"] = hop.Hops,
+            }.ToJsonString();
+        }
+
+        IReadOnlyDictionary<string, object?>? argMap = null;
+        try
+        {
+            argMap = MaterialiseArgs(args);
+        }
+        catch (Exception ex)
+        {
+            return MakeError("argument_marshalling_failed", ex.Message).ToJsonString();
+        }
+
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
+            var ok = await adapter.RaiseEventAsync(root, control, @event, argMap, cts.Token).ConfigureAwait(false);
+            if (ok)
+            {
+                return new JsonObject
+                {
+                    ["success"] = true,
+                    ["root"] = root,
+                    ["control"] = control,
+                    ["event"] = @event,
+                }.ToJsonString();
+            }
+            return MakeError("raise_event_not_supported",
+                $"Adapter could not raise '{@event}' on '{root}.{control}'. The control may not exist, the event may not resolve on the control's type chain, or the active adapter doesn't implement event raising.")
+                .ToJsonString();
+        }
+        catch (OperationCanceledException)
+        {
+            return MakeError("cancelled", "raise_event was cancelled or timed out (10s).").ToJsonString();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "raise_event failed: {Root}.{Control} event={Event}", root, control, @event);
+            return MakeError("raise_event_failed", ex.Message).ToJsonString();
+        }
+    }
+
+    /// <summary>
+    /// Convert a JSON object element into the dictionary shape the adapter
+    /// surface uses. Returns <see langword="null"/> for null/undefined args
+    /// (the adapter treats this as "use defaults"). Throws on non-object
+    /// JSON shapes — the runtime surfaces this as
+    /// <c>argument_marshalling_failed</c>.
+    /// </summary>
+    private static IReadOnlyDictionary<string, object?>? MaterialiseArgs(JsonElement? args)
+    {
+        if (args is not { } el || el.ValueKind == JsonValueKind.Null || el.ValueKind == JsonValueKind.Undefined)
+        {
+            return null;
+        }
+        if (el.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException($"args must be a JSON object; got {el.ValueKind}.");
+        }
+
+        var map = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var prop in el.EnumerateObject())
+        {
+            map[prop.Name] = prop.Value.ValueKind switch
+            {
+                JsonValueKind.String => prop.Value.GetString(),
+                JsonValueKind.Number => prop.Value.TryGetInt32(out var i) ? (object?)i :
+                                       prop.Value.TryGetInt64(out var l) ? (object?)l :
+                                       prop.Value.GetDouble(),
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Null => null,
+                JsonValueKind.Undefined => null,
+                _ => prop.Value.GetRawText(),
+            };
+        }
+        return map;
+    }
+
     // =========================================================================
     // Helpers — argument marshalling, async unwrapping, and dispatch live in
     // MarionetteDispatch (Phase 2.2; shared with DynamicCallableHandler).
@@ -301,6 +529,23 @@ public sealed class MarionetteTools
             ["strategy"] = t.Strategy.ToString(),
             ["controlType"] = t.ControlTypeName,
         }).ToArray());
+
+        // Phase 3.1: advertise the input kinds simulate_input accepts so the
+        // LLM doesn't have to guess. The list is adapter-independent — every
+        // implemented adapter (WPF, Avalonia) handles all eight kinds; an
+        // adapter that doesn't returns false at SimulateInputAsync time. The
+        // entry sits at the root level (not per-triggerable) because
+        // simulate_input works on ANY named control, not just [McpTriggerable]
+        // properties.
+        obj["supportedInputKinds"] = new JsonArray(
+            (JsonNode?)"click",
+            (JsonNode?)"double_click",
+            (JsonNode?)"right_click",
+            (JsonNode?)"key_press",
+            (JsonNode?)"key_down",
+            (JsonNode?)"key_up",
+            (JsonNode?)"type_text",
+            (JsonNode?)"mouse_move");
 
         // Phase 1.6: events. The descriptor's ArgsJsonSchema is a single-line
         // JSON string at compile time; we parse it back here so inspect_app_api

@@ -77,7 +77,7 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: StdioTest <path-to-sample.exe> [--gui] [--todoapp] [--avalonia] [--probe]");
+            Console.Error.WriteLine("Usage: StdioTest <path-to-sample.exe> [--gui] [--todoapp] [--avalonia] [--probe] [--simulate-input]");
             return 2;
         }
 
@@ -86,12 +86,23 @@ internal static class Program
         var guiMode = false;
         var todoAppMode = false;
         var avaloniaMode = false;
+        var simulateInputMode = false;
         for (var ai = 1; ai < args.Length; ai++)
         {
             if (args[ai] == "--probe") probeMode = true;
             else if (args[ai] == "--gui") guiMode = true;
             else if (args[ai] == "--todoapp") todoAppMode = true;
             else if (args[ai] == "--avalonia") avaloniaMode = true;
+            else if (args[ai] == "--simulate-input") simulateInputMode = true;
+        }
+        // --simulate-input only makes sense with a GUI sample (the input
+        // simulator needs a real WPF/Avalonia visual tree). Auto-imply --gui
+        // and surface a warning if the user asked for --simulate-input
+        // without GUI mode — better than silently doing nothing.
+        if (simulateInputMode && !guiMode)
+        {
+            Console.Error.WriteLine("INFO — --simulate-input requires --gui; enabling automatically.");
+            guiMode = true;
         }
         if (!File.Exists(exePath))
         {
@@ -132,6 +143,12 @@ internal static class Program
         if (probeMode)
         {
             psi.Environment["MARIONETTE_STDOUT_PROBE"] = "1";
+        }
+        // Phase 3.1: simulate-input mode runs more sequential invocations
+        // than the default 5-hop budget allows. Bump for this run only.
+        if (simulateInputMode)
+        {
+            psi.Environment["MARIONETTE_MAX_DEPTH"] = "50";
         }
 
         using var child = new Process { StartInfo = psi };
@@ -1125,6 +1142,125 @@ internal static class Program
                 }
             }
             shotResp?.Dispose();
+
+            // -------- Phase 3.1: simulate_input + raise_event ----------------
+            //
+            // Only runs when `--simulate-input` is on (which auto-implies
+            // --gui). Picks a sample-specific (root, control, "click")
+            // tuple, drives the click via simulate_input, then via
+            // raise_event with the C# event name "Click", and reads back
+            // the count observable to confirm the framework saw the event.
+            //
+            // We don't fail when simulate_input returns success:false because
+            // that's a documented Phase-3.1 limitation for the Avalonia
+            // adapter's keyboard/mouse-move kinds; for "click" on a Button,
+            // both adapters do dispatch via the routed-event pipeline.
+            if (simulateInputMode)
+            {
+                string siRoot, siControl, siCountObs;
+                if (todoAppMode)
+                {
+                    siRoot = "TodoListViewModel";
+                    siControl = "AddButton";
+                    siCountObs = "TotalCount";
+                }
+                else if (avaloniaMode)
+                {
+                    siRoot = "DashboardViewModel";
+                    siControl = "UpsertButton";
+                    siCountObs = "MetricCount";
+                }
+                else
+                {
+                    // StripeProbe doesn't have a meaningful Add button at
+                    // the named-control level (the StripeProbe MainWindow
+                    // doesn't expose AutomationId-decorated buttons); skip.
+                    siRoot = string.Empty;
+                    siControl = string.Empty;
+                    siCountObs = string.Empty;
+                }
+
+                if (!string.IsNullOrEmpty(siRoot))
+                {
+                    var preCount = await ReadObservableInt(child, stdoutMessages, siRoot, siCountObs);
+                    Console.WriteLine($"INFO — pre-input {siCountObs}={preCount?.ToString() ?? "<error>"}");
+
+                    // 1) simulate_input click
+                    var siId = Interlocked.Increment(ref _nextRequestId);
+                    var siReq = new
+                    {
+                        jsonrpc = "2.0",
+                        id = siId,
+                        method = "tools/call",
+                        @params = new
+                        {
+                            name = "simulate_input",
+                            arguments = new { root = siRoot, control = siControl, kind = "click" },
+                        },
+                    };
+                    await SendAsync(child, siReq);
+                    var siResp = await WaitForResponseAsync(stdoutMessages, siId, TimeSpan.FromSeconds(15));
+                    if (siResp is null)
+                    {
+                        Console.Error.WriteLine("FAIL — no response to simulate_input within 15s");
+                        failures++;
+                    }
+                    else
+                    {
+                        bool siOk = TryReadToolText(siResp.RootElement, out var siText) &&
+                                    IsSuccessJson(siText);
+                        if (siOk)
+                        {
+                            Console.WriteLine($"PASS — simulate_input(root={siRoot}, control={siControl}, kind=click) returned success");
+                        }
+                        else
+                        {
+                            Console.Error.WriteLine($"FAIL — simulate_input did not return success. Raw: {siResp.RootElement.GetRawText()}");
+                            failures++;
+                        }
+                        siResp.Dispose();
+                    }
+
+                    // 2) raise_event Click
+                    var reId = Interlocked.Increment(ref _nextRequestId);
+                    var reReq = new
+                    {
+                        jsonrpc = "2.0",
+                        id = reId,
+                        method = "tools/call",
+                        @params = new
+                        {
+                            name = "raise_event",
+                            arguments = new { root = siRoot, control = siControl, @event = "Click" },
+                        },
+                    };
+                    await SendAsync(child, reReq);
+                    var reResp = await WaitForResponseAsync(stdoutMessages, reId, TimeSpan.FromSeconds(15));
+                    if (reResp is null)
+                    {
+                        Console.Error.WriteLine("FAIL — no response to raise_event within 15s");
+                        failures++;
+                    }
+                    else
+                    {
+                        bool reOk = TryReadToolText(reResp.RootElement, out var reText) &&
+                                    IsSuccessJson(reText);
+                        if (reOk)
+                        {
+                            Console.WriteLine($"PASS — raise_event(root={siRoot}, control={siControl}, event=Click) returned success");
+                        }
+                        else
+                        {
+                            Console.Error.WriteLine($"FAIL — raise_event did not return success. Raw: {reResp.RootElement.GetRawText()}");
+                            failures++;
+                        }
+                        reResp.Dispose();
+                    }
+
+                    var postCount = await ReadObservableInt(child, stdoutMessages, siRoot, siCountObs);
+                    Console.WriteLine($"INFO — post-input {siCountObs}={postCount?.ToString() ?? "<error>"} (delta {(postCount ?? 0) - (preCount ?? 0)})");
+                }
+            }
         }
         finally
         {
@@ -1185,6 +1321,20 @@ internal static class Program
         foreach (var line in stderrLines)
         {
             if (i++ < 50) Console.WriteLine($"  {line}");
+        }
+        // Phase 3.1: also surface any [diag] lines specifically — useful when
+        // investigating Avalonia adapter reachability issues that the
+        // first-50-lines window may push out.
+        var diagLines = new System.Collections.Generic.List<string>();
+        foreach (var line in stderrLines)
+        {
+            if (line.IndexOf("[diag]", StringComparison.Ordinal) >= 0) diagLines.Add(line);
+        }
+        if (diagLines.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"=== [diag] lines ({diagLines.Count}) ===");
+            foreach (var l in diagLines) Console.WriteLine($"  {l}");
         }
         Console.WriteLine($"stderr total: {stderrLines.Count} lines");
 
@@ -1754,6 +1904,28 @@ internal static class Program
         }
         reason = "no content[].type == image entry";
         return false;
+    }
+
+    /// <summary>
+    /// Phase 3.1 helper: confirm a tools/call result text is a JSON object
+    /// with <c>{"success":true}</c>. Returns false for structured errors
+    /// (which carry <c>{"success":false,"errorCode":...}</c>) and for
+    /// non-object responses.
+    /// </summary>
+    private static bool IsSuccessJson(string toolText)
+    {
+        if (string.IsNullOrEmpty(toolText)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(toolText);
+            return doc.RootElement.ValueKind == JsonValueKind.Object &&
+                   doc.RootElement.TryGetProperty("success", out var s) &&
+                   s.ValueKind == JsonValueKind.True;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static bool HasPngMagic(byte[] bytes)

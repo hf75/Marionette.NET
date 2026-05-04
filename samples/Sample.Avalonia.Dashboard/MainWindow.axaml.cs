@@ -19,7 +19,6 @@ using System.Globalization;
 
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using Avalonia.Markup.Xaml;
 
 namespace Sample.Avalonia.Dashboard;
 
@@ -27,16 +26,20 @@ public partial class MainWindow : Window
 {
     public MainWindow()
     {
+        // InitializeComponent is the source-generator-emitted overload from
+        // Avalonia 11.x's NameGenerator (see obj/.../MainWindow.g.cs). It
+        // calls AvaloniaXamlLoader.Load AND populates the named-element
+        // fields (NameTextBox, UpsertButton, ...). The previous version of
+        // this file shadowed that with a private InitializeComponent() that
+        // only loaded XAML — leaving the fields null and silently breaking
+        // any UpsertButton_Click that touched NameTextBox.Text. Phase 3.1
+        // discovered this when simulate_input fired the click handler and
+        // the no-bug-via-actual-mouse-clicks pattern broke.
         InitializeComponent();
         // Bind the SAME instance the manifest registry holds. App.OnFrameworkInitializationCompleted
         // rewrites the RootDescriptor.Create factory to return DashboardViewModel.Shared
         // so the runtime + UI share state.
         DataContext = DashboardViewModel.Shared;
-    }
-
-    private void InitializeComponent()
-    {
-        AvaloniaXamlLoader.Load(this);
     }
 
     private void UpsertButton_Click(object? sender, RoutedEventArgs e)

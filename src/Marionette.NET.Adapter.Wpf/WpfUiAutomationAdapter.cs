@@ -24,6 +24,7 @@
 // pattern). Stripped Release builds never see this type.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -161,6 +162,79 @@ public sealed class WpfUiAutomationAdapter : IUiAutomationAdapter
             return fe;
         }, ct);
     }
+
+    /// <inheritdoc />
+    public Task<bool> SimulateInputAsync(
+        string rootName,
+        string controlName,
+        string kind,
+        IReadOnlyDictionary<string, object?>? args,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(controlName))
+            throw new ArgumentException("controlName must be non-empty.", nameof(controlName));
+        if (string.IsNullOrEmpty(kind))
+            throw new ArgumentException("kind must be non-empty.", nameof(kind));
+        _ = rootName;
+
+        return DispatchAsync(() =>
+        {
+            var fe = VisualTreeFinder.FindByName(_app, controlName, _log);
+            if (fe is null)
+            {
+                _log.LogInformation("simulate_input: could not resolve '{Control}'.", controlName);
+                return false;
+            }
+            _log.LogDebug("simulate_input '{Kind}' on {Type} (Name={Name}).", kind, fe.GetType().Name, fe.Name);
+            return WpfInputSimulator.Simulate(fe, kind, args, _log);
+        }, ct);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// AOT note: <see cref="WpfEventRaiser.Raise"/> walks the control's type
+    /// chain via reflection looking for static <c>&lt;EventName&gt;Event</c>
+    /// fields (the WPF idiom). Trimming MAY remove unreferenced fields and
+    /// break the lookup; Phase 5's AOT-hardening pass may surface a
+    /// source-gen-emitted alternative that doesn't reflect at runtime. For
+    /// now WPF's own framework controls (Button, TextBox, …) keep their
+    /// RoutedEvent fields rooted because XAML / templating references them.
+    /// Custom controls that strip should fall back to <c>simulate_input</c>.
+    /// </remarks>
+    public Task<bool> RaiseEventAsync(
+        string rootName,
+        string controlName,
+        string eventName,
+        IReadOnlyDictionary<string, object?>? args,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(controlName))
+            throw new ArgumentException("controlName must be non-empty.", nameof(controlName));
+        if (string.IsNullOrEmpty(eventName))
+            throw new ArgumentException("eventName must be non-empty.", nameof(eventName));
+        _ = rootName;
+
+        return DispatchAsync(() =>
+        {
+            var fe = VisualTreeFinder.FindByName(_app, controlName, _log);
+            if (fe is null)
+            {
+                _log.LogInformation("raise_event: could not resolve '{Control}'.", controlName);
+                return false;
+            }
+            _log.LogDebug("raise_event '{Event}' on {Type} (Name={Name}).", eventName, fe.GetType().Name, fe.Name);
+            return RaiseEventReflectively(fe, eventName, args);
+        }, ct);
+    }
+
+    // Wrapping the call lets us mark the helper with the trim attribute and
+    // keep the public RaiseEventAsync clean; the caller chain doesn't need
+    // its own attribute because the IUiAutomationAdapter contract doesn't
+    // promise AOT cleanliness for this method (Phase 5 follow-up).
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Phase 3.1: WPF event lookup uses reflection; trimming caveat documented in adapter XML doc. Phase 5 AOT-hardening pass to produce a source-gen alternative.")]
+    private bool RaiseEventReflectively(UIElement fe, string eventName, IReadOnlyDictionary<string, object?>? args)
+        => WpfEventRaiser.Raise(fe, eventName, args, _log);
 
     // -------------------------------------------------------------------------
     // Screenshot internals (UI-thread-only)

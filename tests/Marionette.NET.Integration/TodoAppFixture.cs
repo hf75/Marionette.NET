@@ -66,10 +66,21 @@ internal sealed class TodoAppFixture : IDisposable
     }
 
     /// <summary>
-    /// Spawn a TodoApp child in `--mcp --headless` mode. Optional environment
-    /// overrides cover the loop-protection knobs used by EC-4.
+    /// Spawn a TodoApp child in `--mcp --headless` (default) or `--mcp` GUI
+    /// mode (when <paramref name="guiMode"/> is true — required for Phase 3.1
+    /// EC-8/EC-9 input simulation tests). Optional environment overrides
+    /// cover the loop-protection knobs used by EC-4.
     /// </summary>
-    public TodoAppFixture(IDictionary<string, string?>? extraEnv = null)
+    /// <param name="extraEnv">Environment variable overrides for the child.</param>
+    /// <param name="guiMode">
+    /// When true, spawn the child WITHOUT <c>--headless</c> so the WPF
+    /// Application + MainWindow are constructed. Required for Phase 3.1
+    /// input-simulation tests. Note: requires an interactive desktop session
+    /// — CI runners without one will fail at <c>Application</c> ctor. Tests
+    /// using GUI mode should be gated on the
+    /// <c>MARIONETTE_GUI_TESTS=1</c> environment variable.
+    /// </param>
+    public TodoAppFixture(IDictionary<string, string?>? extraEnv = null, bool guiMode = false)
     {
         var exePath = ResolveTodoAppExePath();
 
@@ -80,13 +91,13 @@ internal sealed class TodoAppFixture : IDisposable
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            CreateNoWindow = true,
+            CreateNoWindow = !guiMode,
             StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             StandardOutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             StandardErrorEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
         };
         psi.ArgumentList.Add("--mcp");
-        psi.ArgumentList.Add("--headless");
+        if (!guiMode) psi.ArgumentList.Add("--headless");
 
         if (extraEnv is not null)
         {

@@ -19,12 +19,13 @@
 //     intact: a stripped Release build never references Runtime, never sees
 //     the interface, never pulls in any adapter implementation.
 //
-// The interface intentionally exposes a *narrow* surface for Phase 1.2.
-// Phase 1.3+ may add `RaiseEventAsync`, `SimulateInputAsync`,
-// `EnumerateAutomationTreeAsync`, etc. We do NOT pre-add them here — Phase 1.2
-// only needs Dispatch + Screenshot + ResolveControl.
+// Phase 3.1 adds the input-simulation and event-raising hooks that the
+// `simulate_input` and `raise_event` MCP tools depend on. Both methods are
+// additive — Phase 1/2 adapters that don't override them continue to work,
+// they just have to return `false` for the new pair (NoOpAdapter does this).
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -90,4 +91,85 @@ public interface IUiAutomationAdapter
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The resolved control instance, or <see langword="null"/> when not found.</returns>
     Task<object?> ResolveControlAsync(string rootName, string controlName, CancellationToken ct);
+
+    /// <summary>
+    /// Drive a real input event through the framework's input pipeline against
+    /// the named control. The framework treats the input as if it were
+    /// user-driven — focus changes, capture, hover, and routed click handlers
+    /// fire normally. This is the "test-automation-grade" input fidelity
+    /// promised by MASTERPLAN tenet 8.
+    /// </summary>
+    /// <param name="rootName">The <c>[McpRoot]</c>-relative root name; passed through to the visual-tree finder as a disambiguation hint (Phase 3.1: unused, multi-window in Phase 3.3 will key on it).</param>
+    /// <param name="controlName">
+    /// Either an <c>AutomationProperties.AutomationId</c> or an <c>x:Name</c>
+    /// of a control inside a currently-open window. The adapter resolves the
+    /// element through the same visual-tree walker used by
+    /// <see cref="ResolveControlAsync"/>.
+    /// </param>
+    /// <param name="kind">
+    /// String discriminator selecting the kind of input. Phase 3.1 supports:
+    /// <list type="bullet">
+    ///   <item><description><c>"click"</c> — left mouse button down + up</description></item>
+    ///   <item><description><c>"double_click"</c> — left double-click</description></item>
+    ///   <item><description><c>"right_click"</c> — right mouse button down + up</description></item>
+    ///   <item><description><c>"key_press"</c> — key down + up (with optional <c>{key:"Enter"}</c> in <paramref name="args"/>)</description></item>
+    ///   <item><description><c>"key_down"</c> — key down only</description></item>
+    ///   <item><description><c>"key_up"</c> — key up only</description></item>
+    ///   <item><description><c>"type_text"</c> — text input (with <c>{text:"hello"}</c>)</description></item>
+    ///   <item><description><c>"mouse_move"</c> — mouse position update (with <c>{x,y}</c>)</description></item>
+    /// </list>
+    /// Adapters that don't support a kind return <see langword="false"/>.
+    /// </param>
+    /// <param name="args">
+    /// Optional kind-specific argument bag. Keys vary by kind:
+    /// <c>"key"</c> for key-* kinds, <c>"text"</c> for type_text, <c>"x"</c>/<c>"y"</c>
+    /// for mouse_move. <see langword="null"/> means default (e.g. click at the
+    /// element's center).
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// <see langword="true"/> on success, <see langword="false"/> when the
+    /// control couldn't be found or the kind isn't supported by this adapter.
+    /// </returns>
+    Task<bool> SimulateInputAsync(
+        string rootName,
+        string controlName,
+        string kind,
+        IReadOnlyDictionary<string, object?>? args,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Raise a named routed/bubbling event on the named control through the
+    /// framework's event system (WPF <c>RoutedEvent</c>, Avalonia
+    /// <c>RoutedEvent</c>, etc.). EventArgs are constructed from
+    /// <paramref name="args"/> if provided, otherwise default. Bubbling /
+    /// tunneling is honoured by the framework — handlers up and down the
+    /// visual tree fire as if the event came from a real source.
+    /// </summary>
+    /// <param name="rootName">The <c>[McpRoot]</c>-relative root name; passed through as a disambiguation hint (Phase 3.1: unused).</param>
+    /// <param name="controlName">
+    /// Either an <c>AutomationProperties.AutomationId</c> or an <c>x:Name</c>
+    /// of a control inside a currently-open window.
+    /// </param>
+    /// <param name="eventName">
+    /// The C# event name (e.g. <c>"Click"</c>) — adapters resolve it against
+    /// the control's type, walking the base type chain so inherited events
+    /// like <c>ButtonBase.Click</c> work for <c>Button</c>.
+    /// </param>
+    /// <param name="args">
+    /// Optional EventArgs property bag. Phase 3.1 ships default-constructed
+    /// args for routed events that take a parameterless constructor;
+    /// kind-specific args may be honoured in later phases.
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// <see langword="true"/> when the event was raised, <see langword="false"/>
+    /// when the control or event name didn't resolve.
+    /// </returns>
+    Task<bool> RaiseEventAsync(
+        string rootName,
+        string controlName,
+        string eventName,
+        IReadOnlyDictionary<string, object?>? args,
+        CancellationToken ct);
 }

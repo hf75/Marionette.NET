@@ -2,7 +2,7 @@
 
 The canonical reference for the Marionette.NET v1 surface. Every skill in `skill-pack/claude-code/*/SKILL.md` cites this file. Adopters using a non-Claude agent (Cursor, Cline, Aider) can read this directly.
 
-**Status:** Phase 2.1 (WPF + Avalonia). The attribute set is locked; subsequent phases add framework adapters and one new runtime tool surface (input simulation in Phase 3) without changing the core contract.
+**Status:** Phase 3.1 (WPF + Avalonia adapters; input-simulation + routed-event raising). The attribute set is locked; remaining phases add WinUI / Uno / MAUI adapters without changing the core contract.
 
 ---
 
@@ -342,6 +342,119 @@ The runtime caps `invoke_method -> Ai.Trigger -> invoke_method` chains at 5 hops
 ```
 
 The counter has a 30-second decay window; idle conversations don't accumulate.
+
+---
+
+## Driving the app — `simulate_input` and `raise_event` (Phase 3.1)
+
+`invoke_method` is the semantic-first path: when the LLM wants `AddTodo("milk")`, it calls the C# method directly and the framework follows. But sometimes the LLM needs to drive a control as a real user would — to verify the button's `Click` handler fires, to check focus / hover effects, to ensure the framework's RoutedEvent pipeline is intact. **That's what `simulate_input` and `raise_event` are for.**
+
+### `simulate_input(root, control, kind, args?)`
+
+Drives a real input event through the framework's input pipeline against the named control. Per MASTERPLAN tenet 8 — "Test-Automation-grade input fidelity" — this routes the event through the dispatcher so handlers, focus, capture, and hover all behave as if the user produced the event.
+
+**Arguments:**
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `root` | `string` | yes | The `[McpRoot]` manifest name (a multi-window disambiguation hint; in v1 single-window apps it's mostly cosmetic). |
+| `control` | `string` | yes | Either the control's `AutomationProperties.AutomationId` or its `x:Name` (case-sensitive). The adapter walks the visual tree of every open window. |
+| `kind` | `string` | yes | One of: `click`, `double_click`, `right_click`, `key_press`, `key_down`, `key_up`, `type_text`, `mouse_move`. |
+| `args` | `object?` | no | Kind-specific. For `key_*`: `{"key":"Enter"}` or `{"key":"A"}`. For `type_text`: `{"text":"hello"}`. For `mouse_move`: `{"x":10,"y":20}`. |
+
+**Returns:** `{success: true}` on success, `{success: false, errorCode: "simulate_input_not_supported", message: "..."}` when the control couldn't be resolved or the kind isn't supported by the active adapter.
+
+**Examples:**
+
+```json
+// Click the AddButton in the TodoApp.
+{"root":"TodoListViewModel","control":"AddButton","kind":"click"}
+
+// Type text into the new-todo textbox.
+{"root":"TodoListViewModel","control":"NewTodoTextBox","kind":"type_text","args":{"text":"buy milk"}}
+
+// Press Enter inside a textbox to commit.
+{"root":"TodoListViewModel","control":"NewTodoTextBox","kind":"key_press","args":{"key":"Enter"}}
+```
+
+**Adapter coverage (Phase 3.1):**
+
+| Kind | WPF adapter | Avalonia adapter |
+|---|---|---|
+| `click` | yes (full input pipeline) | yes (`Button.ClickEvent` via routed-event dispatch) |
+| `double_click` | yes (MouseDoubleClick + double down/up) | yes (raised `Button.ClickEvent` twice) |
+| `right_click` | yes (right-button down/up) | yes (`Button.ClickEvent`; Avalonia 11.x doesn't expose a publicly-constructible right-click args type) |
+| `key_press` / `key_down` / `key_up` | yes (full keyboard pipeline) | **not yet** — Avalonia 11.x KeyEventArgs ctor is internal. Use a `[McpCallable]` method or `raise_event`. |
+| `type_text` | yes (per-char TextInput) | **not yet** — same Avalonia limitation. |
+| `mouse_move` | yes (RoutedMouseMoveEvent) | **not yet** — Avalonia raw-input pipeline gated. |
+
+When an unsupported kind is invoked the adapter returns `success: false` with a descriptive error code and a logged hint pointing at `[McpCallable]` or `raise_event` as alternatives.
+
+### `raise_event(root, control, event, args?)`
+
+Raises a named routed/bubbling event on the named control. Bubbling and tunneling are honoured by the framework — handlers on parent containers fire as if the event came from a real source.
+
+**Arguments:**
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `root` | `string` | yes | The `[McpRoot]` manifest name (multi-window hint). |
+| `control` | `string` | yes | `AutomationProperties.AutomationId` or `x:Name` of the target. |
+| `event` | `string` | yes | The C# event name (e.g. `"Click"`, `"MouseDown"`). The adapter walks the type chain so inherited events resolve too. |
+| `args` | `object?` | no | Phase 3.1 ships default `RoutedEventArgs`; kind-specific args are honoured in later phases. |
+
+**Returns:** `{success: true}` on success, `{success: false, errorCode: "raise_event_not_supported", message: "..."}` when the event name didn't resolve.
+
+**Examples:**
+
+```json
+// Raise Click on the AddButton (works for any ButtonBase descendant).
+{"root":"TodoListViewModel","control":"AddButton","event":"Click"}
+
+// Avalonia: raise the same Click on a Button.
+{"root":"DashboardViewModel","control":"UpsertButton","event":"Click"}
+```
+
+**Event resolution:**
+
+Both adapters walk the control's type chain looking for a static `<EventName>Event` field of type `RoutedEvent` (the WPF / Avalonia idiom). For `Click` on a `Button`, that resolves to `ButtonBase.ClickEvent` (WPF) or `Button.ClickEvent` (Avalonia 11.x has no `ButtonBase`).
+
+### When to use each path
+
+| Scenario | Tool to use |
+|---|---|
+| You want to invoke a method semantically (the cleanest path). | `invoke_method` |
+| You want to check that a button's `Click` handler is wired correctly. | `raise_event(event:"Click")` (light-weight) or `simulate_input(kind:"click")` (full input pipeline) |
+| You're writing a test that mimics a real user click + focus path. | `simulate_input` |
+| You need to type into a TextBox programmatically. | WPF: `simulate_input(kind:"type_text")`. Avalonia: a `[McpCallable]` that mutates the underlying ViewModel field. |
+| You want to test a custom control's bubbled event handler chain. | `raise_event` (the routed-event system honours bubbling) |
+
+### Don'ts
+
+- **Don't simulate clicks on disabled controls.** WPF and Avalonia both swallow input on disabled targets — the simulate_input call returns success:true (the dispatch happened) but the control's handler doesn't fire. To check enabled state, read the relevant `[McpObservable]` first.
+- **Don't `simulate_input` controls inside collapsed/hidden parents.** Same swallow behaviour. Make the parent visible (or the test will silently no-op).
+- **Don't rely on `simulate_input` to drive complex compound interactions.** Drag-drop, right-click context menus, and platform-native dialogs are explicit non-goals for Phase 3.1. Use `[McpCallable]` to expose the underlying behaviour.
+- **`AutomationProperties.AutomationId` beats `x:Name`.** If you control the XAML, set both — the AutomationId is AT-friendly (screen readers also see it) and stable across visual styling changes.
+
+### Discoverability
+
+`inspect_app_api` advertises `supportedInputKinds` at the root level — Claude reads this list to know what to pass for `kind`:
+
+```json
+{
+  "name": "TodoListViewModel",
+  "callables": [...],
+  "observables": [...],
+  "triggerables": [...],
+  "supportedInputKinds": [
+    "click", "double_click", "right_click",
+    "key_press", "key_down", "key_up",
+    "type_text", "mouse_move"
+  ]
+}
+```
+
+The list reflects the protocol, not adapter coverage — see the Adapter coverage table above for the actual Phase-3.1 capability matrix per framework.
 
 ---
 
