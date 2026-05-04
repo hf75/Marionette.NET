@@ -92,4 +92,36 @@
   <!-- MCP_ENABLED constant + (no-op for WinUI) WPF trim-error suppression. -->
   <Import Project="..\..\build\Marionette.NET.targets" />
 
+  <!--
+    `dotnet publish` on an unpackaged WinUI 3 app
+    (`<WindowsPackageType>None</WindowsPackageType>`) silently drops the XAML
+    compiler's binary outputs from the publish set:
+      - Per-XAML `.xbf` files (e.g. `App.xbf`, `MainWindow.xbf`)
+      - The app-level `<AssemblyName>.pri` resource index
+    These files DO land in the build output (`bin\<TFM>\<RID>\`) but are
+    never enrolled in `@(ResolvedFileToPublish)` — `_GeneratedXBFFiles` is
+    populated, `_PriFiles` is empty, and `_ResolvedCopyLocalPublishAssets`
+    only carries dependency-project pri files (e.g. the adapter's), not the
+    leaf app's. Without the .pri the loose-file XAML parser cannot resolve
+    `ms-appx:///` URIs at startup, so `Microsoft.UI.Xaml.dll` fails its
+    first activation with COM HRESULT `0x80004005` and the process dies
+    with `0xc000027b` (`STATUS_APPLICATION_INTERNAL_EXCEPTION`).
+    Fix: copy the missing XAML compiler outputs from the build output
+    directly to the publish directory after `Publish` completes. This
+    bypasses the resolved-file plumbing entirely and is the pattern used by
+    most unpackaged WinUI 3 sample projects on GitHub.
+  -->
+  <Target Name="_CopyXamlBinariesAndPriToPublishDir"
+          AfterTargets="Publish"
+          Condition="'$(WindowsPackageType)' == 'None'">
+    <ItemGroup>
+      <_MarionetteXamlBuildOutputs Include="$(OutDir)*.xbf" />
+      <_MarionetteXamlBuildOutputs Include="$(OutDir)$(AssemblyName).pri" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_MarionetteXamlBuildOutputs)"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('%(_MarionetteXamlBuildOutputs.Identity)')" />
+  </Target>
+
 </Project>
