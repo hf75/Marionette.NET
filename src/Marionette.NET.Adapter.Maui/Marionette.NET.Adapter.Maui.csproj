@@ -1,0 +1,72 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Phase 4.1 - .NET MAUI adapter for Marionette.NET.
+      Phase 4.1 single-targets net10.0-windows10.0.19041.0 because:
+        * The MAUI workload (10.0.20) installed locally provides the Windows
+          head with the same SDK ref WinUI 3 uses (Microsoft.Windows.SDK.NET.Ref
+          via Windows10.0.19041.0).
+        * Android, iOS, and MacCatalyst all need cross-platform toolchains
+          (Apple SDKs for iOS/MacCatalyst; Java/Android SDK for Android) that
+          this build environment does not have. Multi-target is documented as
+          a Phase-6 follow-up.
+        * Pinning the adapter to the Windows TFM keeps the dependency graph
+          predictable: the adapter only references the Windows-bound MAUI
+          assemblies, so a sample that wants to expand to other heads simply
+          references the adapter against its broader TFM list and the same
+          adapter source compiles unchanged (UseMaui + the platform-neutral
+          Microsoft.Maui.Controls API surface is what we depend on).
+
+      Pinned to the locally-cached MAUI 10.0.20 stable. Adopters who track a
+      newer stable can override the package version in their own csproj.
+    -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <RootNamespace>Marionette.Adapter.Maui</RootNamespace>
+    <AssemblyName>Marionette.NET.Adapter.Maui</AssemblyName>
+    <Description>.NET MAUI adapter for Marionette.NET. Only referenced when EnableMcpAutomation=true on a MAUI project.</Description>
+
+    <!--
+      The adapter is a library; the consuming app's csproj sets the deployment
+      mode (packaged vs unpackaged). The Phase 4.1 sample uses unpackaged
+      (WindowsPackageType=None); adopters who want MSIX override.
+    -->
+    <UseRidGraph>true</UseRidGraph>
+
+    <!--
+      Trim / AOT analyzer flags. Same rationale as Adapter.Wpf, Adapter.Avalonia,
+      and Adapter.WinUI: light up only when the consumer is being AOT-published.
+      MAUI itself is not yet AOT-clean (transitive XAML / handler reflection),
+      so adopters who flip PublishAot=true should expect IL3xxx warnings from
+      MAUI assemblies themselves. From Marionette code: 0 warnings. The XML doc
+      on the public RaiseEvent helper documents the AOT caveat for adopters.
+    -->
+    <IsAotCompatible Condition="'$(PublishAot)'=='true' and $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">true</IsAotCompatible>
+    <IsTrimmable Condition="'$(PublishAot)'=='true' and $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">true</IsTrimmable>
+  </PropertyGroup>
+
+  <!-- During AOT publish flows, allow warnings through so the spike can capture them. -->
+  <PropertyGroup Condition="'$(PublishAot)'=='true'">
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Marionette.NET.Runtime\Marionette.NET.Runtime.csproj" />
+  </ItemGroup>
+
+  <!--
+    Microsoft.Maui.Controls is implicitly added by the MAUI workload's
+    BundledVersions.targets when UseMaui=true, but we set it explicitly so the
+    build doesn't emit the MA002 "set this PackageReference" warning that the
+    Phase 4.1 SDK uses to nudge adopters away from implicit references.
+
+    We deliberately do NOT pull Microsoft.Maui.Controls.Compatibility — Phase
+    4.1 has no use for legacy Xamarin.Forms compat shapes.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.20" />
+  </ItemGroup>
+
+</Project>

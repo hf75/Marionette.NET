@@ -77,7 +77,7 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: StdioTest <path-to-sample.exe> [--gui] [--todoapp] [--avalonia] [--winui] [--probe] [--simulate-input] [--two-windows]");
+            Console.Error.WriteLine("Usage: StdioTest <path-to-sample.exe> [--gui] [--todoapp] [--avalonia] [--winui] [--maui] [--probe] [--simulate-input] [--two-windows]");
             return 2;
         }
 
@@ -87,6 +87,7 @@ internal static class Program
         var todoAppMode = false;
         var avaloniaMode = false;
         var winuiMode = false;
+        var mauiMode = false;
         var simulateInputMode = false;
         var twoWindowsMode = false;
         for (var ai = 1; ai < args.Length; ai++)
@@ -96,6 +97,7 @@ internal static class Program
             else if (args[ai] == "--todoapp") todoAppMode = true;
             else if (args[ai] == "--avalonia") avaloniaMode = true;
             else if (args[ai] == "--winui") winuiMode = true;
+            else if (args[ai] == "--maui") mauiMode = true;
             else if (args[ai] == "--simulate-input") simulateInputMode = true;
             else if (args[ai] == "--two-windows") twoWindowsMode = true;
         }
@@ -134,13 +136,15 @@ internal static class Program
         // where the captured PNG provides a visual sanity check that the
         // TodoListViewModel UI rendered correctly.
 
-        var phaseLabel = winuiMode
-            ? "Phase 3.2 WinUI FormLab stdio handshake harness"
-            : (avaloniaMode
-                ? "Phase 2.1 Avalonia Dashboard stdio handshake harness"
-                : (todoAppMode
-                    ? (twoWindowsMode ? "Phase 3.3 TodoApp --two-windows stdio handshake harness" : "Phase 1.4 TodoApp stdio handshake harness")
-                    : (guiMode ? "Phase 1.3 stdio + GUI screenshot harness" : "Phase 1.2 stdio handshake harness")));
+        var phaseLabel = mauiMode
+            ? "Phase 4.1 MAUI PocketPlanner stdio handshake harness"
+            : (winuiMode
+                ? "Phase 3.2 WinUI FormLab stdio handshake harness"
+                : (avaloniaMode
+                    ? "Phase 2.1 Avalonia Dashboard stdio handshake harness"
+                    : (todoAppMode
+                        ? (twoWindowsMode ? "Phase 3.3 TodoApp --two-windows stdio handshake harness" : "Phase 1.4 TodoApp stdio handshake harness")
+                        : (guiMode ? "Phase 1.3 stdio + GUI screenshot harness" : "Phase 1.2 stdio handshake harness"))));
         Console.WriteLine($"=== {phaseLabel} ===");
         Console.WriteLine($"Child: {exePath}");
         Console.WriteLine($"Args:  --mcp{(guiMode ? string.Empty : " --headless")}");
@@ -314,7 +318,16 @@ internal static class Program
                 // the very first tools/list response (the SDK gets them
                 // staged in DynamicToolRegistry.RegisterInitial before the
                 // run loop starts).
-                string[] expectedDynamicTools = winuiMode
+                string[] expectedDynamicTools = mauiMode
+                    ? new[]
+                    {
+                        "PlannerViewModel.AddAppointment",
+                        "PlannerViewModel.RemoveAppointment",
+                        "PlannerViewModel.MoveAppointment",
+                        "PlannerViewModel.CompleteAll",
+                        "PlannerViewModel.Clear",
+                    }
+                    : (winuiMode
                     ? new[]
                     {
                         "FormLabViewModel.SetName",
@@ -345,7 +358,7 @@ internal static class Program
                             : new[]
                             {
                                 "MainWindow.Add",
-                            }));
+                            })));
                 var missingDyn = new System.Collections.Generic.List<string>();
                 foreach (var t in expectedDynamicTools)
                 {
@@ -364,7 +377,225 @@ internal static class Program
             }
 
             // -------- Sample-specific tool-call assertions --------
-            if (winuiMode)
+            if (mauiMode)
+            {
+                // ============ MAUI PocketPlanner Phase-4.1 assertion suite ============
+                //
+                // Mirror of the WinUI / Dashboard suites, but for
+                // Sample.Maui.PocketPlanner's PlannerViewModel root. PocketPlanner exposes:
+                //   * 5 [McpCallable]: AddAppointment, RemoveAppointment, MoveAppointment,
+                //                      CompleteAll, Clear
+                //   * 4 [McpObservable]: AppointmentCount (watchable), CompletedCount (watchable),
+                //                        EarliestStartTime (non-watchable), LastAddedTitle (non-watchable)
+                //   * 1 [McpEvent]: AppointmentAdded (with AppointmentAddedEventArgs payload)
+                //
+                // Headless mode: ViewModel starts empty (no appointments).
+                // The harness asserts:
+                //   * inspect_app_api lists PlannerViewModel with all 5 callables + 4 observables + 1 event.
+                //   * read_observable AppointmentCount returns 0 baseline.
+                //   * resources/subscribe to AppointmentAdded BEFORE add.
+                //   * invoke_method AddAppointment("Lunch", <iso>, 60) succeeds.
+                //   * Notification fires for AppointmentAdded with args.Title="Lunch".
+                //   * read_observable AppointmentCount returns 1 after add.
+                //   * read_observable LastAddedTitle returns "Lunch" after add.
+                //   * capture_screenshot returns 'screenshot_not_supported' (NoOpAdapter in --headless).
+                var inspectId = Interlocked.Increment(ref _nextRequestId);
+                var inspectReq = new
+                {
+                    jsonrpc = "2.0",
+                    id = inspectId,
+                    method = "tools/call",
+                    @params = new { name = "inspect_app_api", arguments = new { } },
+                };
+                await SendAsync(child, inspectReq);
+                var inspectResp = await WaitForResponseAsync(stdoutMessages, inspectId, TimeSpan.FromSeconds(10));
+                if (inspectResp is null)
+                {
+                    Console.Error.WriteLine("FAIL — no response to inspect_app_api within 10s");
+                    failures++;
+                }
+                else
+                {
+                    string manifestErr = "no inspect_app_api text content";
+                    bool manifestOk = TryReadToolText(inspectResp.RootElement, out var inspectText) &&
+                                      TryParsePocketPlannerManifest(inspectText, out manifestErr);
+                    if (manifestOk)
+                    {
+                        Console.WriteLine("PASS — inspect_app_api returned PlannerViewModel manifest with all 5 callables + 4 observables + 1 event");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"FAIL — inspect_app_api manifest mismatch: {manifestErr}. Raw: {inspectResp.RootElement.GetRawText()}");
+                        failures++;
+                    }
+                    inspectResp.Dispose();
+                }
+
+                // ---- baseline reads
+                var initCount = await ReadObservableInt(child, stdoutMessages, "PlannerViewModel", "AppointmentCount");
+                if (initCount == 0)
+                {
+                    Console.WriteLine("PASS — read_observable AppointmentCount initially returned 0");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — read_observable AppointmentCount initial = {initCount?.ToString() ?? "<error>"}, expected 0");
+                    failures++;
+                }
+
+                var initTitle = await ReadObservableString(child, stdoutMessages, "PlannerViewModel", "LastAddedTitle");
+                // null observable read may return "null" text or empty - both acceptable for the empty case
+                if (initTitle is null || initTitle == "" || initTitle == "null")
+                {
+                    Console.WriteLine($"PASS — read_observable LastAddedTitle initially returned null/empty (got '{initTitle ?? "<null>"}')");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — read_observable LastAddedTitle initial = '{initTitle}', expected null/empty");
+                    failures++;
+                }
+
+                // ---- subscribe to events/AppointmentAdded BEFORE the add
+                var eventUri = "marionette://PlannerViewModel/events/AppointmentAdded";
+                var evSubId = Interlocked.Increment(ref _nextRequestId);
+                var evSubReq = new
+                {
+                    jsonrpc = "2.0",
+                    id = evSubId,
+                    method = "resources/subscribe",
+                    @params = new { uri = eventUri },
+                };
+                await SendAsync(child, evSubReq);
+                var evSubResp = await WaitForResponseAsync(stdoutMessages, evSubId, TimeSpan.FromSeconds(10));
+                bool evSubOk = evSubResp is not null && evSubResp.RootElement.TryGetProperty("result", out _);
+                evSubResp?.Dispose();
+                if (!evSubOk)
+                {
+                    Console.Error.WriteLine($"FAIL — resources/subscribe to {eventUri} did not return a result.");
+                    failures++;
+                }
+                else
+                {
+                    var evWatcher = StartNotificationWatcher(stdoutMessages);
+                    // ---- AddAppointment("Lunch", 2026-05-04T12:00, 60)
+                    var startTime = "2026-05-04T12:00:00";
+                    var addOk = await InvokeMethodAsync(child, stdoutMessages,
+                        "PlannerViewModel", "AddAppointment", new { title = "Lunch", startTime, durationMinutes = 60 });
+                    if (!addOk.Success)
+                    {
+                        Console.Error.WriteLine($"FAIL — invoke_method AddAppointment failed: {addOk.Detail}");
+                        failures++;
+                    }
+                    else
+                    {
+                        Console.WriteLine("PASS — invoke_method AddAppointment(\"Lunch\", ..., 60) succeeded");
+
+                        var gotEvUpdate = await WaitForResourceUpdate(evWatcher, eventUri, TimeSpan.FromSeconds(5));
+                        if (!gotEvUpdate)
+                        {
+                            Console.Error.WriteLine($"FAIL — no notifications/resources/updated for {eventUri} within 5s after AddAppointment.");
+                            failures++;
+                        }
+                        else
+                        {
+                            // Read the resource and confirm the args carry the title.
+                            var readId = Interlocked.Increment(ref _nextRequestId);
+                            var readReq = new
+                            {
+                                jsonrpc = "2.0",
+                                id = readId,
+                                method = "resources/read",
+                                @params = new { uri = eventUri },
+                            };
+                            await SendAsync(child, readReq);
+                            var readResp = await WaitForResponseAsync(stdoutMessages, readId, TimeSpan.FromSeconds(5));
+                            bool readOk = false;
+                            string readDetail = "no resources/read response";
+                            if (readResp is not null && readResp.RootElement.TryGetProperty("result", out var rr) &&
+                                rr.TryGetProperty("contents", out var cs) && cs.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var c in cs.EnumerateArray())
+                                {
+                                    if (!c.TryGetProperty("text", out var txt)) continue;
+                                    var text = txt.GetString() ?? string.Empty;
+                                    try
+                                    {
+                                        using var inner = JsonDocument.Parse(text);
+                                        if (inner.RootElement.TryGetProperty("events", out var evArr) &&
+                                            evArr.ValueKind == JsonValueKind.Array && evArr.GetArrayLength() > 0)
+                                        {
+                                            bool found = false;
+                                            int len = evArr.GetArrayLength();
+                                            foreach (var ev in evArr.EnumerateArray())
+                                            {
+                                                if (ev.TryGetProperty("args", out var argsEl) &&
+                                                    argsEl.TryGetProperty("Title", out var titleEl) &&
+                                                    titleEl.GetString() == "Lunch")
+                                                {
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+                                            if (found)
+                                            {
+                                                readOk = true;
+                                                readDetail = $"sequence={(inner.RootElement.TryGetProperty("sequence", out var sq) ? sq.GetInt64() : -1)}, count={len}, args.Title=\"Lunch\" present";
+                                            }
+                                            else
+                                            {
+                                                readDetail = "no event with args.Title='Lunch' found in buffer";
+                                            }
+                                        }
+                                        else
+                                        {
+                                            readDetail = "no events array or empty";
+                                        }
+                                    }
+                                    catch (JsonException ex)
+                                    {
+                                        readDetail = $"events resource text not JSON: {ex.Message}";
+                                    }
+                                }
+                            }
+                            readResp?.Dispose();
+                            if (readOk)
+                            {
+                                Console.WriteLine($"PASS — resources/subscribe + AddAppointment produced an event notification on {eventUri} ({readDetail})");
+                            }
+                            else
+                            {
+                                Console.Error.WriteLine($"FAIL — event resource read mismatch: {readDetail}");
+                                failures++;
+                            }
+                        }
+                    }
+                }
+
+                // ---- AppointmentCount now 1
+                var afterCount = await ReadObservableInt(child, stdoutMessages, "PlannerViewModel", "AppointmentCount");
+                if (afterCount == 1)
+                {
+                    Console.WriteLine("PASS — read_observable AppointmentCount returned 1 after AddAppointment");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — AppointmentCount after AddAppointment = {afterCount?.ToString() ?? "<error>"}, expected 1");
+                    failures++;
+                }
+
+                // ---- LastAddedTitle now "Lunch"
+                var afterTitle = await ReadObservableString(child, stdoutMessages, "PlannerViewModel", "LastAddedTitle");
+                if (afterTitle == "Lunch")
+                {
+                    Console.WriteLine("PASS — read_observable LastAddedTitle returned 'Lunch' after AddAppointment");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"FAIL — LastAddedTitle after AddAppointment = '{afterTitle ?? "<error>"}', expected 'Lunch'");
+                    failures++;
+                }
+            }
+            else if (winuiMode)
             {
                 // ============ WinUI FormLab Phase-3.2 assertion suite ============
                 //
@@ -1831,13 +2062,15 @@ internal static class Program
         Console.WriteLine($"stderr total: {stderrLines.Count} lines");
 
         Console.WriteLine();
-        var verdictLabel = winuiMode
-            ? "Phase 3.2 WinUI FormLab handshake"
-            : (avaloniaMode
-                ? "Phase 2.1 Avalonia Dashboard handshake"
-                : (todoAppMode
-                    ? (twoWindowsMode ? "Phase 3.3 TodoApp --two-windows handshake" : "Phase 1.4 TodoApp handshake")
-                    : (guiMode ? "Phase 1.3 GUI handshake" : "Phase 1.2 handshake")));
+        var verdictLabel = mauiMode
+            ? "Phase 4.1 MAUI PocketPlanner handshake"
+            : (winuiMode
+                ? "Phase 3.2 WinUI FormLab handshake"
+                : (avaloniaMode
+                    ? "Phase 2.1 Avalonia Dashboard handshake"
+                    : (todoAppMode
+                        ? (twoWindowsMode ? "Phase 3.3 TodoApp --two-windows handshake" : "Phase 1.4 TodoApp handshake")
+                        : (guiMode ? "Phase 1.3 GUI handshake" : "Phase 1.2 handshake"))));
         if (failures == 0)
         {
             Console.WriteLine($"=== {verdictLabel}: PASS ===");
@@ -1963,6 +2196,84 @@ internal static class Program
             var actualCallables = ExtractNames(formLab.Value, "callables");
             var actualObservables = ExtractNames(formLab.Value, "observables");
             var actualEvents = ExtractNames(formLab.Value, "events");
+
+            foreach (var c in expectedCallables)
+            {
+                if (!actualCallables.Contains(c))
+                {
+                    error = $"missing callable '{c}'; got [{string.Join(",", actualCallables)}]";
+                    return false;
+                }
+            }
+            foreach (var o in expectedObservables)
+            {
+                if (!actualObservables.Contains(o))
+                {
+                    error = $"missing observable '{o}'; got [{string.Join(",", actualObservables)}]";
+                    return false;
+                }
+            }
+            foreach (var ev in expectedEvents)
+            {
+                if (!actualEvents.Contains(ev))
+                {
+                    error = $"missing event '{ev}'; got [{string.Join(",", actualEvents)}]";
+                    return false;
+                }
+            }
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            error = $"manifest is not valid JSON: {ex.Message}";
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Validate that the inspect_app_api response describes the MAUI
+    /// PocketPlanner's expected manifest: PlannerViewModel root with five
+    /// callables (AddAppointment, RemoveAppointment, MoveAppointment,
+    /// CompleteAll, Clear), four observables (AppointmentCount,
+    /// CompletedCount, EarliestStartTime, LastAddedTitle), and one event
+    /// (AppointmentAdded).
+    /// </summary>
+    private static bool TryParsePocketPlannerManifest(string inspectText, out string error)
+    {
+        error = string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(inspectText);
+            var root = doc.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Array)
+            {
+                error = $"expected array of roots, got {root.ValueKind}";
+                return false;
+            }
+
+            JsonElement? planner = null;
+            foreach (var entry in root.EnumerateArray())
+            {
+                if (entry.TryGetProperty("name", out var n) && n.GetString() == "PlannerViewModel")
+                {
+                    planner = entry;
+                    break;
+                }
+            }
+            if (planner is null)
+            {
+                error = "no root named 'PlannerViewModel' in manifest";
+                return false;
+            }
+
+            var expectedCallables = new[] { "AddAppointment", "RemoveAppointment", "MoveAppointment", "CompleteAll", "Clear" };
+            var expectedObservables = new[] { "AppointmentCount", "CompletedCount", "EarliestStartTime", "LastAddedTitle" };
+            var expectedEvents = new[] { "AppointmentAdded" };
+
+            var actualCallables = ExtractNames(planner.Value, "callables");
+            var actualObservables = ExtractNames(planner.Value, "observables");
+            var actualEvents = ExtractNames(planner.Value, "events");
 
             foreach (var c in expectedCallables)
             {

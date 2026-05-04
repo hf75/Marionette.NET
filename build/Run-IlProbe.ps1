@@ -60,6 +60,7 @@ param(
         'Adapter.Wpf',
         'Adapter.Avalonia',
         'Adapter.WinUI',
+        'Adapter.Maui',
         'Marionette.Ai',
         'ModelContextProtocol'
     ),

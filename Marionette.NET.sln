@@ -32,6 +32,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Marionette.NET.Adapter.WinU
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sample.WinUI.FormLab", "samples\Sample.WinUI.FormLab\Sample.WinUI.FormLab.csproj", "{D3D3D3D3-D3D3-D3D3-D3D3-D3D3D3D3D3D3}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Marionette.NET.Adapter.Maui", "src\Marionette.NET.Adapter.Maui\Marionette.NET.Adapter.Maui.csproj", "{E4E4E4E4-E4E4-E4E4-E4E4-E4E4E4E4E4E4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sample.Maui.PocketPlanner", "samples\Sample.Maui.PocketPlanner\Sample.Maui.PocketPlanner.csproj", "{F5F5F5F5-F5F5-F5F5-F5F5-F5F5F5F5F5F5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -86,6 +90,14 @@ Global
 		{D3D3D3D3-D3D3-D3D3-D3D3-D3D3D3D3D3D3}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D3D3D3D3-D3D3-D3D3-D3D3-D3D3D3D3D3D3}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D3D3D3D3-D3D3-D3D3-D3D3-D3D3D3D3D3D3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E4E4E4E4-E4E4-E4E4-E4E4-E4E4E4E4E4E4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E4E4E4E4-E4E4-E4E4-E4E4-E4E4E4E4E4E4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E4E4E4E4-E4E4-E4E4-E4E4-E4E4E4E4E4E4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E4E4E4E4-E4E4-E4E4-E4E4-E4E4E4E4E4E4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F5F5F5F5-F5F5-F5F5-F5F5-F5F5F5F5F5F5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F5F5F5F5-F5F5-F5F5-F5F5-F5F5F5F5F5F5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F5F5F5F5-F5F5-F5F5-F5F5-F5F5F5F5F5F5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F5F5F5F5-F5F5-F5F5-F5F5-F5F5F5F5F5F5}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -103,5 +115,7 @@ Global
 		{B1B1B1B1-B1B1-B1B1-B1B1-B1B1B1B1B1B1} = {22222222-2222-2222-2222-222222222222}
 		{C2C2C2C2-C2C2-C2C2-C2C2-C2C2C2C2C2C2} = {11111111-1111-1111-1111-111111111111}
 		{D3D3D3D3-D3D3-D3D3-D3D3-D3D3D3D3D3D3} = {22222222-2222-2222-2222-222222222222}
+		{E4E4E4E4-E4E4-E4E4-E4E4-E4E4E4E4E4E4} = {11111111-1111-1111-1111-111111111111}
+		{F5F5F5F5-F5F5-F5F5-F5F5-F5F5F5F5F5F5} = {22222222-2222-2222-2222-222222222222}
 	EndGlobalSection
 EndGlobal

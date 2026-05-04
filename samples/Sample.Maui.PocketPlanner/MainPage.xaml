@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Sample.Maui.PocketPlanner"
+             xmlns:models="clr-namespace:Sample.Maui.PocketPlanner.Models"
+             x:Class="Sample.Maui.PocketPlanner.MainPage"
+             x:DataType="vm:PlannerViewModel"
+             Title="Marionette Pocket Planner">
+
+    <Grid Padding="20" RowDefinitions="Auto,Auto,*,Auto">
+
+        <!-- Header -->
+        <VerticalStackLayout Grid.Row="0" Spacing="4" Margin="0,0,0,16">
+            <Label Text="Marionette Pocket Planner"
+                   FontSize="22"
+                   FontAttributes="Bold" />
+            <Label Text="An MCP-controllable MAUI daily-appointment planner. Try it: claude mcp add it, then ask Claude to add an appointment, mark all complete, or clear the list."
+                   FontSize="11"
+                   Opacity="0.7"
+                   LineBreakMode="WordWrap" />
+        </VerticalStackLayout>
+
+        <!-- Status bar -->
+        <Border Grid.Row="1"
+                Stroke="{AppThemeBinding Light=#DDDDDD, Dark=#444444}"
+                StrokeThickness="1"
+                Padding="14,10"
+                Margin="0,0,0,16">
+            <Grid ColumnDefinitions="*,*,*">
+                <VerticalStackLayout Grid.Column="0">
+                    <Label Text="TOTAL" FontSize="10" Opacity="0.6" />
+                    <Label x:Name="TotalLabel"
+                           Text="{Binding AppointmentCount}"
+                           FontSize="16"
+                           FontAttributes="Bold" />
+                </VerticalStackLayout>
+                <VerticalStackLayout Grid.Column="1">
+                    <Label Text="COMPLETED" FontSize="10" Opacity="0.6" />
+                    <Label x:Name="CompletedLabel"
+                           Text="{Binding CompletedCount}"
+                           FontSize="16"
+                           FontAttributes="Bold" />
+                </VerticalStackLayout>
+                <VerticalStackLayout Grid.Column="2">
+                    <Label Text="LAST ADDED" FontSize="10" Opacity="0.6" />
+                    <Label x:Name="LastAddedLabel"
+                           Text="{Binding LastAddedTitle, FallbackValue='-'}"
+                           FontSize="16"
+                           FontAttributes="Bold"
+                           LineBreakMode="TailTruncation" />
+                </VerticalStackLayout>
+            </Grid>
+        </Border>
+
+        <!-- Appointment list -->
+        <CollectionView Grid.Row="2"
+                        x:Name="AppointmentsList"
+                        AutomationId="AppointmentsList"
+                        ItemsSource="{Binding Appointments}"
+                        EmptyView="No appointments scheduled. Use the form below or ask Claude to add one.">
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="models:Appointment">
+                    <Grid Padding="0,8" ColumnDefinitions="80,*,Auto" ColumnSpacing="12">
+                        <Label Grid.Column="0"
+                               Text="{Binding TimeWindow}"
+                               FontSize="12"
+                               VerticalOptions="Center"
+                               Opacity="0.7" />
+                        <Label Grid.Column="1"
+                               Text="{Binding DisplayTitle}"
+                               FontSize="14"
+                               VerticalOptions="Center" />
+                        <Label Grid.Column="2"
+                               Text="{Binding DurationMinutes, StringFormat='{0} min'}"
+                               FontSize="12"
+                               Opacity="0.5"
+                               VerticalOptions="Center" />
+                    </Grid>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+
+        <!-- Quick-add row + action buttons -->
+        <Grid Grid.Row="3"
+              ColumnDefinitions="*,160,Auto,Auto"
+              ColumnSpacing="8"
+              Margin="0,16,0,0">
+            <Entry Grid.Column="0"
+                   x:Name="TitleEntry"
+                   AutomationId="TitleEntry"
+                   Placeholder="Appointment title" />
+            <DatePicker Grid.Column="1"
+                        x:Name="DatePicker"
+                        AutomationId="DatePicker" />
+            <Button Grid.Column="2"
+                    x:Name="AddButton"
+                    AutomationId="AddButton"
+                    Text="Add"
+                    Clicked="AddButton_Clicked" />
+            <Button Grid.Column="3"
+                    x:Name="ClearButton"
+                    AutomationId="ClearButton"
+                    Text="Clear"
+                    Clicked="ClearButton_Clicked" />
+        </Grid>
+
+    </Grid>
+</ContentPage>

@@ -2,7 +2,7 @@
 
 The canonical reference for the Marionette.NET v1 surface. Every skill in `skill-pack/claude-code/*/SKILL.md` cites this file. Adopters using a non-Claude agent (Cursor, Cline, Aider) can read this directly.
 
-**Status:** Phase 3.2 (WPF + Avalonia + WinUI adapters; input-simulation + routed-event raising). The attribute set is locked; remaining phases add Uno / MAUI adapters without changing the core contract.
+**Status:** Phase 4.1 (WPF + Avalonia + WinUI + MAUI adapters; input-simulation + routed-event raising). The attribute set is locked; remaining phases (Uno) add adapters without changing the core contract.
 
 ---
 
@@ -15,6 +15,7 @@ The canonical reference for the Marionette.NET v1 surface. Every skill in `skill
 | `MarionetteWpf.AttachTo` (WPF adapter bootstrap) | `Marionette.Adapter.Wpf` |
 | `MarionetteAvalonia.AttachTo` (Avalonia adapter bootstrap) | `Marionette.Adapter.Avalonia` |
 | `MarionetteWinUI.AttachTo` (WinUI 3 adapter bootstrap) | `Marionette.Adapter.WinUI` |
+| `MarionetteMaui.AttachTo` (MAUI adapter bootstrap) | `Marionette.Adapter.Maui` |
 | `MarionetteHost.RunAsync` (headless host entry) | `Marionette.Runtime` |
 | `RootDescriptor`, `CallableDescriptor`, `ObservableDescriptor`, `TriggerableDescriptor`, `EventDescriptor`, `ParamDescriptor` | `Marionette.Runtime.Manifest` |
 | `GeneratedManifest.Roots` (source-generator output) | `Marionette.Generated` |
@@ -852,6 +853,64 @@ MarionetteWinUI.AttachTo(this, _mainWindow, roots);
 ```
 
 See `samples/Sample.WinUI.FormLab/App.xaml.cs` for the working reference.
+
+### MAUI — App.OnStart
+
+.NET MAUI adopters use the cross-platform AttachTo. The same attribute set works (no MAUI-specific attributes); the lifecycle hook is `Application.OnStart` (or any other early-startup hook called after the Application is constructed and the live Window has a Page):
+
+```csharp
+using Microsoft.Maui.Controls;
+
+#if MCP_ENABLED
+using Marionette.Adapter.Maui;
+using Marionette.Generated;
+#endif
+
+namespace MyApp;
+
+public partial class App : Application
+{
+    public App() => InitializeComponent();
+
+    protected override Window CreateWindow(IActivationState? activationState) =>
+        new Window(new MainPage());
+
+    protected override void OnStart()
+    {
+        base.OnStart();
+
+#if MCP_ENABLED
+        var argv = Environment.GetCommandLineArgs();
+        var argsExceptExe = argv.Length > 1 ? argv[1..] : Array.Empty<string>();
+        MarionetteMaui.AttachTo(this, GeneratedManifest.Roots, argsExceptExe);
+#endif
+    }
+}
+```
+
+**TFM choice for MAUI adopters:** Phase 4.1 single-targets `net10.0-windows10.0.19041.0`. Multi-target to Android / iOS / MacCatalyst is a Phase-6 follow-up (and inherently requires platform-specific toolchains: Apple SDKs for iOS / MacCatalyst, Java + Android SDK for Android). Adopters who need other heads add them to `<TargetFrameworks>` in their own csproj; the adapter source compiles identically because it depends only on platform-neutral `Microsoft.Maui.Controls` and `Microsoft.Maui.Dispatching` types.
+
+**Unpackaged-first:** the Phase 4.1 sample sets `<WindowsPackageType>None</WindowsPackageType>` on the Windows head so the app ships as a regular `.exe`. Adopters who need MSIX packaging override that.
+
+**simulate_input on MAUI:** for `kind:"click"` the adapter uses the `IButtonController.SendClicked()` semantic path (works on every MAUI head, no elevation, no platform-specific input injection). For `kind:"type_text"` the adapter sets `Entry.Text` / `Editor.Text` / `SearchBar.Text` directly. Other kinds (`key_*`, `mouse_move`, `right_click`) return `success:false` with a logged limitation; MAUI 10.x doesn't expose publicly-constructible keyboard / pointer event-args. Adopters who need keyboard automation should decorate the underlying handler with `[McpCallable]` and invoke via invoke_method.
+
+**Screenshot on MAUI:** Phase 4.1 captures the entire device screen via `Microsoft.Maui.Media.Screenshot.Default.CaptureAsync()`. Element-level screenshot is a Phase-6 refinement; passing `targetName` still produces a full-screen PNG with a logged note.
+
+### Non-Window root binding (MAUI)
+
+Same pattern as WPF / Avalonia / WinUI — non-`Page` roots need an explicit factory rewrite:
+
+```csharp
+var roots = GeneratedManifest.Roots
+    .Select(r => r.TypeName == typeof(MyViewModel).FullName
+        ? r with { Create = static () => MyViewModel.Shared }
+        : r)
+    .ToList();
+
+MarionetteMaui.AttachTo(this, roots);
+```
+
+See `samples/Sample.Maui.PocketPlanner/App.xaml.cs` for the working reference.
 
 ---
 

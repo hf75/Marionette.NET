@@ -215,7 +215,8 @@ The attributes alone don't start the MCP server — the host has to be wired. De
 - `<UseWPF>true</UseWPF>` -> WPF -> use `MarionetteWpf.AttachTo`.
 - `<PackageReference Include="Avalonia"` -> Avalonia -> use `MarionetteAvalonia.AttachTo`.
 - `<UseWinUI>true</UseWinUI>` OR `<PackageReference Include="Microsoft.WindowsAppSDK"` -> WinUI 3 -> use `MarionetteWinUI.AttachTo`.
-- MAUI / Uno -> not in Phase 3.2 yet.
+- `<UseMaui>true</UseMaui>` OR `<PackageReference Include="Microsoft.Maui.Controls"` -> .NET MAUI -> use `MarionetteMaui.AttachTo`.
+- Uno -> not in Phase 4.1 yet.
 
 Show the user the canonical wiring snippet for their framework:
 
@@ -277,14 +278,37 @@ protected override void OnLaunched(LaunchActivatedEventArgs args)
 }
 ```
 
-For non-Window roots (custom ViewModels), see `samples/Sample.Wpf.TodoApp/App.xaml.cs` (WPF), `samples/Sample.Avalonia.Dashboard/App.axaml.cs` (Avalonia), or `samples/Sample.WinUI.FormLab/App.xaml.cs` (WinUI) in the Marionette repo for the descriptor-factory rewrite pattern that wires the runtime's instance to the same singleton your DataContext uses.
+**.NET MAUI:**
+
+```csharp
+// In App.xaml.cs
+protected override Window CreateWindow(IActivationState? activationState) =>
+    new Window(new MainPage());
+
+protected override void OnStart()
+{
+    base.OnStart();
+
+#if MCP_ENABLED
+    var argv = Environment.GetCommandLineArgs();
+    var argsExceptExe = argv.Length > 1 ? argv[1..] : Array.Empty<string>();
+    Marionette.Adapter.Maui.MarionetteMaui.AttachTo(
+        this,
+        Marionette.Generated.GeneratedManifest.Roots,
+        argsExceptExe);
+#endif
+}
+```
+
+For non-Window/Page roots (custom ViewModels), see `samples/Sample.Wpf.TodoApp/App.xaml.cs` (WPF), `samples/Sample.Avalonia.Dashboard/App.axaml.cs` (Avalonia), `samples/Sample.WinUI.FormLab/App.xaml.cs` (WinUI), or `samples/Sample.Maui.PocketPlanner/App.xaml.cs` (MAUI) in the Marionette repo for the descriptor-factory rewrite pattern that wires the runtime's instance to the same singleton your BindingContext / DataContext uses.
 
 Also need:
-- A `<StartupObject>` that handles `--mcp` / `--mcp --headless` flags (see `samples/Sample.Wpf.TodoApp/Program.cs` (WPF), `samples/Sample.Avalonia.Dashboard/Program.cs` (Avalonia), or `samples/Sample.WinUI.FormLab/Program.cs` (WinUI) as templates).
-- WPF: `<EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>` so the SDK doesn't auto-emit a competing `Main`. Avalonia uses `<OutputType>Exe</OutputType>` (NOT WinExe) and a custom `Main` that wires `BuildAvaloniaApp().StartWithClassicDesktopLifetime(args)`. WinUI uses `<DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>` to suppress the XAML compiler's auto-emitted `Program.Main`.
-- TFM: WPF requires `net10.0-windows`. Avalonia adopters should use `net10.0` (NOT `net10.0-windows`) because Avalonia is cross-platform. WinUI 3 requires `net10.0-windows10.0.<sdk>.0` (e.g. `net10.0-windows10.0.19041.0` for Windows App SDK 1.8.x) plus `<UseWinUI>true</UseWinUI>` and `<WindowsPackageType>None</WindowsPackageType>` for unpackaged deployment.
+- A `<StartupObject>` that handles `--mcp` / `--mcp --headless` flags (see `samples/Sample.Wpf.TodoApp/Program.cs` (WPF), `samples/Sample.Avalonia.Dashboard/Program.cs` (Avalonia), `samples/Sample.WinUI.FormLab/Program.cs` (WinUI), or `samples/Sample.Maui.PocketPlanner/Platforms/Windows/Program.cs` (MAUI Windows head) as templates).
+- WPF: `<EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>` so the SDK doesn't auto-emit a competing `Main`. Avalonia uses `<OutputType>Exe</OutputType>` (NOT WinExe) and a custom `Main` that wires `BuildAvaloniaApp().StartWithClassicDesktopLifetime(args)`. WinUI / MAUI Windows head uses `<DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>` to suppress the XAML compiler's auto-emitted `Program.Main`.
+- TFM: WPF requires `net10.0-windows`. Avalonia adopters should use `net10.0` (NOT `net10.0-windows`) because Avalonia is cross-platform. WinUI 3 requires `net10.0-windows10.0.<sdk>.0` (e.g. `net10.0-windows10.0.19041.0` for Windows App SDK 1.8.x) plus `<UseWinUI>true</UseWinUI>` and `<WindowsPackageType>None</WindowsPackageType>` for unpackaged deployment. MAUI single-targets `net10.0-windows10.0.19041.0` for Phase 4.1; multi-target with Android / iOS / MacCatalyst requires those platform toolchains and is a Phase-6 follow-up.
 - The `EnableMcpAutomation` MSBuild property (defaults to Debug=on, Release=off via `build/Marionette.NET.props`).
 - WinUI's `simulate_input` may need `inputInjectionBrokered` capability or elevation for full kind coverage; click variants work unpackaged + unelevated via the `ButtonAutomationPeer.Invoke` path.
+- MAUI's `simulate_input` covers `click` (via `IButtonController.SendClicked()`) and `type_text` (via direct `Entry.Text` / `Editor.Text` setter); other kinds return `success:false` with a logged limitation. Use `[McpCallable]` for the underlying state mutation when full input fidelity isn't needed.
 
 ### 9. Encourage running the test skill
 

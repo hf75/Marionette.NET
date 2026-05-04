@@ -1,0 +1,126 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Phase 4.1 - Sample.Maui.PocketPlanner
+    The canonical .NET MAUI adopter-reference. A real, decorated, INPC-plumbed
+    daily-planner sample showcasing diverse decorations and the simulate_input
+    capability via MAUI's IButtonController-based semantic input path.
+
+    Defaults for EnableMcpAutomation come from build/Marionette.NET.props
+    (Debug => true, Release => false).
+  -->
+  <Import Project="..\..\build\Marionette.NET.props" />
+
+  <PropertyGroup>
+    <!--
+      Phase 4.1 single-targets the Windows head. Multi-target to Android /
+      iOS / MacCatalyst is documented out of scope: this build environment
+      lacks the cross-platform toolchains (Apple SDKs for iOS / MacCatalyst,
+      Java / Android SDK for Android). Adopters who target other heads
+      override this list in their own csproj; the adapter source compiles
+      identically on every MAUI head because it depends only on
+      Microsoft.Maui.Controls + Microsoft.Maui.Dispatching, both of which
+      are platform-neutral.
+    -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Sample.Maui.PocketPlanner</RootNamespace>
+    <AssemblyName>Sample.Maui.PocketPlanner</AssemblyName>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!--
+      Per the MA002 warning, set this so we don't get nagged about the implicit
+      Microsoft.Maui.Controls package reference - we're explicitly pinning it.
+    -->
+    <SkipValidateMauiImplicitPackageReferences>true</SkipValidateMauiImplicitPackageReferences>
+
+    <!--
+      MAUI 10 generates XAML at compile time by default; the SourceGen mode
+      produces faster startup and is the default in fresh `dotnet new maui`
+      output. We mirror it.
+    -->
+    <MauiXamlInflator>SourceGen</MauiXamlInflator>
+
+    <!-- Display name -->
+    <ApplicationTitle>Marionette Pocket Planner</ApplicationTitle>
+    <!-- App Identifier -->
+    <ApplicationId>com.marionette.maui.pocketplanner</ApplicationId>
+    <!-- Versions -->
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+
+    <!--
+      Unpackaged Windows deployment - matches the WinUI sample's choice. The
+      app ships as a regular .exe; no MSIX registration required.
+    -->
+    <WindowsPackageType>None</WindowsPackageType>
+
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
+    <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
+
+    <!--
+      Suppress the XAML compiler's auto-generated Program.Main on Windows.
+      We ship our own custom Main in Platforms/Windows/Program.cs so the same
+      .exe runs as a regular MAUI GUI, an MCP server with GUI (mcp flag), or
+      a headless MCP server (mcp + headless flags). Same constant the WinUI
+      sample uses (DISABLE_XAML_GENERATED_MAIN); the MAUI Windows head's
+      App.g.i.cs is gated on it identically.
+    -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <StartupObject>Sample.Maui.PocketPlanner.WinUI.Program</StartupObject>
+    <ApplicationManifest>Platforms\Windows\app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- App Icon -->
+    <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#512BD4" />
+
+    <!-- Splash Screen -->
+    <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#512BD4" BaseSize="128,128" />
+
+    <!-- Images -->
+    <MauiImage Include="Resources\Images\*" />
+
+    <!-- Custom Fonts -->
+    <MauiFont Include="Resources\Fonts\*" />
+
+    <!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
+    <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- MAUI core packages -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.20" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.1" />
+  </ItemGroup>
+
+  <!-- Always reference Abstractions; attributes survive into Release as markup. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />
+  </ItemGroup>
+
+  <!-- Source generator wiring. Same shape as TodoApp / Dashboard / FormLab. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.SourceGenerator\Marionette.NET.SourceGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- Adapter (and transitively Runtime + ModelContextProtocol) only when MCP is on. -->
+  <ItemGroup Condition="'$(EnableMcpAutomation)'=='true'">
+    <ProjectReference Include="..\..\src\Marionette.NET.Adapter.Maui\Marionette.NET.Adapter.Maui.csproj" />
+  </ItemGroup>
+
+  <!-- Emit Marionette.g.cs to disk so adopters can see what the generator produced. -->
+  <PropertyGroup>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+
+  <!-- MCP_ENABLED constant + (no-op for MAUI) WPF trim-error suppression. -->
+  <Import Project="..\..\build\Marionette.NET.targets" />
+
+</Project>
