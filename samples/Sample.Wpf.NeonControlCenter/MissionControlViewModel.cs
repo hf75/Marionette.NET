@@ -234,19 +234,44 @@ public sealed class MissionControlViewModel : INotifyPropertyChanged
         return newLevel;
     }
 
-    [McpCallable("Run a long-running diagnostic on a thread-pool thread; returns a status string when done.",
-        OffUiThread = true, TimeoutSeconds = 10)]
+    [McpCallable("Run an async diagnostic; returns a status string when done.",
+        TimeoutSeconds = 10)]
     public async Task<string> RunDiagnosticAsync()
     {
+        // Capture the WPF Dispatcher (null in --headless mode).
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+
+        // Initial state set is on the UI thread (Marionette dispatched here).
         SystemStatus = "DIAGNOSTIC";
         StatusLine = "DIAGNOSTIC :: SCAN IN PROGRESS";
+
+        // Async wait. Marionette source-gen wraps user methods with
+        // ConfigureAwait(false), so after this await we're on a threadpool
+        // thread — UI-bound mutations would crash.
         await Task.Delay(800).ConfigureAwait(false);
-        // simulated workload …
+
         var pass = (_reactorOutput + _coolantPressure / 2 + _quantumFlux / 100.0) % 7 < 5.5;
         var result = pass ? "DIAGNOSTIC :: ALL SUBSYSTEMS NOMINAL" : "DIAGNOSTIC :: ANOMALY DETECTED";
-        SystemStatus = pass ? "STANDBY" : "CRITICAL";
-        StatusLine = result;
-        EmitAlert(pass ? "info" : "critical", result);
+
+        // Marshal UI-touching mutations (AlertFeed.Insert is bound to a
+        // ListBox CollectionView) back through the Dispatcher when running
+        // in GUI mode. In --headless mode dispatcher is null and we mutate
+        // directly — there's no UI to be cross-thread-correct against.
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            await dispatcher.InvokeAsync(() =>
+            {
+                SystemStatus = pass ? "STANDBY" : "CRITICAL";
+                StatusLine = result;
+                EmitAlert(pass ? "info" : "critical", result);
+            });
+        }
+        else
+        {
+            SystemStatus = pass ? "STANDBY" : "CRITICAL";
+            StatusLine = result;
+            EmitAlert(pass ? "info" : "critical", result);
+        }
         return result;
     }
 

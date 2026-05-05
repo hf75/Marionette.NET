@@ -25,7 +25,7 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: NeonStdioTest <path-to-Sample.Wpf.NeonControlCenter.exe>");
+            Console.Error.WriteLine("Usage: NeonStdioTest <path-to-Sample.Wpf.NeonControlCenter.exe> [--watch]");
             return 2;
         }
         var exe = args[0];
@@ -34,6 +34,14 @@ internal static class Program
             Console.Error.WriteLine($"FAIL — exe not found: {exe}");
             return 2;
         }
+        // --watch: GUI mode (no --headless) + delays between steps so the
+        // user can see live state changes in the WPF window.
+        bool watch = false;
+        for (int i = 1; i < args.Length; i++)
+        {
+            if (args[i] == "--watch") watch = true;
+        }
+        var stepDelay = watch ? TimeSpan.FromMilliseconds(2000) : TimeSpan.Zero;
 
         Console.WriteLine();
         Console.WriteLine("===== NEON CONTROL CENTER ===== MCP DEBUG SESSION =====");
@@ -52,7 +60,7 @@ internal static class Program
             StandardErrorEncoding = new UTF8Encoding(false),
         };
         psi.ArgumentList.Add("--mcp");
-        psi.ArgumentList.Add("--headless");
+        if (!watch) psi.ArgumentList.Add("--headless");
         // Bump the loop-protection hop budget so the 13-step test sequence
         // doesn't trip Spielregel 3's default cap of 5 hops. The protection
         // itself is working correctly; the test just exercises more tools
@@ -143,6 +151,9 @@ internal static class Program
                     Console.WriteLine($"       -> {s}");
                 }
             }
+            // Watch-mode delay: gives the WPF UI a moment to render the
+            // change so the user can see it before the next call fires.
+            if (stepDelay > TimeSpan.Zero) await Task.Delay(stepDelay).ConfigureAwait(false);
             return true;
         }
 
