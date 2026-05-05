@@ -100,14 +100,13 @@ internal static class MauiInputSimulator
 
             case "key_down":
             case "key_up":
-                log.LogInformation(
-                    "simulate_input: kind '{Kind}' is not supported by the MAUI adapter — " +
-                    "MAUI 10.x has no publicly-constructible KeyboardEventArgs and no public " +
-                    "way to fire the platform handler's key-down / key-up events. Use a " +
-                    "[McpCallable] method that mutates the underlying state, OR `key_press` " +
-                    "with key=\"Enter\" for the form-submit semantic on Entry / Editor / SearchBar.",
-                    kind);
-                return false;
+                // Phase 14: Win32 SendInput on the Windows head closes this
+                // cross-platform-MAUI gap. The OS converts the synthetic
+                // keyboard input into the WinUI handler's KeyDown/KeyUp event,
+                // which MAUI's handler bridges into the cross-platform
+                // KeyboardKeyEventArgs. Other heads (Android, iOS) still log
+                // the limitation and return false.
+                return TryWin32KeyEvent(target, kind, args, log);
 
             case "mouse_move":
                 // Phase 12.3: invoke PointerGestureRecognizer.PointerMovedCommand
@@ -358,5 +357,60 @@ internal static class MauiInputSimulator
                 target.AutomationId ?? "(unset)");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Phase 14: Win32 SendInput key_down / key_up on the MAUI Windows head.
+    /// MAUI Windows runs on top of WinUI, so the OS-level keyboard input
+    /// flows through the same WinUI handler bridge that converts to
+    /// cross-platform <c>KeyboardKeyEventArgs</c>. Adopters get parity with
+    /// the WinUI adapter on Windows; other heads (Android / iOS / Mac
+    /// Catalyst) still log and return false.
+    /// </summary>
+    private static bool TryWin32KeyEvent(
+        Element target,
+        string kind,
+        IReadOnlyDictionary<string, object?>? args,
+        ILogger log)
+    {
+        if (!Marionette.Runtime.Internal.Win32InputInjector.IsAvailable)
+        {
+            log.LogInformation(
+                "simulate_input: kind '{Kind}' on non-Windows MAUI head is not supported. " +
+                "Use a [McpCallable] method that mutates the underlying state, OR `key_press` " +
+                "with key=\"Enter\" for the form-submit semantic.",
+                kind);
+            return false;
+        }
+
+        if (args is null || !args.TryGetValue("key", out var keyObj) || keyObj is not string keyName)
+        {
+            log.LogWarning("simulate_input({Kind}) requires args.key (string).", kind);
+            return false;
+        }
+
+        var vk = Marionette.Runtime.Internal.Win32InputInjector.TryParseKeyName(keyName);
+        if (vk is null)
+        {
+            log.LogWarning(
+                "simulate_input({Kind}): unrecognised key name '{Key}'. " +
+                "Try 'Enter', 'Tab', 'Escape', a function key (F1..F12), or a single character.",
+                kind, keyName);
+            return false;
+        }
+
+        // Best-effort: focus the target Element so the OS-injected keystroke
+        // reaches the right control. MAUI's Element.Focus() returns false
+        // when not focusable; we don't fail the operation either way.
+        if (target is VisualElement ve)
+        {
+            try { ve.Focus(); } catch { /* not all elements are focusable */ }
+        }
+
+        var ok = kind == "key_down"
+            ? Marionette.Runtime.Internal.Win32InputInjector.SendKeyDown(vk.Value)
+            : Marionette.Runtime.Internal.Win32InputInjector.SendKeyUp(vk.Value);
+        if (ok) log.LogDebug("simulate_input({Kind}) succeeded via Win32 SendInput on Windows head.", kind);
+        return ok;
     }
 }

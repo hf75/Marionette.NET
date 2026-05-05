@@ -283,14 +283,19 @@ internal static class WinUiInputSimulator
 
     private static bool TryInjectMouseClick(FrameworkElement target, bool leftButton, bool doubleClick, ILogger log)
     {
-        var injector = TryCreateInjector(log);
-        if (injector is null) return false;
-
         var screenPt = TryComputeScreenCenter(target, log);
         if (screenPt is null)
         {
             log.LogInformation("simulate_input(click): could not compute screen-space center for '{Name}'; aborting.", target.Name);
             return false;
+        }
+
+        var injector = TryCreateInjector(log);
+        if (injector is null)
+        {
+            // Phase 14: Win32 SendInput click fallback. Move mouse to the
+            // computed center, then send the matching down+up sequence.
+            return TryWin32ClickFallback(screenPt.Value.X, screenPt.Value.Y, leftButton, doubleClick, log);
         }
 
         try
@@ -328,15 +333,37 @@ internal static class WinUiInputSimulator
         }
         catch (Exception ex)
         {
-            log.LogWarning(ex, "simulate_input(click) InjectMouseInput on '{Name}' threw.", target.Name);
-            return false;
+            log.LogWarning(ex, "simulate_input(click) InjectMouseInput on '{Name}' threw; trying Win32 SendInput fallback.", target.Name);
+            return TryWin32ClickFallback(screenPt.Value.X, screenPt.Value.Y, leftButton, doubleClick, log);
         }
+    }
+
+    /// <summary>
+    /// Phase 14: Win32 <c>SendInput</c> click fallback. Moves the mouse to the
+    /// computed screen center then sends the appropriate down/up sequence
+    /// (twice for double-click).
+    /// </summary>
+    private static bool TryWin32ClickFallback(int screenX, int screenY, bool leftButton, bool doubleClick, ILogger log)
+    {
+        if (!Marionette.Runtime.Internal.Win32InputInjector.IsAvailable) return false;
+        if (!Marionette.Runtime.Internal.Win32InputInjector.SendMouseMoveAbsolute(screenX, screenY)) return false;
+        var btn = leftButton
+            ? Marionette.Runtime.Internal.MouseButton.Left
+            : Marionette.Runtime.Internal.MouseButton.Right;
+        if (!Marionette.Runtime.Internal.Win32InputInjector.SendMouseClick(btn)) return false;
+        if (doubleClick && !Marionette.Runtime.Internal.Win32InputInjector.SendMouseClick(btn)) return false;
+        log.LogDebug("simulate_input(click) succeeded via Win32 SendInput fallback.");
+        return true;
     }
 
     private static bool InjectMouseMove(int screenX, int screenY, ILogger log)
     {
         var injector = TryCreateInjector(log);
-        if (injector is null) return false;
+        if (injector is null)
+        {
+            // Phase 14: Win32 fallback.
+            return TryWin32MouseMoveFallback(screenX, screenY, log);
+        }
         try
         {
             injector.InjectMouseInput(new[]
@@ -352,15 +379,33 @@ internal static class WinUiInputSimulator
         }
         catch (Exception ex)
         {
-            log.LogWarning(ex, "simulate_input(mouse_move) threw.");
-            return false;
+            log.LogWarning(ex, "simulate_input(mouse_move) threw; trying Win32 SendInput fallback.");
+            return TryWin32MouseMoveFallback(screenX, screenY, log);
         }
+    }
+
+    /// <summary>
+    /// Phase 14: Win32 <c>SendInput</c> mouse-move fallback when
+    /// <see cref="InputInjector"/> is unavailable.
+    /// </summary>
+    private static bool TryWin32MouseMoveFallback(int screenX, int screenY, ILogger log)
+    {
+        if (!Marionette.Runtime.Internal.Win32InputInjector.IsAvailable) return false;
+        var ok = Marionette.Runtime.Internal.Win32InputInjector.SendMouseMoveAbsolute(screenX, screenY);
+        if (ok) log.LogDebug("simulate_input(mouse_move) succeeded via Win32 SendInput fallback.");
+        return ok;
     }
 
     private static bool InjectKey(VirtualKey key, bool isDown, ILogger log)
     {
         var injector = TryCreateInjector(log);
-        if (injector is null) return false;
+        if (injector is null)
+        {
+            // Phase 14: InputInjector unavailable (Win10, locked-down session,
+            // missing manifest cap). Try Win32 SendInput as last resort —
+            // works on Win7+ and in non-elevated processes.
+            return TryWin32KeyFallback(key, isDown, log);
+        }
         try
         {
             var info = new InjectedInputKeyboardInfo
@@ -373,15 +418,42 @@ internal static class WinUiInputSimulator
         }
         catch (Exception ex)
         {
-            log.LogWarning(ex, "simulate_input(key) threw.");
-            return false;
+            log.LogWarning(ex, "simulate_input(key) threw; trying Win32 SendInput fallback.");
+            return TryWin32KeyFallback(key, isDown, log);
         }
+    }
+
+    /// <summary>
+    /// Phase 14: Win32 <c>SendInput</c> fallback for keyboard events when
+    /// <see cref="InputInjector"/> is unavailable (Win10, missing manifest
+    /// capability, locked-down session). Maps the WinUI <see cref="VirtualKey"/>
+    /// to a Win32 VK code (they share the same numeric values).
+    /// </summary>
+    private static bool TryWin32KeyFallback(VirtualKey key, bool isDown, ILogger log)
+    {
+        if (!Marionette.Runtime.Internal.Win32InputInjector.IsAvailable) return false;
+        var vk = (Marionette.Runtime.Internal.VirtualKey)(ushort)key;
+        var ok = isDown
+            ? Marionette.Runtime.Internal.Win32InputInjector.SendKeyDown(vk)
+            : Marionette.Runtime.Internal.Win32InputInjector.SendKeyUp(vk);
+        if (ok) log.LogDebug("simulate_input(key) succeeded via Win32 SendInput fallback.");
+        return ok;
     }
 
     private static bool InjectText(string text, ILogger log)
     {
         var injector = TryCreateInjector(log);
-        if (injector is null) return false;
+        if (injector is null)
+        {
+            // Phase 14: Win32 SendInput Unicode-mode fallback.
+            if (Marionette.Runtime.Internal.Win32InputInjector.IsAvailable &&
+                Marionette.Runtime.Internal.Win32InputInjector.SendUnicodeText(text))
+            {
+                log.LogDebug("simulate_input(type_text) succeeded via Win32 SendInput Unicode fallback.");
+                return true;
+            }
+            return false;
+        }
         try
         {
             // ScanCode flag + Unicode flag is the canonical "type a unicode

@@ -73,12 +73,22 @@ internal static class AvaloniaInputSimulator
             case "key_down":
             case "key_up":
             case "mouse_move":
+                // Phase 14: when the adopter opted into the reflection
+                // fallback at AttachTo time, route through it. The fallback
+                // is AOT-incompatible (annotated with
+                // [RequiresUnreferencedCode]) — adopters explicitly trade
+                // AOT for raw-input coverage.
+                if (AvaloniaReflectionInputFallback.Enabled)
+                {
+                    return TrySendViaReflection(target, kind, args, log);
+                }
                 log.LogInformation(
                     "simulate_input: kind '{Kind}' is not supported by the Avalonia adapter " +
                     "(Avalonia 12.x has internal ctors for KeyEventArgs / PointerEventArgs and the " +
                     "raw-input pipeline requires platform-host plumbing the adapter does not have). " +
-                    "Use raise_event with the framework event name (when its args type is publicly " +
-                    "constructible), OR a [McpCallable] method that performs the semantic action.",
+                    "Set MarionetteAvalonia.AttachTo(useRawInputReflectionFallback: true) for an opt-in " +
+                    "reflection-based path that closes this gap (loses AOT compat for these calls). " +
+                    "Otherwise use raise_event with the framework event name, OR a [McpCallable] method.",
                     kind);
                 return false;
 
@@ -86,6 +96,79 @@ internal static class AvaloniaInputSimulator
                 log.LogWarning("simulate_input: unknown kind '{Kind}'.", kind);
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Phase 14: route key_press / key_down / key_up / mouse_move through the
+    /// reflection-based fallback. Wraps the
+    /// <see cref="AvaloniaReflectionInputFallback"/> calls so the trim
+    /// warnings are confined to one function. Only invoked when the adopter
+    /// opted in at <c>MarionetteAvalonia.AttachTo</c> time.
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode(
+        "Phase 14 reflection fallback uses Reflection on Avalonia.Base internals.")]
+    [System.Diagnostics.CodeAnalysis.RequiresDynamicCode(
+        "Phase 14 reflection fallback uses Reflection-based ctor invocation.")]
+    private static bool TrySendViaReflection(
+        Control target,
+        string kind,
+        IReadOnlyDictionary<string, object?>? args,
+        ILogger log)
+    {
+        switch (kind)
+        {
+            case "mouse_move":
+            {
+                var x = TryGetDoubleArg(args, "x", 0);
+                var y = TryGetDoubleArg(args, "y", 0);
+                return AvaloniaReflectionInputFallback.TrySendMouseMove(
+                    target, new global::Avalonia.Point(x, y), log);
+            }
+
+            case "key_press":
+            case "key_down":
+            case "key_up":
+            {
+                var key = ParseKey(args, log);
+                if (key is null) return false;
+                if (kind == "key_press")
+                {
+                    return AvaloniaReflectionInputFallback.TrySendKey(target, key.Value, isDown: true, log)
+                        && AvaloniaReflectionInputFallback.TrySendKey(target, key.Value, isDown: false, log);
+                }
+                return AvaloniaReflectionInputFallback.TrySendKey(
+                    target, key.Value, isDown: kind == "key_down", log);
+            }
+        }
+        return false;
+    }
+
+    private static double TryGetDoubleArg(IReadOnlyDictionary<string, object?>? args, string name, double fallback)
+    {
+        if (args is null || !args.TryGetValue(name, out var v)) return fallback;
+        return v switch
+        {
+            double d => d,
+            int i => i,
+            long l => l,
+            string s when double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var p) => p,
+            _ => fallback,
+        };
+    }
+
+    private static global::Avalonia.Input.Key? ParseKey(IReadOnlyDictionary<string, object?>? args, ILogger log)
+    {
+        if (args is null || !args.TryGetValue("key", out var v) || v is not string s)
+        {
+            log.LogWarning("simulate_input(key) requires args.key (string).");
+            return null;
+        }
+        if (!Enum.TryParse<global::Avalonia.Input.Key>(s, ignoreCase: true, out var key))
+        {
+            log.LogWarning("simulate_input(key) couldn't parse key='{Key}'. Expected an Avalonia.Input.Key enum name.", s);
+            return null;
+        }
+        return key;
     }
 
     /// <summary>

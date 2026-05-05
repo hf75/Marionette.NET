@@ -65,10 +65,18 @@ public static class MarionetteAvalonia
         global::Avalonia.Application app,
         IReadOnlyList<RootDescriptor> roots,
         string[]? args = null,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        bool useRawInputReflectionFallback = false)
     {
         if (app is null) throw new ArgumentNullException(nameof(app));
         if (roots is null) throw new ArgumentNullException(nameof(roots));
+
+        // Phase 14: opt-in reflection-based fallback for key_press / key_down /
+        // key_up / mouse_move. Closes the Avalonia 12.x raw-input gap at the
+        // cost of AOT compatibility on those calls. The fallback module
+        // carries [RequiresUnreferencedCode] annotations; adopters who
+        // AOT-publish should leave this flag false (the default).
+        Internal.AvaloniaReflectionInputFallback.Enabled = useRawInputReflectionFallback;
 
         var resolvedArgs = args ?? CommandLineArgsExceptExe();
         var lf = loggerFactory ?? NullLoggerFactory.Instance;

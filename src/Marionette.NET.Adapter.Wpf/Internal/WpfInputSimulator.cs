@@ -217,8 +217,8 @@ internal static class WpfInputSimulator
                 ?? PresentationSource.FromVisual(target.GetWindow() ?? (Visual)target);
             if (source is null)
             {
-                log.LogWarning("simulate_input(key) cannot resolve PresentationSource for {Type}.", target.GetType().Name);
-                return false;
+                log.LogInformation("simulate_input(key) cannot resolve PresentationSource for {Type}; trying Win32 fallback.", target.GetType().Name);
+                return TryWin32KeyFallback(key, isDown, log);
             }
             var ea = new KeyEventArgs(
                 Keyboard.PrimaryDevice,
@@ -234,9 +234,44 @@ internal static class WpfInputSimulator
         }
         catch (Exception ex)
         {
-            log.LogWarning(ex, "simulate_input(key) on {Type} threw.", target.GetType().Name);
+            log.LogWarning(ex, "simulate_input(key) on {Type} threw; trying Win32 fallback.", target.GetType().Name);
+            return TryWin32KeyFallback(key, isDown, log);
+        }
+    }
+
+    /// <summary>
+    /// Phase 14: Win32 <c>SendInput</c> fallback for keyboard events. Used when
+    /// the in-process WPF KeyEventArgs path fails (no PresentationSource, etc.).
+    /// The OS turns the synthetic input into a real WPF KeyDown event on the
+    /// focused window — same observable behaviour as the in-process path, but
+    /// going through the kernel's input pipeline.
+    /// </summary>
+    private static bool TryWin32KeyFallback(Key key, bool isDown, ILogger log)
+    {
+        if (!Marionette.Runtime.Internal.Win32InputInjector.IsAvailable) return false;
+        var vk = MapKeyToVirtualKey(key);
+        if (vk is null)
+        {
+            log.LogInformation("simulate_input(key) Win32 fallback: no VK mapping for WPF Key.{Key}.", key);
             return false;
         }
+        return isDown
+            ? Marionette.Runtime.Internal.Win32InputInjector.SendKeyDown(vk.Value)
+            : Marionette.Runtime.Internal.Win32InputInjector.SendKeyUp(vk.Value);
+    }
+
+    /// <summary>
+    /// Phase 14: map a WPF <see cref="Key"/> to a Win32 virtual-key code.
+    /// WPF's Key enum values mirror the Win32 VK_* constants for the most
+    /// common keys, so a direct cast works for letters, digits, function
+    /// keys, and the standard navigation set. Returns <see langword="null"/>
+    /// for keys without a Win32 analogue.
+    /// </summary>
+    private static Marionette.Runtime.Internal.VirtualKey? MapKeyToVirtualKey(Key key)
+    {
+        var keyValue = KeyInterop.VirtualKeyFromKey(key);
+        if (keyValue == 0) return null;
+        return (Marionette.Runtime.Internal.VirtualKey)keyValue;
     }
 
     private static bool DoTextInput(UIElement target, string text, ILogger log)

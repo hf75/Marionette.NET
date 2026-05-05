@@ -144,19 +144,21 @@ The cumulative contract from Phase 10 + 11 (4/4 adapters AOT-publish + AOT-runti
 
 | # | Original claim | Phase 12 status |
 |---|---|---|
+| # | Original claim | Phase 12 status |
+|---|---|---|
 | 1 | raise_event AOT | ✅ **Closed** — Phase 12.2 (`[McpRaisable]` opt-in typed catalog, WPF + Avalonia) |
-| 2 | WPF + AOT GUI | **External** (Microsoft-known WPF+AOT limitation) |
-| 3 | Avalonia raw input (`key_*`/`mouse_move`) | **External** — Avalonia 12.0.2 reference-assembly cap (verified via PEReader) |
-| 4 | WinUI old Windows / locked-down SKUs | **External** (OS-level) |
-| 5 | MAUI key/mouse/right-click | ✅ **Closed** — Phase 12.3 (semantic APIs) |
-| 6 | Multi-dim arrays in JSON | ✅ **Closed** for rank 2 — Phase 12.4 (custom converter) |
-| 7 | Tuple-keyed dictionaries | ✅ **Closed** for rank 2 + 3 — Phase 12.5 (`ValueTupleKeyConverter`) |
+| 2 | WPF + AOT GUI | **Not a Marionette item** — WPF host AOT is upstream (dotnet/wpf#3303); Marionette itself is AOT-clean and works in every WPF configuration WPF supports (Debug, Release, PublishTrimmed, R2R) |
+| 3 | Avalonia raw input (`key_*`/`mouse_move`) | Phase 14 reflection opt-in (see below) |
+| 4 | WinUI old Windows / locked-down SKUs | Phase 14 Win32 SendInput fallback (see below) |
+| 5 | MAUI key/mouse/right-click | ✅ **Closed** — Phase 12.3 (semantic APIs) + Phase 14 Win32 SendInput on Windows head |
+| 6 | Multi-dim arrays in JSON | ✅ **Closed** for rank 2 — Phase 12.4 (custom converter); rank 3 + 4 in Phase 13 |
+| 7 | Tuple-keyed dictionaries | ✅ **Closed** for rank 2 + 3 — Phase 12.5 (`ValueTupleKeyConverter`); rank 4 + 5 in Phase 13 |
 | 8 | No-ctor collections | ✅ **Closed** — Phase 12.6 (serialise-only) |
 | 9 | `[JsonIgnore(Condition)]` sub-modes | ✅ **Closed** — Phase 12.7 |
 | 10 | STJ generator composition | **Already-worked-around** (Phase 8) |
 | 11 | Type-graph cycles depth 6 | ✅ **Closed** — Phase 12.8 (lifted to 64, decoupled from schema) |
 
-7 of 11 items closed in Phase 12 (up from 5). The 4 remaining are all genuinely external (Microsoft / Avalonia / OS-level API decisions). No items remain deferred for "low demand" or "haven't built it yet."
+Item 2 (WPF + AOT GUI) was reclassified as not-our-cap: Marionette's code is AOT-clean and the limit lives entirely in the WPF host. Items 3, 4, 5 close in Phase 14 via the consolidated event layer.
 
 ## Adopter takeaways
 
@@ -170,4 +172,4 @@ The library is now substantially more usable for the long-tail cases the user wa
 - Composite-keyed lookups via `Dictionary<(int, int), V>` and rank-3 tuples — AOT-clean source-gen with a runtime `ValueTupleKeyConverter`.
 - AOT-clean `raise_event` for declared (Type, EventName) pairs via `[assembly: McpRaisable]` — adapters call the typed catalog first; full reflection is only the fallback.
 
-The remaining caps are genuinely external. Avalonia keyboard input is the most adopter-visible — workaround per masterplan tenet 2 (`[McpCallable]` semantic actions) remains the right pattern.
+Phase 14 closes the remaining input-event caps via Win32 SendInput (WPF/WinUI/MAUI on Windows) and an Avalonia reflection opt-in. WPF + AOT GUI is reframed as upstream's responsibility, not a Marionette gap.
