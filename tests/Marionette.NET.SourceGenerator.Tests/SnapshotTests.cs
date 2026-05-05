@@ -544,6 +544,104 @@ public class SnapshotTests
         Assert.Contains("IgnoreCondition = global::System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull", generated);
     }
 
+    [Fact]
+    public void GoldenDeepGraph_RegistersUpTo64Levels()
+    {
+        // Phase 12.8: deeply-nested-but-acyclic graphs survive registration
+        // even past the previous depth-6 cap. The visiting HashSet still
+        // catches true cycles. We exercise an 8-deep chain (would have
+        // failed under the old cap) and assert every level lands in the
+        // generated context.
+        var source = """
+            using System;
+            using Marionette;
+
+            namespace Demo;
+
+            public sealed class L1 { public L2? Next { get; init; } }
+            public sealed class L2 { public L3? Next { get; init; } }
+            public sealed class L3 { public L4? Next { get; init; } }
+            public sealed class L4 { public L5? Next { get; init; } }
+            public sealed class L5 { public L6? Next { get; init; } }
+            public sealed class L6 { public L7? Next { get; init; } }
+            public sealed class L7 { public L8? Next { get; init; } }
+            public sealed class L8 { public string Leaf { get; init; } = ""; }
+
+            public sealed class DeepEventArgs : EventArgs
+            {
+                public DeepEventArgs() { }
+                public L1? Chain { get; init; }
+            }
+
+            [McpRoot("deeproot")]
+            public class DeepRoot
+            {
+                [McpEvent("Eight-level-deep object graph.")]
+                public event EventHandler<DeepEventArgs>? Fired;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        // Every level must land as a JsonTypeInfo property on the context.
+        Assert.Contains("Demo_DeepEventArgs", generated);
+        Assert.Contains("Demo_L1", generated);
+        Assert.Contains("Demo_L8", generated);
+    }
+
+    [Fact]
+    public void GoldenSelfReferencingType_FallsBackToReflection()
+    {
+        // Phase 12.8 — true cycles are still caught by the visiting HashSet.
+        // A node type that references itself must NOT crash the generator;
+        // it falls back to runtime serialisation.
+        var source = """
+            using System;
+            using System.Collections.Generic;
+            using Marionette;
+
+            namespace Demo;
+
+            public sealed class TreeNode
+            {
+                public string Label { get; init; } = "";
+                public List<TreeNode> Children { get; init; } = new();
+            }
+
+            public sealed class CyclicEventArgs : EventArgs
+            {
+                public CyclicEventArgs() { }
+                public TreeNode? Root { get; init; }
+            }
+
+            [McpRoot("treeroot")]
+            public class TreeRoot
+            {
+                [McpEvent("Self-referencing tree.")]
+                public event EventHandler<CyclicEventArgs>? Fired;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        // The cyclic args type rolls back via the visiting HashSet — no
+        // JsonTypeInfo property should land for it.
+        Assert.DoesNotContain("Demo_CyclicEventArgs", generated);
+        Assert.DoesNotContain("Demo_TreeNode", generated);
+    }
+
     private static string Normalize(string s) => s.Replace("\r\n", "\n");
 
     private static string FormatDiagnostics(System.Collections.Generic.IEnumerable<Microsoft.CodeAnalysis.Diagnostic> diags)

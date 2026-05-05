@@ -48,12 +48,16 @@ namespace Marionette.SourceGenerator;
 internal sealed class JsonTypeCollector
 {
     /// <summary>
-    /// Maximum recursion depth. Matches <see cref="JsonSchemaWriter"/>'s budget
-    /// so the schema string and the JSON-context closure stay in sync. Beyond
-    /// the limit the walker bails out — the descriptor falls back to runtime
-    /// serialisation.
+    /// Maximum recursion depth — Phase 12.8 lifted from 6 to 64 so deeply-
+    /// nested-but-acyclic graphs (typical view-model trees, large DTO
+    /// hierarchies) survive registration. True cycles are still caught by
+    /// the per-call <c>visiting</c> HashSet — the depth cap is now only a
+    /// stack-overflow safety net for pathological inputs. <see cref="JsonSchemaWriter"/>
+    /// has its own much smaller cap (depth 3) for schema string size; the
+    /// two are intentionally decoupled because the schema is descriptive
+    /// while the JsonTypeInfo closure is load-bearing.
     /// </summary>
-    private const int MaxDepth = 6;
+    private const int MaxDepth = 64;
 
     private readonly Dictionary<string, JsonTypeModel> _types = new(System.StringComparer.Ordinal);
 
