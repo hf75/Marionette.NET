@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sample.Wpf.NeonControlCenter — End-of-phase showcase
+    A "spectacular UI" sample — synthwave neon-glow mission-control aesthetic
+    that exercises the full Marionette.NET feature set:
+      * [McpRoot]
+      * [McpCallable] (multiple, including async + Off-UI-thread)
+      * [McpObservable] (watchable + non-watchable)
+      * [McpTriggerable]
+      * [McpEvent] (with typed args)
+    Built as the final integration test for Phases 12-14.
+  -->
+  <Import Project="..\..\build\Marionette.NET.props" />
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Sample.Wpf.NeonControlCenter</RootNamespace>
+    <AssemblyName>Sample.Wpf.NeonControlCenter</AssemblyName>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <StartupObject>Sample.Wpf.NeonControlCenter.Program</StartupObject>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PublishAot)'=='true'">
+    <SelfContained>true</SelfContained>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.SourceGenerator\Marionette.NET.SourceGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(EnableMcpAutomation)'=='true'">
+    <ProjectReference Include="..\..\src\Marionette.NET.Adapter.Wpf\Marionette.NET.Adapter.Wpf.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+
+  <Import Project="..\..\build\Marionette.NET.targets" />
+
+</Project>

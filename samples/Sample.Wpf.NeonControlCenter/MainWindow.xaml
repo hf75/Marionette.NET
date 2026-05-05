@@ -1,0 +1,334 @@
+<Window x:Class="Sample.Wpf.NeonControlCenter.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Sample.Wpf.NeonControlCenter"
+        Title="NEON :: CONTROL CENTER"
+        Height="780" Width="1180"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BgGradient}"
+        TextOptions.TextRenderingMode="ClearType"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
+
+    <Window.Resources>
+        <!-- Animated pulsing magenta opacity for the title -->
+        <Storyboard x:Key="PulseStoryboard" RepeatBehavior="Forever" AutoReverse="True">
+            <DoubleAnimation Storyboard.TargetName="HeaderText"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0.65" To="1.0" Duration="0:0:1.6" />
+        </Storyboard>
+
+        <!-- Spinning sweep arc on the central radar -->
+        <Storyboard x:Key="RadarStoryboard" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetName="RadarSweep"
+                             Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                             From="0" To="360" Duration="0:0:4" />
+        </Storyboard>
+
+        <!-- Animated horizontal "scan" gradient on the bottom strip -->
+        <Storyboard x:Key="ScanStoryboard" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetName="ScanLine"
+                             Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)"
+                             From="-200" To="1200" Duration="0:0:3.2" />
+        </Storyboard>
+    </Window.Resources>
+
+    <Window.Triggers>
+        <EventTrigger RoutedEvent="Window.Loaded">
+            <BeginStoryboard Storyboard="{StaticResource PulseStoryboard}" />
+            <BeginStoryboard Storyboard="{StaticResource RadarStoryboard}" />
+            <BeginStoryboard Storyboard="{StaticResource ScanStoryboard}" />
+        </EventTrigger>
+    </Window.Triggers>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />     <!-- Header -->
+            <RowDefinition Height="*" />        <!-- Main content -->
+            <RowDefinition Height="Auto" />     <!-- Status bar -->
+        </Grid.RowDefinitions>
+
+        <!-- ============= HEADER ============= -->
+        <Grid Grid.Row="0" Margin="0,4,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" x:Name="HeaderText" Style="{StaticResource HeaderText}"
+                       Text="◆ NEON ◆ MISSION CONTROL ◆" />
+
+            <!-- Animated horizontal divider with cyan glow -->
+            <Rectangle Grid.Column="1" Height="2" Margin="20,12,20,0"
+                       VerticalAlignment="Center">
+                <Rectangle.Fill>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                        <GradientStop Color="#00FF2EC8" Offset="0" />
+                        <GradientStop Color="#FFFF2EC8" Offset="0.3" />
+                        <GradientStop Color="#FF1AF3FF" Offset="0.7" />
+                        <GradientStop Color="#001AF3FF" Offset="1" />
+                    </LinearGradientBrush>
+                </Rectangle.Fill>
+                <Rectangle.Effect>
+                    <BlurEffect Radius="3" />
+                </Rectangle.Effect>
+            </Rectangle>
+
+            <TextBlock Grid.Column="2" Style="{StaticResource LabelText}" VerticalAlignment="Center"
+                       Text="{Binding StatusLine}" />
+        </Grid>
+
+        <!-- ============= MAIN CONTENT ============= -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ===== LEFT: METRICS PANEL ===== -->
+            <Border Grid.Column="0" Style="{StaticResource GlowPanel}" Margin="0,0,8,0">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource LabelText}" Text="◢ TELEMETRY STREAMS" Margin="0,0,0,16" />
+
+                    <!-- Reactor Output -->
+                    <TextBlock Style="{StaticResource LabelText}" Text="REACTOR OUTPUT" Foreground="{StaticResource MagentaBrush}" />
+                    <TextBlock Style="{StaticResource ValueText}" Text="{Binding ReactorOutput, StringFormat='{}{0:F1} MW'}"
+                               Foreground="{StaticResource MagentaBrush}" Margin="0,2,0,4">
+                        <TextBlock.Effect>
+                            <DropShadowEffect Color="#FFFF2EC8" BlurRadius="12" ShadowDepth="0" Opacity="0.8" />
+                        </TextBlock.Effect>
+                    </TextBlock>
+                    <ProgressBar Height="6" Maximum="100" Value="{Binding ReactorOutput}"
+                                 Foreground="{StaticResource MagentaBrush}"
+                                 Background="#33000000" BorderThickness="0" Margin="0,0,0,18" />
+
+                    <!-- Coolant Pressure -->
+                    <TextBlock Style="{StaticResource LabelText}" Text="COOLANT PRESSURE" Foreground="{StaticResource CyanBrush}" />
+                    <TextBlock Style="{StaticResource ValueText}" Text="{Binding CoolantPressure, StringFormat='{}{0:F2} bar'}"
+                               Foreground="{StaticResource CyanBrush}" Margin="0,2,0,4">
+                        <TextBlock.Effect>
+                            <DropShadowEffect Color="#FF1AF3FF" BlurRadius="12" ShadowDepth="0" Opacity="0.8" />
+                        </TextBlock.Effect>
+                    </TextBlock>
+                    <ProgressBar Height="6" Maximum="200" Value="{Binding CoolantPressure}"
+                                 Foreground="{StaticResource CyanBrush}"
+                                 Background="#33000000" BorderThickness="0" Margin="0,0,0,18" />
+
+                    <!-- Quantum Flux -->
+                    <TextBlock Style="{StaticResource LabelText}" Text="QUANTUM FLUX" Foreground="{StaticResource LimeBrush}" />
+                    <TextBlock Style="{StaticResource ValueText}" Text="{Binding QuantumFlux, StringFormat='{}{0:F0} qf'}"
+                               Foreground="{StaticResource LimeBrush}" Margin="0,2,0,4" />
+                    <ProgressBar Height="6" Maximum="9999" Value="{Binding QuantumFlux}"
+                                 Foreground="{StaticResource LimeBrush}"
+                                 Background="#33000000" BorderThickness="0" Margin="0,0,0,18" />
+
+                    <!-- System Status -->
+                    <Border Background="#660A0420" CornerRadius="2" Padding="10,8" Margin="0,12,0,0"
+                            BorderBrush="{StaticResource MagentaBrush}" BorderThickness="0,0,0,2">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Style="{StaticResource LabelText}" Text="STATUS:" />
+                            <TextBlock Grid.Column="1" Margin="8,0,0,0"
+                                       Foreground="{Binding StatusColor}"
+                                       FontWeight="Bold"
+                                       Text="{Binding SystemStatus}" />
+                        </Grid>
+                    </Border>
+
+                    <Border Background="#660A0420" CornerRadius="2" Padding="10,8" Margin="0,4,0,0"
+                            BorderBrush="{StaticResource CyanBrush}" BorderThickness="0,0,0,2">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Style="{StaticResource LabelText}" Text="CYCLES:" />
+                            <TextBlock Grid.Column="1" Margin="8,0,0,0"
+                                       Foreground="{StaticResource CyanBrush}"
+                                       FontWeight="Bold"
+                                       Text="{Binding CyclesCompleted}" />
+                        </Grid>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- ===== CENTER: RADAR + COMMAND CONSOLE ===== -->
+            <Border Grid.Column="1" Style="{StaticResource GlowPanelCyan}" Margin="8,0,8,0">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource LabelText}" Text="◢ COMMAND CONSOLE" Margin="0,0,0,16" />
+
+                    <!-- Radar -->
+                    <Grid Width="200" Height="200" HorizontalAlignment="Center" Margin="0,0,0,20">
+                        <!-- Outer ring -->
+                        <Ellipse Width="200" Height="200"
+                                 Stroke="{StaticResource CyanBrush}" StrokeThickness="2" Fill="#220A0420">
+                            <Ellipse.Effect>
+                                <DropShadowEffect Color="#FF1AF3FF" BlurRadius="20" ShadowDepth="0" Opacity="0.7" />
+                            </Ellipse.Effect>
+                        </Ellipse>
+                        <!-- Inner rings -->
+                        <Ellipse Width="140" Height="140" Stroke="{StaticResource CyanBrush}" StrokeThickness="1" Opacity="0.5" />
+                        <Ellipse Width="80" Height="80" Stroke="{StaticResource CyanBrush}" StrokeThickness="1" Opacity="0.4" />
+                        <Ellipse Width="20" Height="20" Fill="{StaticResource MagentaBrush}">
+                            <Ellipse.Effect>
+                                <DropShadowEffect Color="#FFFF2EC8" BlurRadius="14" ShadowDepth="0" Opacity="1" />
+                            </Ellipse.Effect>
+                        </Ellipse>
+                        <!-- Crosshair -->
+                        <Line X1="0" Y1="100" X2="200" Y2="100" Stroke="{StaticResource CyanBrush}" StrokeThickness="1" Opacity="0.3" />
+                        <Line X1="100" Y1="0" X2="100" Y2="200" Stroke="{StaticResource CyanBrush}" StrokeThickness="1" Opacity="0.3" />
+                        <!-- Sweep arc -->
+                        <Path x:Name="RadarSweep" RenderTransformOrigin="0.5,0.5">
+                            <Path.RenderTransform>
+                                <RotateTransform Angle="0" />
+                            </Path.RenderTransform>
+                            <Path.Data>
+                                <PathGeometry>
+                                    <PathFigure StartPoint="100,100">
+                                        <LineSegment Point="100,5" />
+                                        <ArcSegment Point="195,100" Size="95,95" SweepDirection="Clockwise" />
+                                        <LineSegment Point="100,100" />
+                                    </PathFigure>
+                                </PathGeometry>
+                            </Path.Data>
+                            <Path.Fill>
+                                <RadialGradientBrush>
+                                    <GradientStop Color="#881AF3FF" Offset="0" />
+                                    <GradientStop Color="#001AF3FF" Offset="1" />
+                                </RadialGradientBrush>
+                            </Path.Fill>
+                        </Path>
+                    </Grid>
+
+                    <!-- Command input form -->
+                    <TextBlock Style="{StaticResource LabelText}" Text="TARGET DESIGNATION" />
+                    <TextBox Text="{Binding TargetDesignation, UpdateSourceTrigger=PropertyChanged}"
+                             x:Name="TargetBox" Margin="0,4,0,12" />
+
+                    <TextBlock Style="{StaticResource LabelText}" Text="POWER LEVEL" />
+                    <Slider Minimum="0" Maximum="100" Value="{Binding PowerLevel}"
+                            x:Name="PowerSlider"
+                            Foreground="{StaticResource MagentaBrush}"
+                            Background="Transparent" Margin="0,4,0,4" />
+                    <TextBlock Foreground="{StaticResource MagentaBrush}"
+                               HorizontalAlignment="Right" FontFamily="Consolas"
+                               Text="{Binding PowerLevel, StringFormat='{}{0:F0} %'}"
+                               Margin="0,0,0,16" />
+
+                    <Grid Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Style="{StaticResource LimeButton}"
+                                Content="◢ ENGAGE" Margin="0,0,4,0"
+                                x:Name="EngageButton" Click="EngageButton_Click" />
+                        <Button Grid.Column="1" Style="{StaticResource CyanButton}"
+                                Content="◤ ABORT" Margin="4,0,0,0"
+                                x:Name="AbortButton" Click="AbortButton_Click" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- ===== RIGHT: ALERT FEED ===== -->
+            <Border Grid.Column="2" Style="{StaticResource GlowPanel}" Margin="8,0,0,0"
+                    BorderBrush="{StaticResource HotPinkBrush}">
+                <Border.Effect>
+                    <DropShadowEffect Color="#FFFF4F8A" BlurRadius="22" ShadowDepth="0" Opacity="0.45" />
+                </Border.Effect>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Style="{StaticResource LabelText}" Foreground="{StaticResource HotPinkBrush}"
+                               Text="◢ ALERT FEED" Margin="0,0,0,16" />
+
+                    <ListBox Grid.Row="1" ItemsSource="{Binding AlertFeed}"
+                             Background="Transparent" BorderThickness="0"
+                             Foreground="{StaticResource TextBrush}"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="Padding" Value="0,4" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border Background="{TemplateBinding Background}"
+                                                    Padding="{TemplateBinding Padding}">
+                                                <ContentPresenter />
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Foreground="{StaticResource MagentaBrush}"
+                                               FontFamily="Consolas" Text="▸ " />
+                                    <TextBlock Grid.Column="1" Foreground="{StaticResource TextBrush}"
+                                               FontFamily="Consolas" FontSize="12"
+                                               Text="{Binding}"
+                                               TextWrapping="Wrap" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <Button Grid.Row="2" Style="{StaticResource NeonButton}"
+                            Content="◢ CLEAR FEED" Margin="0,12,0,0"
+                            x:Name="ClearFeedButton" Click="ClearFeedButton_Click" />
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ============= FOOTER STATUS / SCAN LINE ============= -->
+        <Grid Grid.Row="2" Margin="0,16,0,0" Height="28" ClipToBounds="True">
+            <Border Background="#440A0420" CornerRadius="2" />
+            <!-- Animated scan line -->
+            <Rectangle x:Name="ScanLine" Width="200" Height="28" Opacity="0.6"
+                       HorizontalAlignment="Left">
+                <Rectangle.RenderTransform>
+                    <TranslateTransform X="-200" />
+                </Rectangle.RenderTransform>
+                <Rectangle.Fill>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                        <GradientStop Color="#001AF3FF" Offset="0" />
+                        <GradientStop Color="#881AF3FF" Offset="0.5" />
+                        <GradientStop Color="#001AF3FF" Offset="1" />
+                    </LinearGradientBrush>
+                </Rectangle.Fill>
+                <Rectangle.Effect>
+                    <BlurEffect Radius="3" />
+                </Rectangle.Effect>
+            </Rectangle>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="14,0,0,0"
+                           Foreground="{StaticResource CyanBrush}" FontFamily="Consolas" FontSize="11"
+                           Text="MARIONETTE.NET ACTIVE" />
+                <TextBlock Grid.Column="2" VerticalAlignment="Center" Margin="0,0,14,0"
+                           Foreground="{StaticResource MagentaBrush}" FontFamily="Consolas" FontSize="11"
+                           Text="{Binding LastEventLine}" />
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

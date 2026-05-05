@@ -46,6 +46,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Marionette.NET.Testing.NUni
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Marionette.NET", "src\Marionette.NET\Marionette.NET.csproj", "{92AE0999-2835-4FF3-9407-B8FB13E5FE36}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sample.Wpf.NeonControlCenter", "samples\Sample.Wpf.NeonControlCenter\Sample.Wpf.NeonControlCenter.csproj", "{E14E0007-E14E-E14E-E14E-E14E0007E14E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -128,6 +130,10 @@ Global
 		{92AE0999-2835-4FF3-9407-B8FB13E5FE36}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{92AE0999-2835-4FF3-9407-B8FB13E5FE36}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{92AE0999-2835-4FF3-9407-B8FB13E5FE36}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E14E0007-E14E-E14E-E14E-E14E0007E14E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E14E0007-E14E-E14E-E14E-E14E0007E14E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E14E0007-E14E-E14E-E14E-E14E0007E14E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E14E0007-E14E-E14E-E14E-E14E0007E14E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -152,5 +158,6 @@ Global
 		{D5231364-E9E3-4994-88E7-5BF9B4A026A1} = {11111111-1111-1111-1111-111111111111}
 		{91C75AD0-FC20-4858-A841-2B2DF6E3656C} = {11111111-1111-1111-1111-111111111111}
 		{92AE0999-2835-4FF3-9407-B8FB13E5FE36} = {11111111-1111-1111-1111-111111111111}
+		{E14E0007-E14E-E14E-E14E-E14E0007E14E} = {22222222-2222-2222-2222-222222222222}
 	EndGlobalSection
 EndGlobal
