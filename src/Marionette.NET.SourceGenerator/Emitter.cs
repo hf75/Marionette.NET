@@ -179,8 +179,13 @@ internal static class Emitter
 
     private static void EmitCallableDescriptor(StringBuilder sb, RootModel root, CallableModel call)
     {
+        // Phase 13.E.16: when the callable is a closed instantiation of a
+        // generic method, the manifest entry's Name carries a suffix
+        // (`Echo` + `_Int32` → `Echo_Int32`) so each instantiation gets a
+        // distinct tool id. Non-generic callables leave the suffix null.
+        var manifestName = call.MethodName + (call.ManifestNameSuffix ?? string.Empty);
         sb.AppendLine("                new CallableDescriptor(");
-        sb.Append("                    Name: \""); sb.Append(EscapeString(call.MethodName)); sb.AppendLine("\",");
+        sb.Append("                    Name: \""); sb.Append(EscapeString(manifestName)); sb.AppendLine("\",");
         sb.Append("                    Description: \""); sb.Append(EscapeString(call.Description)); sb.AppendLine("\",");
         sb.Append("                    OffUiThread: "); sb.Append(call.OffUiThread ? "true" : "false"); sb.AppendLine(",");
         sb.Append("                    TimeoutSeconds: "); sb.Append(call.TimeoutSeconds.ToString(CultureInfo.InvariantCulture)); sb.AppendLine(",");
@@ -266,6 +271,7 @@ internal static class Emitter
             // compiler. The `(object?)` cast boxes value-type results.
             sb.Append("                            var __r = await typed.");
             sb.Append(call.MethodName);
+            sb.Append(call.ClosedTypeArgsLiteral ?? string.Empty);
             sb.Append("(");
             sb.Append(argsList);
             sb.AppendLine(").ConfigureAwait(false);");
@@ -282,6 +288,7 @@ internal static class Emitter
             sb.AppendLine("                        {");
             sb.Append("                            await typed.");
             sb.Append(call.MethodName);
+            sb.Append(call.ClosedTypeArgsLiteral ?? string.Empty);
             sb.Append("(");
             sb.Append(argsList);
             sb.AppendLine(").ConfigureAwait(false);");
@@ -294,6 +301,7 @@ internal static class Emitter
             // void — call and return null.
             sb.Append("                        typed.");
             sb.Append(call.MethodName);
+            sb.Append(call.ClosedTypeArgsLiteral ?? string.Empty);
             sb.Append("(");
             sb.Append(argsList);
             sb.AppendLine(");");
@@ -304,6 +312,7 @@ internal static class Emitter
             // Sync, non-void — return the value (boxed automatically for value types).
             sb.Append("                        return typed.");
             sb.Append(call.MethodName);
+            sb.Append(call.ClosedTypeArgsLiteral ?? string.Empty);
             sb.Append("(");
             sb.Append(argsList);
             sb.AppendLine(");");
@@ -348,6 +357,16 @@ internal static class Emitter
         var type = p.TypeFullName;
         var rawIdent = "__raw_" + tempSuffix;
         var jsonIdent = "__json_" + tempSuffix;
+
+        // Phase 13.E.18: Stream / MemoryStream parameter — wrap a base64
+        // JSON string into a fresh MemoryStream. The Stream is not run
+        // through System.Text.Json at all; the JSON-RPC layer hands us a
+        // string we decode directly.
+        if (p.IsBase64StreamParam)
+        {
+            EmitStreamParameterUnboxing(sb, p, ident, rawIdent, jsonIdent, type);
+            return;
+        }
 
         if (p.IsRequired)
         {
@@ -396,6 +415,81 @@ internal static class Emitter
             sb.Append(")(");
             sb.Append(p.DefaultLiteral ?? "default(" + type + ")");
             sb.AppendLine(");");
+            sb.AppendLine("                        }");
+        }
+    }
+
+    /// <summary>
+    /// Phase 13.E.18: emit a base64 → MemoryStream wrap for a Stream-typed
+    /// parameter. The runtime arg-bag delivers the parameter as either a
+    /// raw <see cref="string"/> (when the JSON-RPC layer marshalled it) or a
+    /// <see cref="System.Text.Json.JsonElement"/> (when it didn't); both
+    /// cases yield the base64 text.
+    /// </summary>
+    private static void EmitStreamParameterUnboxing(
+        StringBuilder sb,
+        ParameterModel p,
+        string ident,
+        string rawIdent,
+        string jsonIdent,
+        string type)
+    {
+        var b64Ident = "__b64_" + TempIdentifierSuffix(ident);
+
+        sb.Append("                        ");
+        sb.Append(type);
+        sb.Append(' ');
+        sb.Append(ident);
+        sb.AppendLine(";");
+
+        if (p.IsRequired)
+        {
+            sb.Append("                        var ");
+            sb.Append(rawIdent);
+            sb.Append(" = args[\"");
+            sb.Append(EscapeString(p.Name));
+            sb.AppendLine("\"];");
+        }
+        else
+        {
+            sb.Append("                        if (!args.TryGetValue(\"");
+            sb.Append(EscapeString(p.Name));
+            sb.Append("\", out var ");
+            sb.Append(rawIdent);
+            sb.AppendLine("))");
+            sb.AppendLine("                        {");
+            sb.Append("                            ");
+            sb.Append(ident);
+            sb.AppendLine(" = null!;");
+            sb.AppendLine("                        }");
+            sb.AppendLine("                        else");
+            sb.AppendLine("                        {");
+        }
+
+        // Resolve the base64 payload from either a JsonElement or a raw string.
+        sb.Append("                        ");
+        if (!p.IsRequired) sb.Append("    ");
+        sb.Append("var ");
+        sb.Append(b64Ident);
+        sb.Append(" = ");
+        sb.Append(rawIdent);
+        sb.Append(" is global::System.Text.Json.JsonElement ");
+        sb.Append(jsonIdent);
+        sb.Append(" ? ");
+        sb.Append(jsonIdent);
+        sb.Append(".GetString()! : (string)");
+        sb.Append(rawIdent);
+        sb.AppendLine("!;");
+
+        sb.Append("                        ");
+        if (!p.IsRequired) sb.Append("    ");
+        sb.Append(ident);
+        sb.Append(" = new global::System.IO.MemoryStream(global::System.Convert.FromBase64String(");
+        sb.Append(b64Ident);
+        sb.AppendLine("));");
+
+        if (!p.IsRequired)
+        {
             sb.AppendLine("                        }");
         }
     }

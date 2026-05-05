@@ -34,8 +34,13 @@ public class DiagnosticTests
     }
 
     [Fact]
-    public void MAR001_GenericClassWithMcpRoot_IsRejected()
+    public void MAR001_GenericClassWithMcpRoot_SilentlySkippedSinceE15()
     {
+        // Phase 13.E.15 changed the policy: a generic class with [McpRoot]
+        // is no longer flagged with MAR001. Adopters opt closed instantiations
+        // in via [assembly: McpClosedRoot(typeof(MyGen<int>))] (validated by
+        // MAR016 instead). Without any McpClosedRoot, the open-generic class
+        // simply produces no manifest entry and no diagnostic.
         var source = """
             using Marionette;
             namespace Demo;
@@ -50,8 +55,7 @@ public class DiagnosticTests
 
         var result = GeneratorRunner.Run(source);
 
-        Assert.Contains(result.GeneratorDiagnostics,
-            d => d.Id == "MAR001" && d.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(result.GeneratorDiagnostics, d => d.Id == "MAR001");
     }
 
     [Fact]
@@ -76,8 +80,12 @@ public class DiagnosticTests
     }
 
     [Fact]
-    public void MAR014_GenericCallableMethod_IsRejected()
+    public void MAR017_GenericCallableMethodWithoutClosedTypes_IsSkipped()
     {
+        // Phase 13.E.16 changed the behaviour: generic methods without
+        // ClosedTypes emit MAR017 (Warning) instead of MAR014 (Error). The
+        // generator silently skips the descriptor; adopters opt in via
+        // ClosedTypes = new[] { typeof(...) }.
         var source = """
             using Marionette;
             namespace Demo;
@@ -93,7 +101,7 @@ public class DiagnosticTests
         var result = GeneratorRunner.Run(source);
 
         Assert.Contains(result.GeneratorDiagnostics,
-            d => d.Id == "MAR014" && d.Severity == DiagnosticSeverity.Error);
+            d => d.Id == "MAR017" && d.Severity == DiagnosticSeverity.Warning);
     }
 
     [Fact]

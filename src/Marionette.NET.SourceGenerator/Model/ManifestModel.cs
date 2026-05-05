@@ -116,7 +116,21 @@ internal sealed record CallableModel(
     // type's transitive graph is fully source-gen-eligible; null forces the
     // runtime to fall back to the legacy reflection-based MarionetteDispatch
     // serialiser.
-    string? JsonReturnContextName = null);
+    string? JsonReturnContextName = null,
+    /// <summary>
+    /// Phase 13.E.16: when set, the call-site renders
+    /// <c>typed.&lt;MethodName&gt;&lt;ClosedTypeArgsLiteral&gt;(args)</c>.
+    /// Example: <c>"&lt;int&gt;"</c> for an <c>Echo&lt;T&gt;</c> method with
+    /// a closed type-arg of <c>typeof(int)</c>. Null for non-generic methods.
+    /// </summary>
+    string? ClosedTypeArgsLiteral = null,
+    /// <summary>
+    /// Phase 13.E.16: when set, the descriptor's manifest <c>Name</c> is
+    /// rendered as <c>&lt;MethodName&gt;&lt;ManifestNameSuffix&gt;</c>.
+    /// Example: <c>"_Int32"</c> for the same <c>Echo&lt;int&gt;</c> case
+    /// produces a manifest entry called <c>Echo_Int32</c>.
+    /// </summary>
+    string? ManifestNameSuffix = null);
 
 /// <summary>
 /// One parameter to an [McpCallable] method. DefaultValue is captured as a
@@ -132,7 +146,13 @@ internal sealed record ParameterModel(
     // parameter type. Lets the emitter switch from the AOT-unsafe
     // JsonSerializer.Deserialize<T>(string) overload to the typed
     // Deserialize<T>(string, JsonTypeInfo<T>) overload.
-    string? JsonContextName = null);
+    string? JsonContextName = null,
+    // Phase 13.E.18: when true, the parameter is a Stream / MemoryStream that
+    // the dispatcher wraps from a base64-encoded JSON string. The emitter
+    // generates `new MemoryStream(Convert.FromBase64String(...))` instead of
+    // a normal JSON deserialization. Schema-side, the parameter is emitted
+    // as `{type:"string","format":"byte"}` (the JSON Schema convention).
+    bool IsBase64StreamParam = false);
 
 /// <summary>
 /// One [McpObservable] property. The generator emits a typed getter lambda.
@@ -274,9 +294,19 @@ internal enum JsonTypeKind
     /// built-in metadata factory for them; the emitter wires
     /// <c>JsonMetadataServices.CreateValueInfo&lt;T[,]&gt;</c> against a
     /// runtime-supplied <see cref="Marionette.Runtime.Json.MultiDimArrayRank2Converter{TElement}"/>.
-    /// Higher ranks (T[,,], T[,,,]) remain unsupported.
     /// </summary>
     MultiDimArrayRank2,
+    /// <summary>
+    /// Phase 13.E.13: rank-3 multi-dim arrays (<c>T[,,]</c>). Same wiring as
+    /// rank 2 but via <see cref="Marionette.Runtime.Json.MultiDimArrayRank3Converter{TElement}"/>.
+    /// </summary>
+    MultiDimArrayRank3,
+    /// <summary>
+    /// Phase 13.E.13: rank-4 multi-dim arrays (<c>T[,,,]</c>). Same wiring as
+    /// rank 2 but via <see cref="Marionette.Runtime.Json.MultiDimArrayRank4Converter{TElement}"/>.
+    /// Rank 5+ remains unsupported (mechanical extension if needed).
+    /// </summary>
+    MultiDimArrayRank4,
     /// <summary>
     /// Phase 12.5: rank-2 value-tuple dictionary keys (<c>(T1, T2)</c>).
     /// STJ has no built-in JsonConverter for tuple keys; the emitter wires
@@ -288,6 +318,24 @@ internal enum JsonTypeKind
     /// Phase 12.5: rank-3 value-tuple dictionary keys (<c>(T1, T2, T3)</c>).
     /// </summary>
     ValueTupleKey3,
+    /// <summary>
+    /// Phase 13.E.14: rank-4 value-tuple dictionary keys
+    /// (<c>(T1, T2, T3, T4)</c>).
+    /// </summary>
+    ValueTupleKey4,
+    /// <summary>
+    /// Phase 13.E.14: rank-5 value-tuple dictionary keys
+    /// (<c>(T1, T2, T3, T4, T5)</c>). Rank 6+ remains unsupported.
+    /// </summary>
+    ValueTupleKey5,
+    /// <summary>
+    /// Phase 13.E.19: type carries a type-level
+    /// <c>[JsonConverter(typeof(MyConverter))]</c> attribute. The emitter
+    /// renders <c>JsonMetadataServices.CreateValueInfo&lt;T&gt;(Options, new
+    /// MyConverter())</c> and skips the normal property walk — the user's
+    /// converter owns the round-trip.
+    /// </summary>
+    CustomConverter,
 }
 
 /// <summary>
@@ -387,7 +435,15 @@ internal sealed record JsonTypeModel(
     string? ConcreteContainerOverride = null,
     bool ConcreteContainerHasParameterlessCtor = true,
     EquatableArray<string> TupleComponentContextNames = default,
-    EquatableArray<string> TupleComponentTypeFullNames = default);
+    EquatableArray<string> TupleComponentTypeFullNames = default,
+    /// <summary>
+    /// Phase 13.E.19: fully-qualified custom converter type when
+    /// <see cref="Kind"/> is <see cref="JsonTypeKind.CustomConverter"/>.
+    /// The emitter renders <c>new &lt;Type&gt;()</c> as the converter
+    /// instance, so the user's converter type must have a public
+    /// parameterless constructor (validated in the collector).
+    /// </summary>
+    string? CustomConverterTypeFullName = null);
 
 /// <summary>
 /// Phase 8.1: a single property on a Json-context-tracked object type. The
@@ -418,7 +474,16 @@ internal sealed record JsonPropertyModel(
     string DeclaringTypeFullName,
     string PropertyTypeFullName,
     string PropertyTypeContextName,
-    string? IgnoreConditionLiteral = null);
+    string? IgnoreConditionLiteral = null,
+    /// <summary>
+    /// Phase 13.E.19: when set, the user's <c>[JsonConverter(typeof(X))]</c>
+    /// at the property declaration site overrides the property-type's default
+    /// converter. The emitter renders
+    /// <c>Converter = new &lt;Type&gt;()</c> in the
+    /// <c>JsonPropertyInfoValues</c>. The converter type must have a public
+    /// parameterless ctor (validated in the collector).
+    /// </summary>
+    string? CustomConverterTypeFullName = null);
 
 /// <summary>
 /// One [McpEvent] event (Phase 1.6). Carries the delegate shape information

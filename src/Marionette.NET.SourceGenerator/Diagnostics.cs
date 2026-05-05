@@ -213,4 +213,32 @@ internal static class Diagnostics
         category: Category,
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR016: an <c>[assembly: McpClosedRoot]</c> attribute references a
+    /// type that does not satisfy the closed-generic-class shape the
+    /// generator can register. The entry is dropped; the manifest is built
+    /// from the remaining valid roots.
+    /// </summary>
+    public static readonly DiagnosticDescriptor McpClosedRootInvalid = new(
+        id: "MAR016",
+        title: "[McpClosedRoot] declaration could not be validated",
+        messageFormat: "[McpClosedRoot(typeof({0}))] could not be validated: {1}. The closed-generic root is skipped.",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR017: a generic <c>[McpCallable]</c> method declares no
+    /// <c>ClosedTypes</c> — the source generator cannot dispatch a generic
+    /// method without explicit type arguments. The method is silently
+    /// skipped (no descriptor emitted).
+    /// </summary>
+    public static readonly DiagnosticDescriptor GenericCallableMissingClosedTypes = new(
+        id: "MAR017",
+        title: "Generic [McpCallable] without ClosedTypes is ignored",
+        messageFormat: "[McpCallable] method '{0}' is generic but declares no ClosedTypes; the runtime cannot infer type arguments from a JSON arg bag. Add ClosedTypes = new[] {{ typeof(...) }} to register specific instantiations.",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true);
 }

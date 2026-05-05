@@ -20,3 +20,5 @@ MAR012  | Marionette.Generator | Warning  | [McpEvent] throttling parameter out 
 MAR013  | Marionette.Generator | Info     | Public method on [McpRoot] could be exposed with [McpCallable].
 MAR014  | Marionette.Generator | Error    | [McpCallable] method signature is not supported.
 MAR015  | Marionette.Generator | Warning  | [McpRaisable] declaration could not be validated.
+MAR016  | Marionette.Generator | Warning  | [McpClosedRoot] declaration could not be validated.
+MAR017  | Marionette.Generator | Warning  | Generic [McpCallable] without ClosedTypes is ignored.

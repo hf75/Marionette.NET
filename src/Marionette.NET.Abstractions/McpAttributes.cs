@@ -147,6 +147,32 @@ public sealed class McpCallableAttribute : Attribute
     /// long-running calls that must not stall the LLM session.
     /// </summary>
     public int TimeoutSeconds { get; init; }
+
+    /// <summary>
+    /// Phase 13.E.16: closed type arguments for a generic <c>[McpCallable]</c>
+    /// method. Without this property, generic methods are silently ignored
+    /// (MAR017): the runtime cannot infer type arguments from a JSON arg
+    /// bag. With it, the source generator emits one
+    /// <c>CallableDescriptor</c> per closed instantiation, mangled as
+    /// <c>&lt;MethodName&gt;_&lt;TypeArgShortName&gt;</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only single-type-parameter methods are supported. Multi-type-parameter
+    /// methods would require a nested array shape that <see cref="Type"/>[]
+    /// can't represent — adopters with that need can wrap the method in
+    /// per-arity overloads.
+    /// </para>
+    /// <para>
+    /// Example:
+    /// <code>
+    /// [McpCallable("Echoes a typed value.", ClosedTypes = new[] { typeof(int), typeof(string) })]
+    /// public T Echo&lt;T&gt;(T value) =&gt; value;
+    /// </code>
+    /// produces two manifest entries: <c>Echo_Int32</c> and <c>Echo_String</c>.
+    /// </para>
+    /// </remarks>
+    public Type[]? ClosedTypes { get; init; }
 }
 
 /// <summary>
@@ -464,5 +490,51 @@ public sealed class McpRaisableAttribute : Attribute
     {
         ControlType = controlType;
         EventName = eventName;
+    }
+}
+
+/// <summary>
+/// Phase 13.E.15: assembly-level declaration that a closed generic type
+/// should be registered as a Marionette manifest root. The class itself
+/// can carry <see cref="McpRootAttribute"/> on its open-generic
+/// declaration; the source generator's normal MAR001 path refuses generic
+/// classes (no concrete instantiation to dispatch into). This attribute
+/// is the escape hatch — the generator scans assembly-level
+/// <c>[McpClosedRoot(typeof(Counter&lt;int&gt;))]</c> declarations and
+/// emits one <see cref="Marionette.Runtime.Manifest.RootDescriptor"/>
+/// per closed instantiation.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Example:
+/// <code>
+/// [McpRoot]                          // refused with MAR001 alone (generic class)
+/// public class Counter&lt;T&gt; where T : struct
+/// {
+///     [McpCallable("Bump.")] public T Bump() =&gt; default;
+/// }
+///
+/// [assembly: McpClosedRoot(typeof(Counter&lt;int&gt;), Name = "intCounter")]
+/// [assembly: McpClosedRoot(typeof(Counter&lt;long&gt;), Name = "longCounter")]
+/// </code>
+/// </para>
+/// <para>
+/// Without an explicit <see cref="Name"/>, the runtime uses the closed type's
+/// short name (<c>Counter`1[Int32]</c> trimmed to <c>Counter</c> by Roslyn —
+/// usually you want a distinct name per instantiation, hence the property).
+/// </para>
+/// </remarks>
+[AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true, Inherited = false)]
+public sealed class McpClosedRootAttribute : Attribute
+{
+    /// <summary>The closed generic type to register as a manifest root.</summary>
+    public Type RootType { get; }
+
+    /// <summary>Optional manifest name for this closed instantiation.</summary>
+    public string? Name { get; init; }
+
+    public McpClosedRootAttribute(Type rootType)
+    {
+        RootType = rootType;
     }
 }

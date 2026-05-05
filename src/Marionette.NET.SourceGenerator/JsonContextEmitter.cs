@@ -246,11 +246,22 @@ internal static class JsonContextEmitter
                     factoryName: "CreateIReadOnlyDictionaryInfo",
                     concreteContainerTemplate: "global::System.Collections.Generic.Dictionary<{K}, {V}>");
                 break;
+            case JsonTypeKind.CustomConverter:
+                EmitCustomConverterCreation(sb, type);
+                break;
             case JsonTypeKind.MultiDimArrayRank2:
-                EmitMultiDimArrayRank2Creation(sb, type);
+                EmitMultiDimArrayCreation(sb, type, rank: 2);
+                break;
+            case JsonTypeKind.MultiDimArrayRank3:
+                EmitMultiDimArrayCreation(sb, type, rank: 3);
+                break;
+            case JsonTypeKind.MultiDimArrayRank4:
+                EmitMultiDimArrayCreation(sb, type, rank: 4);
                 break;
             case JsonTypeKind.ValueTupleKey2:
             case JsonTypeKind.ValueTupleKey3:
+            case JsonTypeKind.ValueTupleKey4:
+            case JsonTypeKind.ValueTupleKey5:
                 EmitValueTupleKeyCreation(sb, type);
                 break;
         }
@@ -298,24 +309,41 @@ internal static class JsonContextEmitter
     }
 
     /// <summary>
-    /// Phase 12.4: render a <c>JsonTypeInfo&lt;T[,]&gt;</c> backed by the
-    /// runtime <see cref="Marionette.Runtime.Json.MultiDimArrayRank2Converter{TElement}"/>.
-    /// The element type is constrained to be a primitive (per the
-    /// collector's gate) so the converter's per-element delegate is
-    /// fetched from <c>JsonMetadataServices.&lt;Element&gt;Converter</c>.
+    /// Phase 13.E.19: type-level <c>[JsonConverter(typeof(X))]</c> path —
+    /// render <c>JsonMetadataServices.CreateValueInfo&lt;T&gt;(Options, new
+    /// X())</c>. The user's converter owns serialisation; no property walk
+    /// is emitted.
     /// </summary>
-    private static void EmitMultiDimArrayRank2Creation(StringBuilder sb, JsonTypeModel type)
+    private static void EmitCustomConverterCreation(StringBuilder sb, JsonTypeModel type)
+    {
+        var typeFqn = StripGlobalPrefix(type.TypeFullName);
+        var convFqn = StripGlobalPrefix(type.CustomConverterTypeFullName!);
+        sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::");
+        sb.Append(typeFqn);
+        sb.AppendLine(">(");
+        sb.AppendLine("            Options,");
+        sb.Append("            new global::");
+        sb.Append(convFqn);
+        sb.AppendLine("());");
+    }
+
+    /// <summary>
+    /// Phase 12.4 + 13.E.13: render a <c>JsonTypeInfo&lt;T[,...,]&gt;</c>
+    /// (rank 2, 3, or 4) backed by the matching runtime
+    /// <c>MultiDimArrayRank{N}Converter&lt;TElement&gt;</c>. The element
+    /// type is constrained to be a primitive (per the collector's gate) so
+    /// the converter's per-element delegate is fetched from
+    /// <c>JsonMetadataServices.&lt;Element&gt;Converter</c>.
+    /// </summary>
+    private static void EmitMultiDimArrayCreation(StringBuilder sb, JsonTypeModel type, int rank)
     {
         var elementFqn = StripGlobalPrefix(type.ElementTypeFullName!);
-        // The element kind is Primitive per the collector's gate; we read
-        // the typed converter off the inner JsonTypeInfo's Converter
-        // member rather than hard-coding the primitive name, so future
-        // collector expansions (e.g. enums as elements) compose cleanly.
+        var rankSuffix = new string(',', rank - 1);
         sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::");
         sb.Append(elementFqn);
-        sb.AppendLine("[,]>(");
+        sb.Append('[').Append(rankSuffix).AppendLine("]>(");
         sb.AppendLine("            Options,");
-        sb.Append("            new global::Marionette.Runtime.Json.MultiDimArrayRank2Converter<global::");
+        sb.Append("            new global::Marionette.Runtime.Json.MultiDimArrayRank").Append(rank).Append("Converter<global::");
         sb.Append(elementFqn);
         sb.AppendLine(">(");
         sb.Append("                (global::System.Text.Json.Serialization.JsonConverter<global::");
@@ -573,7 +601,21 @@ internal static class JsonContextEmitter
         sb.Append("                        DeclaringType = typeof(global::");
         sb.Append(declaringTypeFqn);
         sb.AppendLine("),");
-        sb.AppendLine("                        Converter = null,");
+        // Phase 13.E.19: honour [JsonConverter(typeof(X))] at the property
+        // declaration site by setting Converter to a fresh user-supplied
+        // instance. Null otherwise — STJ then derives the converter from
+        // the property's JsonTypeInfo.
+        if (prop.CustomConverterTypeFullName is null)
+        {
+            sb.AppendLine("                        Converter = null,");
+        }
+        else
+        {
+            var convFqn = StripGlobalPrefix(prop.CustomConverterTypeFullName);
+            sb.Append("                        Converter = new global::");
+            sb.Append(convFqn);
+            sb.AppendLine("(),");
+        }
         sb.Append("                        Getter = static (obj) => ((global::");
         sb.Append(declaringTypeFqn);
         sb.Append(")obj).");

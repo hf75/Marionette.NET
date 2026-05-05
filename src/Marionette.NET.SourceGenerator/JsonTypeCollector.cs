@@ -161,13 +161,11 @@ internal sealed class JsonTypeCollector
             return primKey;
         }
 
-        // Phase 8.4 + 12.4: arrays. Rank 1 uses STJ's CreateArrayInfo
-        // factory. Rank 2 is registered as MultiDimArrayRank2 — the
-        // emitter wires a runtime MultiDimArrayRank2Converter<T> via
-        // CreateValueInfo. Higher ranks (T[,,], T[,,,]) remain
-        // unsupported (no STJ factory, and our converter only handles
-        // rank 2 — adopters can derive their own JsonConverter for
-        // higher ranks if needed).
+        // Phase 8.4 + 12.4 + 13.E.13: arrays. Rank 1 uses STJ's CreateArrayInfo
+        // factory. Ranks 2/3/4 register as MultiDimArrayRank{N} — the emitter
+        // wires a runtime MultiDimArrayRank{N}Converter<T> via CreateValueInfo.
+        // Rank 5+ remains unsupported (mechanical extension; adopters can
+        // ship their own JsonConverter following the same shape).
         if (unannotated is IArrayTypeSymbol arrSym)
         {
             if (arrSym.Rank == 1)
@@ -190,7 +188,7 @@ internal sealed class JsonTypeCollector
                 }
                 return arrKey;
             }
-            if (arrSym.Rank == 2)
+            if (arrSym.Rank >= 2 && arrSym.Rank <= 4)
             {
                 // The runtime converter delegates per-element write to a
                 // primitive JsonConverter<TElement>, so the element type
@@ -205,13 +203,22 @@ internal sealed class JsonTypeCollector
                     return null;
                 }
                 var elementCanonical = elementModel.TypeFullName;
-                var arrKey = "MultiDimArray2_" + elementName;
+                var rank = arrSym.Rank;
+                var rankSuffix = new string(',', rank - 1);
+                var arrKey = "MultiDimArray" + rank + "_" + elementName;
+                var kind = rank switch
+                {
+                    2 => JsonTypeKind.MultiDimArrayRank2,
+                    3 => JsonTypeKind.MultiDimArrayRank3,
+                    4 => JsonTypeKind.MultiDimArrayRank4,
+                    _ => throw new System.InvalidOperationException(),
+                };
                 if (!_types.ContainsKey(arrKey))
                 {
                     _types[arrKey] = new JsonTypeModel(
-                        TypeFullName: elementCanonical + "[,]",
+                        TypeFullName: elementCanonical + "[" + rankSuffix + "]",
                         PropertyName: arrKey,
-                        Kind: JsonTypeKind.MultiDimArrayRank2,
+                        Kind: kind,
                         PrimitiveConverter: null,
                         UnderlyingTypeFullName: null,
                         Properties: EquatableArray<JsonPropertyModel>.Empty,
@@ -220,19 +227,19 @@ internal sealed class JsonTypeCollector
                 }
                 return arrKey;
             }
-            // Rank 3+: unsupported.
+            // Rank 5+: unsupported.
             return null;
         }
 
-        // Phase 12.5: ValueTuple keys (rank 2 / 3). Detected as
-        // INamedTypeSymbol.IsTupleType. Check BEFORE the generic-shape
-        // block because ValueTuple<T1, T2> is itself a generic type — the
-        // generic block would otherwise short-circuit to null.
+        // Phase 12.5 + 13.E.14: ValueTuple keys (rank 2 / 3 / 4 / 5).
+        // Detected as INamedTypeSymbol.IsTupleType. Check BEFORE the
+        // generic-shape block because ValueTuple<T1, T2> is itself a generic
+        // type — the generic block would otherwise short-circuit to null.
         if (unannotated is INamedTypeSymbol tupleCheck && tupleCheck.IsTupleType)
         {
             var elements = tupleCheck.TupleElements;
             var rank = elements.Length;
-            if (rank != 2 && rank != 3) return null;
+            if (rank < 2 || rank > 5) return null;
 
             var componentNames = new List<string>(rank);
             var componentFqns = new List<string>(rank);
@@ -245,12 +252,19 @@ internal sealed class JsonTypeCollector
                 componentFqns.Add(_types[cn].TypeFullName);
             }
 
-            var kind = rank == 2 ? JsonTypeKind.ValueTupleKey2 : JsonTypeKind.ValueTupleKey3;
+            var kind = rank switch
+            {
+                2 => JsonTypeKind.ValueTupleKey2,
+                3 => JsonTypeKind.ValueTupleKey3,
+                4 => JsonTypeKind.ValueTupleKey4,
+                5 => JsonTypeKind.ValueTupleKey5,
+                _ => throw new System.InvalidOperationException(),
+            };
             // Use the named generic form so global:: prefix attaches cleanly
             // in the emitter (tuple syntax `(int, string)` doesn't accept
             // a global:: prefix).
             var tupleFqn = "System.ValueTuple<" + string.Join(", ", componentFqns) + ">";
-            var tupleKeyId = (rank == 2 ? "ValueTuple2_" : "ValueTuple3_") + string.Join("_", componentNames);
+            var tupleKeyId = "ValueTuple" + rank + "_" + string.Join("_", componentNames);
             if (!_types.ContainsKey(tupleKeyId))
             {
                 _types[tupleKeyId] = new JsonTypeModel(
@@ -431,6 +445,23 @@ internal sealed class JsonTypeCollector
         // Already registered in a previous successful branch.
         if (_types.ContainsKey(typeKey)) return typeKey;
 
+        // Phase 13.E.19: type-level [JsonConverter(typeof(MyConverter))].
+        // When present, we register the type as CustomConverter and skip the
+        // property walk entirely — the user's converter owns the round-trip.
+        var typeConverterFqn = TryGetCustomConverterTypeFullName(obj);
+        if (typeConverterFqn is not null)
+        {
+            _types[typeKey] = new JsonTypeModel(
+                TypeFullName: obj.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                PropertyName: typeKey,
+                Kind: JsonTypeKind.CustomConverter,
+                PrimitiveConverter: null,
+                UnderlyingTypeFullName: null,
+                Properties: EquatableArray<JsonPropertyModel>.Empty,
+                CustomConverterTypeFullName: typeConverterFqn);
+            return typeKey;
+        }
+
         visiting.Add(typeKey);
 
         // Walk public instance properties. We accept get-only, init-only, and
@@ -459,6 +490,13 @@ internal sealed class JsonTypeCollector
             var ignoreMode = GetJsonIgnoreCondition(prop);
             if (ignoreMode == JsonIgnoreMode.Always) continue;
 
+            // Phase 13.E.19: property-level [JsonConverter(typeof(X))]
+            // overrides the property type's default converter. We still
+            // register the property's type into the JSON context — the
+            // emitter only switches the per-property Converter field; the
+            // type's own JsonTypeInfo remains reachable for other call sites.
+            var propConverterFqn = TryGetCustomConverterTypeFullName(prop);
+
             var childName = TryRegister(prop.Type, visiting, depth + 1);
             if (childName is null)
             {
@@ -485,7 +523,8 @@ internal sealed class JsonTypeCollector
                 DeclaringTypeFullName: declaringFqn,
                 PropertyTypeFullName: canonicalPropTypeFqn,
                 PropertyTypeContextName: childName,
-                IgnoreConditionLiteral: ignoreLiteral));
+                IgnoreConditionLiteral: ignoreLiteral,
+                CustomConverterTypeFullName: propConverterFqn));
         }
 
         visiting.Remove(typeKey);
@@ -751,12 +790,12 @@ internal sealed class JsonTypeCollector
     {
         var unannotated = type.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
         if (unannotated is INamedTypeSymbol enumSym && enumSym.TypeKind == TypeKind.Enum) return true;
-        // Phase 12.5: rank-2 / rank-3 ValueTuple keys whose components are
+        // Phase 12.5 + 13.E.14: rank-2..5 ValueTuple keys whose components are
         // themselves supported keys.
         if (unannotated is INamedTypeSymbol tupleSym && tupleSym.IsTupleType)
         {
             var rank = tupleSym.TupleElements.Length;
-            if (rank != 2 && rank != 3) return false;
+            if (rank < 2 || rank > 5) return false;
             foreach (var comp in tupleSym.TupleElements)
             {
                 if (!IsSupportedDictionaryKey(comp.Type)) return false;
@@ -810,6 +849,45 @@ internal sealed class JsonTypeCollector
             return JsonIgnoreMode.Always;
         }
         return JsonIgnoreMode.None;
+    }
+
+    /// <summary>
+    /// Phase 13.E.19: extract the converter type from a
+    /// <c>[JsonConverter(typeof(MyConverter))]</c> attribute on a type or
+    /// property symbol. Returns the fully-qualified converter type name
+    /// (with <c>global::</c> prefix) or <see langword="null"/> when:
+    /// <list type="bullet">
+    ///   <item>the symbol carries no <c>[JsonConverter]</c>,</item>
+    ///   <item>the converter type isn't a public class with a public
+    ///     parameterless ctor (the emitter renders <c>new X()</c>; if the
+    ///     ctor's missing the C# compiler will flag it at the generated
+    ///     site, but we filter early when we can).</item>
+    /// </list>
+    /// </summary>
+    private static string? TryGetCustomConverterTypeFullName(ISymbol symbol)
+    {
+        foreach (var attr in symbol.GetAttributes())
+        {
+            if (attr.AttributeClass?.ToDisplayString() != "System.Text.Json.Serialization.JsonConverterAttribute")
+                continue;
+            if (attr.ConstructorArguments.Length != 1) continue;
+            if (attr.ConstructorArguments[0].Value is not INamedTypeSymbol convType) continue;
+            if (convType.DeclaredAccessibility != Accessibility.Public) continue;
+            if (convType.IsAbstract || convType.IsStatic) continue;
+            // Require a public parameterless ctor — `new X()` must compile.
+            bool hasPublicParameterlessCtor = false;
+            foreach (var ctor in convType.InstanceConstructors)
+            {
+                if (ctor.DeclaredAccessibility == Accessibility.Public && ctor.Parameters.Length == 0)
+                {
+                    hasPublicParameterlessCtor = true;
+                    break;
+                }
+            }
+            if (!hasPublicParameterlessCtor) continue;
+            return convType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        }
+        return null;
     }
 
     /// <summary>

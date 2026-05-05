@@ -343,25 +343,25 @@ public class SnapshotTests
     [Fact]
     public void GoldenUnsupportedShapes_FallsBackToReflection()
     {
-        // Phase 12.4 update: rank-2 of primitives is now supported (see
-        // GoldenMultiDimArrayRank2). Rank 3+ remains unsupported.
+        // Phase 12.4 + 13.E.13 update: ranks 2/3/4 are now supported (see
+        // GoldenMultiDimArrayRank2 / Rank3And4). Rank 5+ remains unsupported.
         var source = """
             using System;
             using Marionette;
 
             namespace Demo;
 
-            public sealed class Rank3EventArgs : EventArgs
+            public sealed class Rank5EventArgs : EventArgs
             {
-                public Rank3EventArgs() { }
-                public int[,,] Volumetric { get; init; } = new int[0,0,0];
+                public Rank5EventArgs() { }
+                public int[,,,,] HyperVolume { get; init; } = new int[0,0,0,0,0];
             }
 
             [McpRoot("unsupported")]
             public class UnsupportedRoot
             {
-                [McpEvent("Args type the generator cannot register (rank-3 array).")]
-                public event EventHandler<Rank3EventArgs>? Fired;
+                [McpEvent("Args type the generator cannot register (rank-5 array).")]
+                public event EventHandler<Rank5EventArgs>? Fired;
             }
             """;
 
@@ -373,8 +373,8 @@ public class SnapshotTests
             $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
 
         var generated = result.GeneratedText;
-        // Rank-3+ array forced rollback of the args type.
-        Assert.DoesNotContain("Demo_Rank3EventArgs", generated);
+        // Rank-5+ array forced rollback of the args type.
+        Assert.DoesNotContain("Demo_Rank5EventArgs", generated);
         // Event still surfaces in the manifest with a string-based fallback.
         Assert.Contains("\"Fired\"", generated);
     }
@@ -877,6 +877,404 @@ public class SnapshotTests
         Assert.Contains(result.GeneratorDiagnostics, d => d.Id == "MAR015");
         // No catalog should be emitted (no valid entries).
         Assert.DoesNotContain("public static class RaiseEventCatalog", result.GeneratedText);
+    }
+
+    [Fact]
+    public void GoldenValueTupleKey_Rank4And5_RegistersWithRuntimeConverter()
+    {
+        // Phase 13.E.14: rank 4 + rank 5 tuple keys.
+        var source = """
+            using System;
+            using System.Collections.Generic;
+            using Marionette;
+
+            namespace Demo;
+
+            public sealed class WideTupleEventArgs : EventArgs
+            {
+                public WideTupleEventArgs() { }
+                public Dictionary<(int A, int B, int C, int D), string> Quad { get; init; } = new();
+                public Dictionary<(string K, int A, int B, int C, int D), double> Penta { get; init; } = new();
+            }
+
+            [McpRoot("widetuple")]
+            public class WideTupleRoot
+            {
+                [McpEvent("Wide tuple-keyed dicts.")]
+                public event EventHandler<WideTupleEventArgs>? Fired;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        Assert.Contains("ValueTuple4_System_Int32_System_Int32_System_Int32_System_Int32", generated);
+        Assert.Contains("ValueTuple5_System_String_System_Int32_System_Int32_System_Int32_System_Int32", generated);
+        Assert.Contains("ValueTupleKeyConverter<global::System.Int32, global::System.Int32, global::System.Int32, global::System.Int32>", generated);
+        Assert.Contains("ValueTupleKeyConverter<global::System.String, global::System.Int32, global::System.Int32, global::System.Int32, global::System.Int32>", generated);
+    }
+
+    [Fact]
+    public void GoldenMultiDimArray_Rank3And4_RegistersWithRuntimeConverter()
+    {
+        // Phase 13.E.13: rank 3 + rank 4 multi-dim arrays register with the
+        // matching runtime converter via JsonMetadataServices.CreateValueInfo.
+        var source = """
+            using System;
+            using Marionette;
+
+            namespace Demo;
+
+            public sealed class CubeEventArgs : EventArgs
+            {
+                public CubeEventArgs() { }
+                public int[,,] Voxels { get; init; } = new int[0,0,0];
+                public double[,,,] Tensor { get; init; } = new double[0,0,0,0];
+            }
+
+            [McpRoot("cuberoot")]
+            public class CubeRoot
+            {
+                [McpEvent("Multi-dim payloads.")]
+                public event EventHandler<CubeEventArgs>? Fired;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        Assert.Contains("MultiDimArray3_System_Int32", generated);
+        Assert.Contains("MultiDimArray4_System_Double", generated);
+        Assert.Contains("MultiDimArrayRank3Converter<global::System.Int32>", generated);
+        Assert.Contains("MultiDimArrayRank4Converter<global::System.Double>", generated);
+    }
+
+    [Fact]
+    public void GoldenCustomJsonConverter_TypeLevel_BridgesUserConverter()
+    {
+        // Phase 13.E.19: type-level [JsonConverter(typeof(X))] redirects the
+        // entire JsonTypeInfo<T> creation to use the user's converter. The
+        // type's own properties are not walked — the converter owns the
+        // round-trip.
+        var source = """
+            using System;
+            using System.Text.Json;
+            using System.Text.Json.Serialization;
+            using Marionette;
+
+            namespace Demo;
+
+            public sealed class MoneyJsonConverter : JsonConverter<Money>
+            {
+                public override Money Read(ref Utf8JsonReader r, Type t, JsonSerializerOptions o) => default;
+                public override void Write(Utf8JsonWriter w, Money v, JsonSerializerOptions o) => w.WriteStringValue("$" + v.Amount);
+            }
+
+            [JsonConverter(typeof(MoneyJsonConverter))]
+            public readonly struct Money
+            {
+                public Money(decimal amount) { Amount = amount; }
+                public decimal Amount { get; }
+            }
+
+            public sealed class CartEventArgs : EventArgs
+            {
+                public Money Total { get; init; }
+            }
+
+            [McpRoot("cartroot")]
+            public class CartRoot
+            {
+                [McpEvent("Cart total updated.")]
+                public event EventHandler<CartEventArgs>? TotalChanged;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        // The Money type's JsonTypeInfo wires through CreateValueInfo +
+        // a fresh user converter instance.
+        Assert.Contains("CreateValueInfo<global::Demo.Money>(", generated);
+        Assert.Contains("new global::Demo.MoneyJsonConverter()", generated);
+    }
+
+    [Fact]
+    public void GoldenCustomJsonConverter_PropertyLevel_OverridesPerProperty()
+    {
+        // Phase 13.E.19: property-level [JsonConverter(typeof(X))] overrides
+        // per-property in JsonPropertyInfoValues.Converter.
+        var source = """
+            using System;
+            using System.Text.Json;
+            using System.Text.Json.Serialization;
+            using Marionette;
+
+            namespace Demo;
+
+            public sealed class HexInt32Converter : JsonConverter<int>
+            {
+                public override int Read(ref Utf8JsonReader r, Type t, JsonSerializerOptions o) => 0;
+                public override void Write(Utf8JsonWriter w, int v, JsonSerializerOptions o) => w.WriteStringValue(v.ToString("X"));
+            }
+
+            public sealed class ColorEventArgs : EventArgs
+            {
+                [JsonConverter(typeof(HexInt32Converter))]
+                public int Rgb { get; init; }
+
+                public int Alpha { get; init; }
+            }
+
+            [McpRoot("colorroot")]
+            public class ColorRoot
+            {
+                [McpEvent("Color update.")]
+                public event EventHandler<ColorEventArgs>? Changed;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        // Rgb property has its converter overridden per-property; Alpha
+        // stays on the default converter (Converter = null at property
+        // level).
+        Assert.Contains("Converter = new global::Demo.HexInt32Converter(),", generated);
+        // Alpha must still appear with Converter = null.
+        Assert.Contains("Converter = null,", generated);
+    }
+
+    [Fact]
+    public void GoldenClosedGenericRoot_RegistersClosedInstantiation()
+    {
+        // Phase 13.E.15: [assembly: McpClosedRoot(typeof(Counter<int>))]
+        // produces a manifest root for the closed generic, with the explicit
+        // Name (or short type name as fallback). The open generic's [McpRoot]
+        // attribute is silently skipped — closed-root pipeline takes over.
+        var source = """
+            using Marionette;
+
+            [assembly: McpClosedRoot(typeof(Demo.Counter<int>), Name = "intCounter")]
+            [assembly: McpClosedRoot(typeof(Demo.Counter<long>), Name = "longCounter")]
+
+            namespace Demo;
+
+            [McpRoot]
+            public class Counter<T> where T : struct
+            {
+                [McpCallable("Bump.")]
+                public T Bump() => default;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        // Both closed instantiations land as RootDescriptors with their
+        // explicit names.
+        Assert.Contains("Name: \"intCounter\"", generated);
+        Assert.Contains("Name: \"longCounter\"", generated);
+        // Each carries a `new Counter<X>()` factory. Roslyn's
+        // FullyQualifiedFormat uses C# keyword aliases (int, long) for
+        // primitives, so the closed-type rendering reflects that.
+        Assert.Contains("new global::Demo.Counter<int>()", generated);
+        Assert.Contains("new global::Demo.Counter<long>()", generated);
+    }
+
+    [Fact]
+    public void GoldenGenericCallable_WithClosedTypes_EmitsPerInstantiation()
+    {
+        // Phase 13.E.16: a generic [McpCallable] with `ClosedTypes` produces
+        // one descriptor per closed type. The descriptor name is mangled
+        // (`Echo_Int32`); the call site uses the typed form
+        // (`typed.Echo<int>(value)`).
+        var source = """
+            using Marionette;
+
+            namespace Demo;
+
+            [McpRoot("genroot")]
+            public class GenericCallableRoot
+            {
+                [McpCallable("Echo a typed value.", ClosedTypes = new[] { typeof(int), typeof(string) })]
+                public T Echo<T>(T value) => value;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        // Both manifest entries appear, mangled by closed-type short name.
+        Assert.Contains("Name: \"Echo_int\"", generated);
+        Assert.Contains("Name: \"Echo_string\"", generated);
+        // Call sites carry the closed type-arg literal so C# binds the
+        // right instantiation.
+        Assert.Contains("typed.Echo<int>(value)", generated);
+        Assert.Contains("typed.Echo<string>(value)", generated);
+    }
+
+    [Fact]
+    public void GoldenGenericCallable_NoClosedTypes_EmitsMar017()
+    {
+        // Phase 13.E.16: generic [McpCallable] WITHOUT ClosedTypes is silently
+        // skipped — the runtime cannot infer type arguments from a JSON arg
+        // bag. MAR017 (Warning) surfaces the requirement to opt in via
+        // ClosedTypes.
+        var source = """
+            using Marionette;
+
+            namespace Demo;
+
+            [McpRoot("genroot")]
+            public class GenericCallableRoot
+            {
+                [McpCallable("Echo without closures.")]
+                public T Echo<T>(T value) => value;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.Contains(result.GeneratorDiagnostics, d => d.Id == "MAR017");
+        // No descriptor for the generic method.
+        Assert.DoesNotContain("Name: \"Echo\"", result.GeneratedText);
+    }
+
+    [Fact]
+    public void GoldenStreamParameter_BridgedViaBase64()
+    {
+        // Phase 13.E.18: Stream / MemoryStream params are no longer
+        // blacklisted. The dispatcher decodes a base64 JSON string into a
+        // fresh MemoryStream at call time.
+        var source = """
+            using System.IO;
+            using Marionette;
+
+            namespace Demo;
+
+            [McpRoot("streamroot")]
+            public class StreamRoot
+            {
+                [McpCallable("Hash a base64-encoded payload.")]
+                public int CountBytes(Stream payload) { return (int)payload.Length; }
+
+                [McpCallable("Same with concrete MemoryStream.")]
+                public long ConcreteSize(MemoryStream payload) => payload.Length;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        // Both Stream and MemoryStream params hit the base64 wrap path.
+        Assert.Contains("new global::System.IO.MemoryStream(global::System.Convert.FromBase64String(", generated);
+        // Schema must use the byte format.
+        Assert.Contains("\\\"format\\\":\\\"byte\\\"", generated);
+        // The dispatcher still calls the user method with the local Stream.
+        Assert.Contains("typed.CountBytes(payload)", generated);
+        Assert.Contains("typed.ConcreteSize(payload)", generated);
+    }
+
+    [Fact]
+    public void GoldenInParameter_AcceptedByValidator()
+    {
+        // Phase 13.E.17: `in` parameters are JSON-RPC-compatible (caller
+        // supplies a value, callee sees a readonly reference). The validator
+        // accepts them; ref/out remain refused.
+        var source = """
+            using Marionette;
+
+            namespace Demo;
+
+            public readonly struct BigStruct
+            {
+                public int A { get; init; }
+                public int B { get; init; }
+            }
+
+            [McpRoot("inroot")]
+            public class InRoot
+            {
+                [McpCallable("Adds the components of an in-passed struct.")]
+                public int Sum(in BigStruct value) => value.A + value.B;
+
+                [McpCallable("Plain by-value still works alongside in.")]
+                public int Echo(int x) => x;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        Assert.Contains("Name: \"Sum\"", generated);
+        Assert.Contains("typed.Sum(value)", generated);
+    }
+
+    [Fact]
+    public void GoldenRefOutParameter_RefusedWithMar014()
+    {
+        // Sister test: ref/out remain refused (no JSON-RPC story).
+        var source = """
+            using Marionette;
+
+            namespace Demo;
+
+            [McpRoot("refroot")]
+            public class RefRoot
+            {
+                [McpCallable("ref refused.")]
+                public void Bump(ref int x) => x++;
+
+                [McpCallable("out refused.")]
+                public bool TryGet(out int x) { x = 0; return true; }
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        // Two MAR014 diagnostics expected (one per refused method).
+        Assert.Equal(2, result.GeneratorDiagnostics.Count(d => d.Id == "MAR014"));
     }
 
     private static string Normalize(string s) => s.Replace("\r\n", "\n");

@@ -163,6 +163,21 @@ internal static class JsonSchemaWriter
             case "System.Guid":
             case "System.TimeSpan":
                 sb.Append("{\"type\":\"string\"}"); return;
+            case "System.IO.Stream":
+            case "System.IO.MemoryStream":
+                // Phase 13.E.18: Stream params are wire-marshalled as base64
+                // strings. JSON Schema convention is type=string format=byte.
+                sb.Append("{\"type\":\"string\",\"format\":\"byte\"}"); return;
+        }
+
+        // Phase 13.E.18: Stream-derived user types — same base64 schema.
+        for (var b = type.BaseType; b is not null; b = b.BaseType)
+        {
+            if (b.ToDisplayString() == "System.IO.Stream")
+            {
+                sb.Append("{\"type\":\"string\",\"format\":\"byte\"}");
+                return;
+            }
         }
 
         // Enum — emit string with enum-of-member-names list.

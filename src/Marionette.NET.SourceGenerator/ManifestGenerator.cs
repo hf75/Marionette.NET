@@ -134,6 +134,43 @@ public sealed class ManifestGenerator : IIncrementalGenerator
                     Diagnostics: diags.ToImmutable().ToEquatableArray());
             });
 
+        // ----- Source F: [assembly: McpClosedRoot] -----
+        // Phase 13.E.15: scan assembly-level McpClosedRoot attributes and
+        // emit one RootModel per closed generic instantiation. Same
+        // CompilationProvider pattern as raisableEntries.
+        var closedRoots = context.CompilationProvider
+            .Select(static (compilation, _) =>
+            {
+                var diags = ImmutableArray.CreateBuilder<DiagnosticInfo>();
+                var roots = ImmutableArray.CreateBuilder<RootModel>();
+
+                foreach (var attr in compilation.Assembly.GetAttributes())
+                {
+                    if (attr.AttributeClass?.ToDisplayString() != Validator.McpClosedRootAttribute) continue;
+                    if (attr.ConstructorArguments.Length != 1) continue;
+                    if (attr.ConstructorArguments[0].Value is not INamedTypeSymbol typeArg) continue;
+
+                    string? explicitName = null;
+                    foreach (var na in attr.NamedArguments)
+                    {
+                        if (na.Key == "Name" && na.Value.Value is string s)
+                        {
+                            explicitName = s;
+                            break;
+                        }
+                    }
+
+                    var loc = attr.ApplicationSyntaxReference?.GetSyntax().GetLocation();
+                    var model = Validator.ValidateClosedGenericRoot(typeArg, explicitName, loc, out var rootDiags);
+                    if (model is not null) roots.Add(model);
+                    foreach (var d in rootDiags) diags.Add(d);
+                }
+
+                return (
+                    Roots: roots.ToImmutable().ToEquatableArray(),
+                    Diagnostics: diags.ToImmutable().ToEquatableArray());
+            });
+
         // ----- Combine into a single ManifestModel -----
         var combined = rootCandidates.Collect()
             .Combine(orphanCallables.Collect())
@@ -141,14 +178,16 @@ public sealed class ManifestGenerator : IIncrementalGenerator
             .Combine(assemblyName)
             .Combine(mcpEnabled)
             .Combine(raisableEntries)
+            .Combine(closedRoots)
             .Select(static (tuple, _) =>
             {
-                var rootsAndDiags = tuple.Left.Left.Left.Left.Left;
-                var orphans = tuple.Left.Left.Left.Left.Right;
-                var orphanEvts = tuple.Left.Left.Left.Right;
-                var asmName = tuple.Left.Left.Right;
-                var mcpOn = tuple.Left.Right;
-                var raisable = tuple.Right;
+                var rootsAndDiags = tuple.Left.Left.Left.Left.Left.Left;
+                var orphans = tuple.Left.Left.Left.Left.Left.Right;
+                var orphanEvts = tuple.Left.Left.Left.Left.Right;
+                var asmName = tuple.Left.Left.Left.Right;
+                var mcpOn = tuple.Left.Left.Right;
+                var raisable = tuple.Left.Right;
+                var closedRoot = tuple.Right;
 
                 var diags = ImmutableArray.CreateBuilder<DiagnosticInfo>();
                 var roots = ImmutableArray.CreateBuilder<RootModel>();
@@ -157,6 +196,18 @@ public sealed class ManifestGenerator : IIncrementalGenerator
                 {
                     if (root is not null) roots.Add(root);
                     diags.AddRange(rootDiags.AsEnumerable());
+                }
+                // Phase 13.E.15: closed generic roots flow in alongside the
+                // FAWMN-discovered ones. They're full RootModels — they carry
+                // their own callables / observables / events — and the JSON
+                // type union below picks them up like any other root.
+                foreach (var r in closedRoot.Roots.AsEnumerable())
+                {
+                    roots.Add(r);
+                }
+                foreach (var d in closedRoot.Diagnostics.AsEnumerable())
+                {
+                    diags.Add(d);
                 }
                 foreach (var orphan in orphans)
                 {

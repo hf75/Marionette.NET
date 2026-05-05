@@ -37,6 +37,7 @@ internal static class Validator
     public const string McpTriggerableAttribute = "Marionette.McpTriggerableAttribute";
     public const string McpEventAttribute = "Marionette.McpEventAttribute";
     public const string McpRaisableAttribute = "Marionette.McpRaisableAttribute";
+    public const string McpClosedRootAttribute = "Marionette.McpClosedRootAttribute";
 
     /// <summary>
     /// Validate a candidate root class, harvesting its members. Returns null
@@ -50,11 +51,13 @@ internal static class Validator
         var diags = ImmutableArray.CreateBuilder<DiagnosticInfo>();
 
         // ---- MAR001: root class shape ----
-        // Reject static and generic types. Static types cannot be instantiated
-        // (no `new T()`), and generics need a type-argument resolution we don't
-        // do here.
-        if (typeSymbol.IsStatic || typeSymbol.IsGenericType ||
-            typeSymbol.TypeKind != TypeKind.Class)
+        // Reject static and non-class types. Phase 13.E.15: generic class
+        // declarations no longer raise MAR001 — adopters who still want
+        // them as roots opt in via `[assembly: McpClosedRoot(typeof(Foo<int>))]`,
+        // which goes through ValidateClosedGenericRoot. The FAWMN pipeline
+        // simply returns null without a diagnostic for the open-generic
+        // declaration itself.
+        if (typeSymbol.IsStatic || typeSymbol.TypeKind != TypeKind.Class)
         {
             diags.Add(MakeDiagnostic(
                 Diagnostics.InvalidRootClass,
@@ -63,7 +66,103 @@ internal static class Validator
             diagnostics = diags.ToImmutable();
             return null;
         }
+        if (typeSymbol.IsGenericType)
+        {
+            // Silently skip — the closed-root pipeline picks up valid
+            // instantiations declared via [assembly: McpClosedRoot]. No
+            // diagnostic so the IDE stays quiet for adopters who legitimately
+            // use the generic-root pattern.
+            diagnostics = diags.ToImmutable();
+            return null;
+        }
 
+        // Resolve the manifest name: explicit [McpRoot(Name)] overrides the
+        // type's short name. ManifestName uses the SHORT type name as fallback,
+        // which is what users expect in tool ids.
+        var rootAttr = typeSymbol.GetAttributes()
+            .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == McpRootAttribute);
+        var manifestName = TryGetExplicitName(rootAttr) ?? typeSymbol.Name;
+
+        var model = ValidateRootBody(typeSymbol, manifestName, diags);
+        diagnostics = diags.ToImmutable();
+        return model;
+    }
+
+    /// <summary>
+    /// Phase 13.E.15: validate a closed generic instantiation as a manifest
+    /// root. The MAR001 generic-class refusal is bypassed because the
+    /// instantiation IS concrete (e.g. <c>Counter&lt;int&gt;</c>); the
+    /// open-generic class itself can still carry <c>[McpRoot]</c> for IDE
+    /// discovery, but this entry point is what produces the
+    /// <see cref="RootModel"/>. The manifest name is read from
+    /// <c>[McpClosedRoot(Name = ...)]</c>; if absent, falls back to the open
+    /// type's short name (which is usually NOT what adopters want, hence the
+    /// strong recommendation to set Name explicitly).
+    /// </summary>
+    public static RootModel? ValidateClosedGenericRoot(
+        INamedTypeSymbol closedType,
+        string? explicitName,
+        Location? attributeLocation,
+        out ImmutableArray<DiagnosticInfo> diagnostics)
+    {
+        var diags = ImmutableArray.CreateBuilder<DiagnosticInfo>();
+
+        if (closedType is IErrorTypeSymbol)
+        {
+            diagnostics = diags.ToImmutable();
+            return null;
+        }
+        if (closedType.IsStatic ||
+            closedType.TypeKind != TypeKind.Class ||
+            !closedType.IsGenericType ||
+            closedType.IsUnboundGenericType)
+        {
+            diags.Add(MakeDiagnostic(
+                Diagnostics.McpClosedRootInvalid,
+                attributeLocation,
+                closedType.ToDisplayString(),
+                "must be a closed generic class instantiation (e.g. typeof(Counter<int>))"));
+            diagnostics = diags.ToImmutable();
+            return null;
+        }
+        // Reject if any type argument is itself an open generic / type
+        // parameter — `typeof(Counter<>)` already produces an unbound
+        // generic but a hand-rolled half-closed thing might slip through.
+        foreach (var ta in closedType.TypeArguments)
+        {
+            if (ta is ITypeParameterSymbol)
+            {
+                diags.Add(MakeDiagnostic(
+                    Diagnostics.McpClosedRootInvalid,
+                    attributeLocation,
+                    closedType.ToDisplayString(),
+                    "type arguments must be closed types, not open generic parameters"));
+                diagnostics = diags.ToImmutable();
+                return null;
+            }
+        }
+
+        var manifestName = !string.IsNullOrWhiteSpace(explicitName)
+            ? explicitName!
+            : closedType.Name;
+
+        var model = ValidateRootBody(closedType, manifestName, diags);
+        diagnostics = diags.ToImmutable();
+        return model;
+    }
+
+    /// <summary>
+    /// Shared body for both <see cref="ValidateRoot"/> (non-generic) and
+    /// <see cref="ValidateClosedGenericRoot"/> (closed generic). Walks the
+    /// type's members, validates each, and assembles the
+    /// <see cref="RootModel"/>. The MAR001 / MAR-something-else upfront
+    /// shape checks are caller responsibility.
+    /// </summary>
+    private static RootModel ValidateRootBody(
+        INamedTypeSymbol typeSymbol,
+        string manifestName,
+        ImmutableArray<DiagnosticInfo>.Builder diags)
+    {
         // Capture the (parameterless ctor exists) bit — drives whether the
         // emitter writes a `() => new T()` factory or `null` (the runtime can
         // still call the descriptor's other delegates by accepting an existing
@@ -76,13 +175,7 @@ internal static class Validator
         var observables = ImmutableArray.CreateBuilder<ObservableModel>();
         var triggerables = ImmutableArray.CreateBuilder<TriggerableModel>();
         var events = ImmutableArray.CreateBuilder<EventModel>();
-        // Phase 8.1: collector for the [McpEvent] args graph. Per-root scope —
-        // ManifestGenerator unions across roots in the combine step.
         var jsonTypes = new JsonTypeCollector();
-        // Phase 8.2: parallel collector for [McpObservable] values and
-        // [McpCallable] sync return types. Lives in the camelCase
-        // MarionetteJsonContext so naming policy stays consistent with
-        // McpJsonUtilities.DefaultOptions.
         var valueTypes = new JsonTypeCollector();
 
         foreach (var member in typeSymbol.GetMembers())
@@ -90,8 +183,10 @@ internal static class Validator
             switch (member)
             {
                 case IMethodSymbol method when HasAttribute(method, McpCallableAttribute):
-                    var callable = ValidateCallable(method, diags, valueTypes);
-                    if (callable is not null) callables.Add(callable);
+                    foreach (var callable in ValidateCallable(method, diags, valueTypes))
+                    {
+                        callables.Add(callable);
+                    }
                     break;
 
                 case IPropertySymbol observableProp when HasAttribute(observableProp, McpObservableAttribute):
@@ -132,14 +227,6 @@ internal static class Validator
                 typeSymbol.ToDisplayString()));
         }
 
-        // Resolve the manifest name: explicit [McpRoot(Name)] overrides the
-        // type's short name. ManifestName uses the SHORT type name as fallback,
-        // which is what users expect in tool ids.
-        var rootAttr = typeSymbol.GetAttributes()
-            .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == McpRootAttribute);
-        var manifestName = TryGetExplicitName(rootAttr) ?? typeSymbol.Name;
-
-        diagnostics = diags.ToImmutable();
         return new RootModel(
             ManifestName: manifestName,
             TypeFullName: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -157,7 +244,7 @@ internal static class Validator
     // CallableModel
     // -------------------------------------------------------------------------
 
-    private static CallableModel? ValidateCallable(
+    private static IEnumerable<CallableModel> ValidateCallable(
         IMethodSymbol method,
         ImmutableArray<DiagnosticInfo>.Builder diags,
         JsonTypeCollector valueTypes)
@@ -169,35 +256,60 @@ internal static class Validator
                 Diagnostics.CallableNotPublic,
                 method.Locations.FirstOrDefault(),
                 method.ToDisplayString()));
-            return null;
+            return System.Linq.Enumerable.Empty<CallableModel>();
         }
+
+        // Phase 13.E.16: pull ClosedTypes from the [McpCallable] attribute
+        // BEFORE the IsGenericMethod check so generic methods with closures
+        // flow through the new branch instead of MAR014/MAR017.
+        var callableAttr = method.GetAttributes()
+            .First(a => a.AttributeClass?.ToDisplayString() == McpCallableAttribute);
+        var closedTypes = TryGetClosedTypes(callableAttr);
 
         if (method.IsGenericMethod)
         {
-            diags.Add(MakeDiagnostic(
-                Diagnostics.CallableUnsupportedSignature,
-                method.Locations.FirstOrDefault(),
-                method.ToDisplayString(),
-                "generic methods cannot be dispatched from a JSON-RPC call because no runtime type arguments are available"));
-            return null;
+            if (closedTypes is null || closedTypes.Value.Length == 0)
+            {
+                // No ClosedTypes — silently skip with MAR017 (Warning).
+                diags.Add(MakeDiagnostic(
+                    Diagnostics.GenericCallableMissingClosedTypes,
+                    method.Locations.FirstOrDefault(),
+                    method.ToDisplayString()));
+                return System.Linq.Enumerable.Empty<CallableModel>();
+            }
+            if (method.TypeParameters.Length != 1)
+            {
+                diags.Add(MakeDiagnostic(
+                    Diagnostics.CallableUnsupportedSignature,
+                    method.Locations.FirstOrDefault(),
+                    method.ToDisplayString(),
+                    "[McpCallable] ClosedTypes only supports single-type-parameter methods; multi-type-parameter methods need separate per-arity overloads"));
+                return System.Linq.Enumerable.Empty<CallableModel>();
+            }
         }
 
         foreach (var p in method.Parameters)
         {
-            if (p.RefKind != RefKind.None)
+            // Phase 13.E.17: `in` is permitted because it has the same JSON-RPC
+            // semantics as by-value (caller passes a value; callee sees a
+            // readonly reference). The dispatcher emits the call-site `in`
+            // modifier as part of the lambda body so the C# compiler binds
+            // overload resolution correctly. `ref` and `out` remain refused
+            // because they require call-site variables on both sides.
+            if (p.RefKind == RefKind.Ref || p.RefKind == RefKind.Out)
             {
                 diags.Add(MakeDiagnostic(
                     Diagnostics.CallableUnsupportedSignature,
                     p.Locations.FirstOrDefault(),
                     method.ToDisplayString(),
                     $"parameter '{p.Name}' uses {p.RefKind.ToString().ToLowerInvariant()} passing"));
-                return null;
+                return System.Linq.Enumerable.Empty<CallableModel>();
             }
         }
 
         // Pull the [McpCallable("description", OffUiThread = ?, TimeoutSeconds = ?)] data.
-        var attr = method.GetAttributes()
-            .First(a => a.AttributeClass?.ToDisplayString() == McpCallableAttribute);
+        // (Phase 13.E.16: callableAttr was already resolved above to read ClosedTypes.)
+        var attr = callableAttr;
 
         var description = attr.ConstructorArguments.Length > 0
             ? attr.ConstructorArguments[0].Value as string ?? string.Empty
@@ -228,7 +340,7 @@ internal static class Validator
                     p.Name,
                     typeFullName,
                     method.ToDisplayString()));
-                return null;
+                return System.Linq.Enumerable.Empty<CallableModel>();
             }
 
             string? defaultLiteral = null;
@@ -237,13 +349,23 @@ internal static class Validator
                 defaultLiteral = FormatLiteral(p.ExplicitDefaultValue, p.Type);
             }
 
+            // Phase 13.E.18: detect Stream / MemoryStream parameter types
+            // BEFORE the JSON-context registration. Stream params don't go
+            // through System.Text.Json — the dispatcher wraps a base64 JSON
+            // string into a fresh MemoryStream at call site.
+            bool isStreamParam = IsBase64StreamParamType(p.Type);
+
             // Phase 8.2: register the parameter type on the value collector
             // so the emitter can switch the JsonElement-deserialization path
             // from the reflection-based JsonSerializer.Deserialize<T>(string)
             // overload to the typed JsonTypeInfo<T> path. Failure leaves
             // jsonParamName null and the generator keeps emitting the
             // legacy untyped overload (with its IL2026/IL3050 warning).
-            valueTypes.TryAdd(p.Type, out var jsonParamName);
+            string? jsonParamName = null;
+            if (!isStreamParam)
+            {
+                valueTypes.TryAdd(p.Type, out jsonParamName);
+            }
 
             paramBuilder.Add(new ParameterModel(
                 Name: p.Name,
@@ -251,7 +373,8 @@ internal static class Validator
                 IsRequired: !p.HasExplicitDefaultValue,
                 DefaultLiteral: defaultLiteral,
                 EnumTypeFullName: TryGetEnumTypeFullName(p.Type),
-                JsonContextName: jsonParamName));
+                JsonContextName: jsonParamName,
+                IsBase64StreamParam: isStreamParam));
 
             schemaInputs.Add((p.Name, p.Type, !p.HasExplicitDefaultValue));
         }
@@ -286,18 +409,169 @@ internal static class Validator
             valueTypes.TryAdd(method.ReturnType, out jsonReturnName);
         }
 
-        return new CallableModel(
-            MethodName: method.Name,
-            Description: description,
-            OffUiThread: offUiThread,
-            TimeoutSeconds: timeoutSeconds,
-            ReturnTypeFullName: returnTypeFullName,
-            ReturnsTask: returnsTask,
-            ReturnsTaskOfT: returnsTaskOfT,
-            TaskResultTypeFullName: taskResultTypeFullName,
-            Parameters: paramBuilder.ToImmutable().ToEquatableArray(),
-            ParametersJsonSchema: parametersSchema,
-            JsonReturnContextName: jsonReturnName);
+        // Phase 13.E.16: for generic methods with ClosedTypes, emit one
+        // CallableModel per closed type-arg. Non-generic methods produce a
+        // single descriptor as before.
+        if (method.IsGenericMethod && closedTypes is { } ctVal && ctVal.Length > 0)
+        {
+            var emitted = new List<CallableModel>(ctVal.Length);
+            foreach (var closedType in ctVal)
+            {
+                // Re-walk the parameter list against the CLOSED method
+                // symbol so type parameters are substituted (`T value` →
+                // `int value`). This keeps the JSON schema and the
+                // typed-context wiring grounded in concrete types instead
+                // of an unresolvable `T`.
+                var closedMethod = method.Construct(closedType);
+                var closedParamBuilder = ImmutableArray.CreateBuilder<ParameterModel>();
+                var closedSchemaInputs = new List<(string Name, ITypeSymbol Type, bool IsRequired)>(closedMethod.Parameters.Length);
+                bool closedOk = true;
+
+                foreach (var p in closedMethod.Parameters)
+                {
+                    var typeFullName = p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    if (IsBlacklistedParamType(p.Type))
+                    {
+                        diags.Add(MakeDiagnostic(
+                            Diagnostics.UnsupportedParameterType,
+                            p.Locations.FirstOrDefault(),
+                            p.Name,
+                            typeFullName,
+                            method.ToDisplayString()));
+                        closedOk = false;
+                        break;
+                    }
+
+                    string? defLit = null;
+                    if (p.HasExplicitDefaultValue)
+                    {
+                        defLit = FormatLiteral(p.ExplicitDefaultValue, p.Type);
+                    }
+
+                    bool isStream = IsBase64StreamParamType(p.Type);
+                    string? jsonName = null;
+                    if (!isStream)
+                    {
+                        valueTypes.TryAdd(p.Type, out jsonName);
+                    }
+
+                    closedParamBuilder.Add(new ParameterModel(
+                        Name: p.Name,
+                        TypeFullName: typeFullName,
+                        IsRequired: !p.HasExplicitDefaultValue,
+                        DefaultLiteral: defLit,
+                        EnumTypeFullName: TryGetEnumTypeFullName(p.Type),
+                        JsonContextName: jsonName,
+                        IsBase64StreamParam: isStream));
+
+                    closedSchemaInputs.Add((p.Name, p.Type, !p.HasExplicitDefaultValue));
+                }
+
+                if (!closedOk) continue;
+
+                var closedReturnFqn = closedMethod.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                var (cReturnsTask, cReturnsTaskOfT, cTaskResultFqn, cTaskResultSym) = ClassifyReturnType(closedMethod.ReturnType);
+
+                string? cJsonReturnName = null;
+                if (cReturnsTaskOfT && cTaskResultSym is not null)
+                {
+                    valueTypes.TryAdd(cTaskResultSym, out cJsonReturnName);
+                }
+                else if (!cReturnsTask &&
+                         closedMethod.ReturnType.SpecialType != SpecialType.System_Void)
+                {
+                    valueTypes.TryAdd(closedMethod.ReturnType, out cJsonReturnName);
+                }
+
+                var closedParamsSchema = JsonSchemaWriter.WriteParametersSchema(closedSchemaInputs);
+
+                var typeFqn = closedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                var literal = "<" + typeFqn + ">";
+                // Suffix: e.g. `int` → `_int`, `System.String` → `_System_String`.
+                // Used as the manifest-name distinguisher.
+                var suffix = "_" + EncodeForIdentifier(closedType);
+                emitted.Add(new CallableModel(
+                    MethodName: method.Name,
+                    Description: description,
+                    OffUiThread: offUiThread,
+                    TimeoutSeconds: timeoutSeconds,
+                    ReturnTypeFullName: closedReturnFqn,
+                    ReturnsTask: cReturnsTask,
+                    ReturnsTaskOfT: cReturnsTaskOfT,
+                    TaskResultTypeFullName: cTaskResultFqn,
+                    Parameters: closedParamBuilder.ToImmutable().ToEquatableArray(),
+                    ParametersJsonSchema: closedParamsSchema,
+                    JsonReturnContextName: cJsonReturnName,
+                    ClosedTypeArgsLiteral: literal,
+                    ManifestNameSuffix: suffix));
+            }
+            return emitted;
+        }
+
+        return new[]
+        {
+            new CallableModel(
+                MethodName: method.Name,
+                Description: description,
+                OffUiThread: offUiThread,
+                TimeoutSeconds: timeoutSeconds,
+                ReturnTypeFullName: returnTypeFullName,
+                ReturnsTask: returnsTask,
+                ReturnsTaskOfT: returnsTaskOfT,
+                TaskResultTypeFullName: taskResultTypeFullName,
+                Parameters: paramBuilder.ToImmutable().ToEquatableArray(),
+                ParametersJsonSchema: parametersSchema,
+                JsonReturnContextName: jsonReturnName)
+        };
+    }
+
+    /// <summary>
+    /// Phase 13.E.16: build a manifest-name-safe identifier suffix for a
+    /// closed type argument. Examples:
+    /// <c>int</c> → <c>Int32</c>, <c>System.String</c> → <c>System_String</c>,
+    /// <c>List&lt;int&gt;</c> → <c>System_Collections_Generic_List_int_</c>.
+    /// </summary>
+    private static string EncodeForIdentifier(ITypeSymbol type)
+    {
+        var fqn = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        if (fqn.StartsWith("global::", System.StringComparison.Ordinal))
+        {
+            fqn = fqn.Substring("global::".Length);
+        }
+        var sb = new System.Text.StringBuilder(fqn.Length);
+        foreach (var c in fqn)
+        {
+            sb.Append(c switch
+            {
+                '.' or ',' or '<' or '>' or ' ' or '?' or '[' or ']' => '_',
+                _ => c,
+            });
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Phase 13.E.16: extract the <c>ClosedTypes</c> named-arg array from a
+    /// <c>[McpCallable]</c> attribute, or <see langword="null"/> when absent.
+    /// </summary>
+    private static ImmutableArray<ITypeSymbol>? TryGetClosedTypes(AttributeData attr)
+    {
+        foreach (var na in attr.NamedArguments)
+        {
+            if (na.Key != "ClosedTypes") continue;
+            var values = na.Value.Values;
+            if (values.IsDefaultOrEmpty) return ImmutableArray<ITypeSymbol>.Empty;
+            var list = ImmutableArray.CreateBuilder<ITypeSymbol>(values.Length);
+            foreach (var v in values)
+            {
+                if (v.Value is ITypeSymbol ts && ts is not IErrorTypeSymbol)
+                {
+                    list.Add(ts);
+                }
+            }
+            return list.ToImmutable();
+        }
+        return null;
     }
 
     // -------------------------------------------------------------------------
@@ -567,7 +841,11 @@ internal static class Validator
     /// <summary>
     /// Bare-bones blacklist for MAR004. Phase 1.b is intentionally permissive:
     /// we reject only types we KNOW we cannot marshal, never types we merely
-    /// suspect.
+    /// suspect. Phase 13.E.18 lifts <c>Stream</c> and <c>MemoryStream</c> from
+    /// the blacklist — the dispatcher wraps a base64-encoded JSON string into
+    /// a fresh <c>MemoryStream</c>. <c>FileStream</c> stays blacklisted (no
+    /// sane base64 wrap; adopters who really want a file on disk should
+    /// take a path string instead).
     /// </summary>
     private static bool IsBlacklistedParamType(ITypeSymbol t)
     {
@@ -581,12 +859,21 @@ internal static class Validator
             case "nint":
             case "System.UIntPtr":
             case "nuint":
-            case "System.IO.Stream":
             case "System.IO.FileStream":
-            case "System.IO.MemoryStream":
                 return true;
         }
-        // Walk base chain for `Stream`-derived types.
+        return false;
+    }
+
+    /// <summary>
+    /// Phase 13.E.18: detect <c>Stream</c> / <c>MemoryStream</c> parameter
+    /// types so the emitter wraps a base64 JSON string. Also reaches
+    /// <c>Stream</c>-derived user types (rare, but supported).
+    /// </summary>
+    private static bool IsBase64StreamParamType(ITypeSymbol t)
+    {
+        var fq = t.ToDisplayString();
+        if (fq == "System.IO.Stream" || fq == "System.IO.MemoryStream") return true;
         for (var b = t.BaseType; b is not null; b = b.BaseType)
         {
             if (b.ToDisplayString() == "System.IO.Stream") return true;
