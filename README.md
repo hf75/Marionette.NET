@@ -114,6 +114,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .phase7\release-local.ps1
 - **[PHASE9_FINDINGS.md](PHASE9_FINDINGS.md)** - Phase 9 outcomes (Avalonia type_text, MAUI multi-window tracking, WinUI input-injection Win11 reality + adopter docs).
 - **[PHASE10_FINDINGS.md](PHASE10_FINDINGS.md)** - Phase 10 outcomes (AOT-clean per-method dynamic tools via AIFunction subclass).
 - **[PHASE11_FINDINGS.md](PHASE11_FINDINGS.md)** - Phase 11 outcomes (interface fallback for custom + concurrent collections, AOT-strict `RunAsyncSourceGenSafe`).
+- **[PHASE12_FINDINGS.md](PHASE12_FINDINGS.md)** - Phase 12 outcomes (MAUI semantic input completion, multi-dim arrays rank 2, no-ctor collections serialise-only, [JsonIgnore(Condition)] sub-modes, type-graph depth lift to 64).
 - **[.phase6/6a-testing-toolkit-dx.md](.phase6/6a-testing-toolkit-dx.md)** - Phase 6a testing toolkit slice.
 - **[.phase7/7a-distribution-dogfooding.md](.phase7/7a-distribution-dogfooding.md)** - Local package/showcase dogfooding plan.
 - **[docs/getting-started.md](docs/getting-started.md)** - Local NuGet consumption and host wiring.
