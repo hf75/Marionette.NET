@@ -49,22 +49,25 @@ Claude can now call `TodoListViewModel.AddTodo({"title": "buy milk"})` directly 
 
 ## Status
 
-**Pre-alpha, post-Phase-7 local release candidate.** What works today:
+**Pre-alpha, post-Phase-11 local release candidate.** What works today:
 
 - The four meta-tools, channel push, watchable resources, `[McpEvent]` (Phase 1.2 / 1.6).
-- Source generator emits AOT-clean dispatcher tables + per-method JSON schemas; 26/26 generator tests green.
+- Source generator emits AOT-clean dispatcher tables + per-method JSON schemas; 32/32 generator tests green.
 - **Adapter.Wpf** — Dispatcher marshalling, RenderTargetBitmap screenshots, name-resolved control lookup (Phase 1.3).
-- **Adapter.Avalonia** — Cross-platform (`net10.0`, NOT `-windows`), Avalonia 12.0.2, Dispatcher.UIThread + RenderTargetBitmap-with-PixelSize semantics (Phase 2.1).
-- **Adapter.WinUI** — Windows App SDK / WinUI 3 (`net10.0-windows10.0.19041.0`), unpackaged-first, AutomationPeer-first input strategy (Phase 3.2).
-- **Adapter.Maui** - .NET MAUI 10.x Windows head with MAUI dispatcher / handler integration (Phase 4.1).
-- **Marionette.NET.Testing** - framework-neutral in-process harness, structured-error assertions, and xUnit/NUnit helper adapters (Phase 6).
-- **Local NuGet packaging** - 11 preview packages, including the `Marionette.NET` meta-package, build locally to `artifacts/nuget` (Phase 7).
-- **`simulate_input` + `raise_event`** — real input through each framework's input pipeline; WPF 8 kinds, Avalonia click variants, WinUI semantic-first via AutomationPeer (Phase 3.1 / 3.2).
-- **Multi-window routing** — per-window dynamic-tool variants (`<Root>.<Method>:<windowId>`), `inspect_app_api` advertises `windowIds` when >1 windows open, `tools/list_changed` coalesced 100ms (Phase 3.3).
-- **Sample.Wpf.TodoApp + Sample.Avalonia.Dashboard + Sample.WinUI.FormLab + Sample.Maui.PocketPlanner** - all compatible with the skill-pack v2 workflows.
+- **Adapter.Avalonia** — Cross-platform (`net10.0`, NOT `-windows`), Avalonia 12.0.2, Dispatcher.UIThread + RenderTargetBitmap-with-PixelSize semantics + Phase-9.1 `simulate_input(type_text)` via direct `Text`-property setter (Phase 2.1 / 9.1).
+- **Adapter.WinUI** — Windows App SDK 2.x / WinUI 3 (`net10.0-windows10.0.19041.0`), unpackaged-first, AutomationPeer-first input strategy + Phase-9.3 startup probe for `InputInjector` availability (Phase 3.2 / 9.3).
+- **Adapter.Maui** — .NET MAUI 10.x Windows head with MAUI dispatcher / handler integration + Phase-9.2 `Application.Windows`-lifecycle multi-window tracking (Phase 4.1 / 9.2).
+- **Marionette.NET.Testing** — framework-neutral in-process harness, structured-error assertions, and xUnit/NUnit helper adapters (Phase 6).
+- **Local NuGet packaging** — 11 preview packages, including the `Marionette.NET` meta-package, build locally to `artifacts/nuget` (Phase 7).
+- **`simulate_input` + `raise_event`** — real input through each framework's input pipeline; WPF 8 kinds, Avalonia click + type_text variants, WinUI full matrix via `AutomationPeer.Invoke()` first / `InputInjector` fallback (Phase 3.1 / 3.2 / 9.x).
+- **Multi-window routing** — per-window dynamic-tool variants (`<Root>.<Method>:<windowId>`), `inspect_app_api` advertises `windowIds` when >1 windows open, `tools/list_changed` coalesced 100ms (Phase 3.3, MAUI added in Phase 9.2).
+- **AOT JSON source generator** — typed `JsonTypeInfo<T>` for `[McpEvent]` args / `[McpObservable]` values / `[McpCallable]` returns + parameters across primitives, user records, `Nullable<T>`, enums, `T[]`, `List<T>`, every standard `IEnumerable`/`IList`/`ICollection`/`ISet`/`Stack`/`Queue`, `Dictionary` / `IDictionary` / `IReadOnlyDictionary` across STJ-supported key types, and (Phase 11) any user / concurrent type that implements one of those interfaces (Phase 8 / 8.5 / 11).
+- **AOT-clean per-method dynamic tools** via the `MarionetteAIFunction` subclass + `McpServerTool.Create(AIFunction, …)` overload — registration is reflection-free and verified end-to-end against AOT-published binaries on all four adapters (Phase 10).
+- **`MarionetteHost.RunAsyncSourceGenSafe`** — annotation-free entry point for adopters who do not call `raise_event` and stay within source-gen-eligible JSON shapes (Phase 11). `RaiseEventAsync` extracted into its own `MarionetteRaiseEventTools` class so the strict entry point can omit it cleanly.
+- **Sample.Wpf.TodoApp + Sample.Avalonia.Dashboard + Sample.WinUI.FormLab + Sample.Maui.PocketPlanner** — all compatible with the skill-pack v2 workflows.
 - 7 end-to-end eval-cases (`dotnet test`) + 3 conditional GUI eval-cases (EC-8 simulate_input, EC-9 raise_event, EC-10 multi-window; gated on `MARIONETTE_GUI_TESTS=1`).
 - Local showcase publish + dogfood: WPF TodoApp, Avalonia Dashboard, and WinUI FormLab publish to `artifacts/showcases` and pass headless MCP handshake checks.
-- AOT-publish: stripped + full WPF builds both succeed; Avalonia AOT publish + stdio handshake wired in CI.
+- **AOT-publish + AOT-runtime stdio handshake**: 5 samples × stripped + full publish (10 publishes) all clean, 0 Marionette IL warnings; AOT-runtime handshake exercises explicit dynamic-tool invocation on all four UI-framework adapters (Phase 10 / 11).
 
 What is **not** yet here: Uno adapter, public NuGet push, `git push`, GitHub release. Those are deliberately held until manual testing is complete. See [MASTERPLAN.md](MASTERPLAN.md) for the full roadmap.
 
@@ -107,7 +110,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .phase7\release-local.ps1
 - **[PHASE3_FINDINGS.md](PHASE3_FINDINGS.md)** - Phase 3 outcomes (WinUI adapter, simulate_input + raise_event, multi-window routing).
 - **[PHASE6_FINDINGS.md](PHASE6_FINDINGS.md)** - Phase 6 outcomes (testing toolkit, analyzer hint, skill-pack v2, docs).
 - **[PHASE7_FINDINGS.md](PHASE7_FINDINGS.md)** - Phase 7 local release-candidate outcomes.
-- **[PHASE8_FINDINGS.md](PHASE8_FINDINGS.md)** - Phase 8 outcomes (AOT JSON source-gen for events, observables, callables).
+- **[PHASE8_FINDINGS.md](PHASE8_FINDINGS.md)** - Phase 8 outcomes (AOT JSON source-gen for events, observables, callables) + Phase 8.5 (collection interfaces, non-string dictionary keys).
+- **[PHASE9_FINDINGS.md](PHASE9_FINDINGS.md)** - Phase 9 outcomes (Avalonia type_text, MAUI multi-window tracking, WinUI input-injection Win11 reality + adopter docs).
 - **[PHASE10_FINDINGS.md](PHASE10_FINDINGS.md)** - Phase 10 outcomes (AOT-clean per-method dynamic tools via AIFunction subclass).
 - **[PHASE11_FINDINGS.md](PHASE11_FINDINGS.md)** - Phase 11 outcomes (interface fallback for custom + concurrent collections, AOT-strict `RunAsyncSourceGenSafe`).
 - **[.phase6/6a-testing-toolkit-dx.md](.phase6/6a-testing-toolkit-dx.md)** - Phase 6a testing toolkit slice.
