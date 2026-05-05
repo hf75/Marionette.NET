@@ -100,7 +100,7 @@
                             <DropShadowEffect Color="#FFFF2EC8" BlurRadius="12" ShadowDepth="0" Opacity="0.8" />
                         </TextBlock.Effect>
                     </TextBlock>
-                    <ProgressBar Height="6" Maximum="100" Value="{Binding ReactorOutput}"
+                    <ProgressBar Height="6" Maximum="100" Value="{Binding ReactorOutput, Mode=OneWay}"
                                  Foreground="{StaticResource MagentaBrush}"
                                  Background="#33000000" BorderThickness="0" Margin="0,0,0,18" />
 
@@ -112,7 +112,7 @@
                             <DropShadowEffect Color="#FF1AF3FF" BlurRadius="12" ShadowDepth="0" Opacity="0.8" />
                         </TextBlock.Effect>
                     </TextBlock>
-                    <ProgressBar Height="6" Maximum="200" Value="{Binding CoolantPressure}"
+                    <ProgressBar Height="6" Maximum="200" Value="{Binding CoolantPressure, Mode=OneWay}"
                                  Foreground="{StaticResource CyanBrush}"
                                  Background="#33000000" BorderThickness="0" Margin="0,0,0,18" />
 
@@ -120,7 +120,7 @@
                     <TextBlock Style="{StaticResource LabelText}" Text="QUANTUM FLUX" Foreground="{StaticResource LimeBrush}" />
                     <TextBlock Style="{StaticResource ValueText}" Text="{Binding QuantumFlux, StringFormat='{}{0:F0} qf'}"
                                Foreground="{StaticResource LimeBrush}" Margin="0,2,0,4" />
-                    <ProgressBar Height="6" Maximum="9999" Value="{Binding QuantumFlux}"
+                    <ProgressBar Height="6" Maximum="9999" Value="{Binding QuantumFlux, Mode=OneWay}"
                                  Foreground="{StaticResource LimeBrush}"
                                  Background="#33000000" BorderThickness="0" Margin="0,0,0,18" />
 
