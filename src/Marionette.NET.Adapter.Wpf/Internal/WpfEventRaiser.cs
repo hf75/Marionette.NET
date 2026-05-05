@@ -44,6 +44,18 @@ internal static class WpfEventRaiser
         if (string.IsNullOrEmpty(eventName)) return false;
         _ = args; // Phase 3.1 ignores args; default RoutedEventArgs is enough for Click etc.
 
+        // Phase 12.2: try the AOT-clean source-gen catalog first. The
+        // generator emits a typed switch arm for every
+        // [assembly: McpRaisable(typeof(T), "Click")] declaration, which
+        // preserves the static <Name>Event field reference into the trimmed
+        // binary. When the catalog is empty (no [McpRaisable] declared) or
+        // doesn't recognise the (control, eventName) pair, we fall through
+        // to the reflection-based path below.
+        if (Marionette.Runtime.Adapters.RaiseEventCatalog.TryRaise(target, eventName, args: null))
+        {
+            return true;
+        }
+
         var routedEvent = ResolveRoutedEvent(target.GetType(), eventName);
         if (routedEvent is null)
         {

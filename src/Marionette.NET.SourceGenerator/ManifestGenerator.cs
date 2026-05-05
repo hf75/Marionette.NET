@@ -95,19 +95,60 @@ public sealed class ManifestGenerator : IIncrementalGenerator
                 po is CSharpParseOptions csOpts &&
                 csOpts.PreprocessorSymbolNames.Contains("MCP_ENABLED"));
 
+        // ----- Source E: [assembly: McpRaisable] catalog -----
+        // Phase 12.2: scan the compilation's assembly-level attributes for
+        // McpRaisableAttribute and validate each (Type, EventName) pair. Use
+        // CompilationProvider rather than ForAttributeWithMetadataName because
+        // FAWMN doesn't surface assembly-target attributes — only attributes
+        // attached to declarations (types, methods, properties) appear there.
+        // The CompilationProvider re-runs whenever assembly attributes change,
+        // which is exactly the cache invalidation we want.
+        var raisableEntries = context.CompilationProvider
+            .Select(static (compilation, _) =>
+            {
+                var diags = ImmutableArray.CreateBuilder<DiagnosticInfo>();
+                var entries = ImmutableArray.CreateBuilder<RaisableEventModel>();
+                var frameworkSet = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
+                var frameworkOrdered = ImmutableArray.CreateBuilder<string>();
+
+                foreach (var attr in compilation.Assembly.GetAttributes())
+                {
+                    if (attr.AttributeClass?.ToDisplayString() != Validator.McpRaisableAttribute) continue;
+                    if (attr.ConstructorArguments.Length != 2) continue;
+
+                    if (attr.ConstructorArguments[0].Value is not ITypeSymbol typeArg) continue;
+                    if (attr.ConstructorArguments[1].Value is not string eventName ||
+                        string.IsNullOrEmpty(eventName)) continue;
+
+                    var loc = attr.ApplicationSyntaxReference?.GetSyntax().GetLocation();
+                    var entry = RaisableEventValidator.Validate(typeArg, eventName, loc, diags);
+                    if (entry is null) continue;
+
+                    entries.Add(entry);
+                    if (frameworkSet.Add(entry.Framework)) frameworkOrdered.Add(entry.Framework);
+                }
+
+                return (
+                    Entries: entries.ToImmutable().ToEquatableArray(),
+                    Frameworks: frameworkOrdered.ToImmutable().ToEquatableArray(),
+                    Diagnostics: diags.ToImmutable().ToEquatableArray());
+            });
+
         // ----- Combine into a single ManifestModel -----
         var combined = rootCandidates.Collect()
             .Combine(orphanCallables.Collect())
             .Combine(orphanEvents.Collect())
             .Combine(assemblyName)
             .Combine(mcpEnabled)
+            .Combine(raisableEntries)
             .Select(static (tuple, _) =>
             {
-                var rootsAndDiags = tuple.Left.Left.Left.Left;
-                var orphans = tuple.Left.Left.Left.Right;
-                var orphanEvts = tuple.Left.Left.Right;
-                var asmName = tuple.Left.Right;
-                var mcpOn = tuple.Right;
+                var rootsAndDiags = tuple.Left.Left.Left.Left.Left;
+                var orphans = tuple.Left.Left.Left.Left.Right;
+                var orphanEvts = tuple.Left.Left.Left.Right;
+                var asmName = tuple.Left.Left.Right;
+                var mcpOn = tuple.Left.Right;
+                var raisable = tuple.Right;
 
                 var diags = ImmutableArray.CreateBuilder<DiagnosticInfo>();
                 var roots = ImmutableArray.CreateBuilder<RootModel>();
@@ -124,6 +165,13 @@ public sealed class ManifestGenerator : IIncrementalGenerator
                 foreach (var orphan in orphanEvts)
                 {
                     diags.Add(orphan);
+                }
+
+                // Phase 12.2: replay raisable validation diagnostics
+                // (MAR015) at the same emit-stage as the rest.
+                foreach (var d in raisable.Diagnostics.AsEnumerable())
+                {
+                    diags.Add(d);
                 }
 
                 // Phase 8.1/8.2: union the per-root JSON-type sets into two
@@ -176,7 +224,9 @@ public sealed class ManifestGenerator : IIncrementalGenerator
                             EventArgsJsonTypes: allArgsTypes.Values.ToImmutableArray().ToEquatableArray(),
                             EventArgsRootTypes: argsRootNames.ToImmutable().ToEquatableArray(),
                             ValueJsonTypes: allValueTypes.Values.ToImmutableArray().ToEquatableArray(),
-                            ValueRootTypes: valueRootNames.ToImmutable().ToEquatableArray()),
+                            ValueRootTypes: valueRootNames.ToImmutable().ToEquatableArray(),
+                            RaisableEvents: raisable.Entries,
+                            RaisableFrameworks: raisable.Frameworks),
                         McpEnabled: mcpOn);
             });
 

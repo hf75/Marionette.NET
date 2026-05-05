@@ -69,6 +69,13 @@ internal static class Emitter
         var valueTypes = model.ValueJsonTypes.AsEnumerable().ToList();
         JsonContextEmitter.EmitValueContext(sb, valueTypes);
 
+        // Phase 12.2: emit the AOT-clean raise_event catalog from the
+        // assembly's [McpRaisable] declarations, plus a module initializer
+        // that auto-registers it with the runtime registry. Skipped when
+        // the assembly has no [McpRaisable] attributes.
+        var raisable = model.RaisableEvents.AsEnumerable().ToList();
+        RaiseEventCatalogEmitter.Emit(sb, raisable);
+
         return sb.ToString();
     }
 

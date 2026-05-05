@@ -36,6 +36,7 @@ internal static class Validator
     public const string McpObservableAttribute = "Marionette.McpObservableAttribute";
     public const string McpTriggerableAttribute = "Marionette.McpTriggerableAttribute";
     public const string McpEventAttribute = "Marionette.McpEventAttribute";
+    public const string McpRaisableAttribute = "Marionette.McpRaisableAttribute";
 
     /// <summary>
     /// Validate a candidate root class, harvesting its members. Returns null

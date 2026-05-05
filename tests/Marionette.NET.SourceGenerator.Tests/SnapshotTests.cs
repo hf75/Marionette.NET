@@ -743,6 +743,142 @@ public class SnapshotTests
         Assert.Contains("KeyInfo = ValueTuple3_System_String_System_Int32_System_Int32", generated);
     }
 
+    [Fact]
+    public void GoldenMcpRaisable_EmitsTypedDispatcher()
+    {
+        // Phase 12.2: [assembly: McpRaisable(typeof(T), "Click")] declarations
+        // produce a Marionette.Generated.RaiseEventCatalog static class with a
+        // typed switch arm per declaration. The test stubs the WPF surface
+        // inside the user assembly so the validator's string-name lookup
+        // ("System.Windows.RoutedEvent" etc.) hits — production user code
+        // gets these from PresentationCore, but a netstandard test harness
+        // would have to drag in WindowsDesktop refs to do the same. The
+        // stub-by-namespace pattern exercises the generator against the
+        // exact API surface it cares about.
+        var source = """
+            using System;
+            using Marionette;
+
+            [assembly: McpRaisable(typeof(App.Controls.MyButton), "Click")]
+            [assembly: McpRaisable(typeof(App.Controls.MyButton), "Submitted")]
+
+            namespace System.Windows
+            {
+                public class RoutedEvent { }
+
+                public class RoutedEventArgs
+                {
+                    public RoutedEventArgs() { }
+                    public RoutedEventArgs(RoutedEvent routedEvent, object source) { }
+                }
+
+                public class UIElement
+                {
+                    public void RaiseEvent(RoutedEventArgs e) { }
+                }
+            }
+
+            namespace App.Controls
+            {
+                public class MyButton : System.Windows.UIElement
+                {
+                    public static readonly System.Windows.RoutedEvent ClickEvent = new();
+                    public static readonly System.Windows.RoutedEvent SubmittedEvent = new();
+                }
+            }
+
+            namespace Demo
+            {
+                [McpRoot("rootraiser")]
+                public class Raiser
+                {
+                    [McpCallable("noop")] public void Noop() { }
+                }
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        // The catalog class must be present.
+        Assert.Contains("public static class RaiseEventCatalog", generated);
+        // Both arms must wire up. Match the case label, the cast, and the
+        // static-field reference — that's the trim-preservation core.
+        Assert.Contains("case global::App.Controls.MyButton typed:", generated);
+        Assert.Contains("case \"Click\":", generated);
+        Assert.Contains("case \"Submitted\":", generated);
+        Assert.Contains("global::App.Controls.MyButton.ClickEvent", generated);
+        Assert.Contains("global::App.Controls.MyButton.SubmittedEvent", generated);
+        // The framework-specific RoutedEventArgs type must appear.
+        Assert.Contains("global::System.Windows.RoutedEventArgs", generated);
+        Assert.Contains("((global::System.Windows.UIElement)typed).RaiseEvent(", generated);
+        // The module initializer auto-registers with the runtime registry.
+        Assert.Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]", generated);
+        Assert.Contains("global::Marionette.Runtime.Adapters.RaiseEventCatalog.Register(", generated);
+    }
+
+    [Fact]
+    public void GoldenMcpRaisable_InvalidEntryEmitsMar015()
+    {
+        // Phase 12.2: when a [McpRaisable] declaration references a control
+        // type without a matching `<EventName>Event` static field, the
+        // validator drops the entry and emits MAR015. The catalog (if any
+        // valid entries exist) still emits — the bad entry is silently
+        // skipped except for the diagnostic.
+        var source = """
+            using System;
+            using Marionette;
+
+            [assembly: McpRaisable(typeof(App.Controls.MyButton), "DoesNotExist")]
+
+            namespace System.Windows
+            {
+                public class RoutedEvent { }
+                public class RoutedEventArgs
+                {
+                    public RoutedEventArgs() { }
+                    public RoutedEventArgs(RoutedEvent routedEvent, object source) { }
+                }
+                public class UIElement
+                {
+                    public void RaiseEvent(RoutedEventArgs e) { }
+                }
+            }
+
+            namespace App.Controls
+            {
+                public class MyButton : System.Windows.UIElement
+                {
+                    public static readonly System.Windows.RoutedEvent ClickEvent = new();
+                }
+            }
+
+            namespace Demo
+            {
+                [McpRoot("rootraiser")]
+                public class Raiser
+                {
+                    [McpCallable("noop")] public void Noop() { }
+                }
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        // No errors — MAR015 is a Warning.
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        // The MAR015 diagnostic must surface.
+        Assert.Contains(result.GeneratorDiagnostics, d => d.Id == "MAR015");
+        // No catalog should be emitted (no valid entries).
+        Assert.DoesNotContain("public static class RaiseEventCatalog", result.GeneratedText);
+    }
+
     private static string Normalize(string s) => s.Replace("\r\n", "\n");
 
     private static string FormatDiagnostics(System.Collections.Generic.IEnumerable<Microsoft.CodeAnalysis.Diagnostic> diags)

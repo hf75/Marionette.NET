@@ -198,4 +198,19 @@ internal static class Diagnostics
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAR015: an <c>[assembly: McpRaisable]</c> attribute references a
+    /// (Type, EventName) pair the generator could not validate. The pair is
+    /// dropped from the emitted catalog (the runtime then falls back to
+    /// reflection on the static field at runtime, which costs the AOT
+    /// guarantee but does not break the build).
+    /// </summary>
+    public static readonly DiagnosticDescriptor McpRaisableInvalid = new(
+        id: "MAR015",
+        title: "[McpRaisable] declaration could not be validated",
+        messageFormat: "[McpRaisable(typeof({0}), \"{1}\")] could not be validated: {2}. The catalog entry is skipped; raise_event falls back to reflection on this pair.",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true);
 }

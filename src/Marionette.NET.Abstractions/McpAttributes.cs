@@ -403,3 +403,66 @@ public enum TriggerStrategy
     /// </summary>
     InputSystem = 2,
 }
+
+/// <summary>
+/// Phase 12.2: assembly-level opt-in declaration for AOT-clean
+/// <c>raise_event</c> dispatch on a specific framework control type +
+/// event-name pair. The Source Generator scans these attributes at
+/// compile time and emits a typed dispatcher
+/// (<c>Marionette.Generated.RaiseEventCatalog.TryRaise</c>) that the
+/// runtime adapters call before falling back to the reflection-based
+/// path.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Without this attribute, <c>raise_event</c> resolves the
+/// <c>RoutedEvent</c> static field by reflection on the target control
+/// type — which trim/AOT may strip the metadata for, especially on
+/// custom user controls. Adopters who AOT-publish AND want
+/// <c>raise_event</c> to work declare each (Type, EventName) pair via
+/// this attribute; the generator emits a typed pattern-match that
+/// preserves the static-field reference into the trimmed output.
+/// </para>
+/// <para>
+/// Example:
+/// <code>
+/// [assembly: McpRaisable(typeof(System.Windows.Controls.Button), "Click")]
+/// [assembly: McpRaisable(typeof(MyApp.Controls.SubmitButton), "Submitted")]
+/// </code>
+/// </para>
+/// <para>
+/// Constraints: the target type must declare (or inherit) a public
+/// <c>static RoutedEvent &lt;EventName&gt;Event</c> field. The
+/// constraint is enforced at generator time: a violating attribute
+/// produces diagnostic <c>MAR015</c> and the catalog entry is skipped.
+/// WPF (<c>System.Windows.RoutedEvent</c>) and Avalonia
+/// (<c>Avalonia.Interactivity.RoutedEvent</c>) are both supported;
+/// WinUI / MAUI types lack the routed-event surface and aren't
+/// covered.
+/// </para>
+/// </remarks>
+[AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true, Inherited = false)]
+public sealed class McpRaisableAttribute : Attribute
+{
+    /// <summary>
+    /// The framework control type the catalog dispatches on. Must be a
+    /// concrete reference type with a public <c>static RoutedEvent
+    /// &lt;EventName&gt;Event</c> field declared on it or one of its
+    /// base classes.
+    /// </summary>
+    public Type ControlType { get; }
+
+    /// <summary>
+    /// The event name as it appears in C# source (e.g. <c>"Click"</c>,
+    /// <c>"MouseDown"</c>). The generator looks up
+    /// <c>&lt;ControlType&gt;.&lt;EventName&gt;Event</c> at compile
+    /// time.
+    /// </summary>
+    public string EventName { get; }
+
+    public McpRaisableAttribute(Type controlType, string eventName)
+    {
+        ControlType = controlType;
+        EventName = eventName;
+    }
+}

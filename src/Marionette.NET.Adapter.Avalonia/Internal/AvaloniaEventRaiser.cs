@@ -43,6 +43,15 @@ internal static class AvaloniaEventRaiser
         if (string.IsNullOrEmpty(eventName)) return false;
         _ = args; // Phase 3.1 ignores args; default RoutedEventArgs covers Click et al.
 
+        // Phase 12.2: AOT-clean source-gen catalog first. Same pattern as
+        // the WPF raiser — the user assembly's [McpRaisable] declarations
+        // populate the typed dispatcher; an empty catalog or a miss falls
+        // through to the reflection-based path.
+        if (Marionette.Runtime.Adapters.RaiseEventCatalog.TryRaise(target, eventName, args: null))
+        {
+            return true;
+        }
+
         var routedEvent = ResolveRoutedEvent(target.GetType(), eventName);
         if (routedEvent is null)
         {

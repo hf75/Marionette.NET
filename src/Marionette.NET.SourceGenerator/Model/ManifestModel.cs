@@ -58,7 +58,19 @@ internal sealed record ManifestModel(
     // a separate JsonTypeCollector so the type graphs don't cross-pollute
     // and the two contexts each carry independent JsonTypeInfo<T> instances.
     EquatableArray<JsonTypeModel> ValueJsonTypes = default,
-    EquatableArray<string> ValueRootTypes = default);
+    EquatableArray<string> ValueRootTypes = default,
+    // Phase 12.2: validated [assembly: McpRaisable(typeof(T), "Click")] pairs.
+    // The emitter renders Marionette.Generated.RaiseEventCatalog.TryRaise as
+    // a typed switch over (control, eventName) so AOT publishes can preserve
+    // the static <Name>Event field reference into the trimmed output. Empty
+    // when the assembly declares no [McpRaisable] attributes — adapters then
+    // skip the catalog and fall back to reflection.
+    EquatableArray<RaisableEventModel> RaisableEvents = default,
+    // Phase 12.2: distinct framework full names that contributed at least one
+    // raisable entry. Drives the emitter's per-framework casts (WPF
+    // RoutedEventArgs vs Avalonia.Interactivity.RoutedEventArgs) — empty
+    // unless RaisableEvents is non-empty.
+    EquatableArray<string> RaisableFrameworks = default);
 
 /// <summary>
 /// One [McpRoot]-decorated class plus its callable / observable / triggerable
@@ -431,6 +443,56 @@ internal sealed record EventModel(
     // the args type is unsupported (System.EventArgs, generic, abstract, …)
     // and the runtime falls back to the legacy reflection-based path.
     string? JsonRootContextName = null);
+
+/// <summary>
+/// Phase 12.2: one validated <c>[assembly: McpRaisable(typeof(T), "EventName")]</c>
+/// pair. The emitter renders a typed switch arm that casts the inbound
+/// <c>object</c> control to <see cref="ControlTypeFullName"/> and calls
+/// <c>target.RaiseEvent(args as &lt;FrameworkRoutedEventArgs&gt; ?? new
+/// &lt;FrameworkRoutedEventArgs&gt;(&lt;DeclaringType&gt;.&lt;EventName&gt;Event,
+/// target))</c>.
+/// </summary>
+/// <param name="ControlTypeFullName">
+/// Fully-qualified user control type with <c>global::</c> prefix. The cast
+/// target in the emitted switch.
+/// </param>
+/// <param name="DeclaringTypeFullName">
+/// Fully-qualified type that declares the static <c>&lt;EventName&gt;Event</c>
+/// field — usually the same as <see cref="ControlTypeFullName"/>, but routed
+/// events declared on a base type (e.g. <c>ButtonBase.ClickEvent</c>
+/// inherited by <c>Button</c>) keep the base full name here so the emitted
+/// field reference is valid C#.
+/// </param>
+/// <param name="EventName">
+/// Event name as it appears in C# source (e.g. <c>"Click"</c>). Concatenated
+/// with <c>"Event"</c> at emit time to form the static field reference.
+/// </param>
+/// <param name="Framework">
+/// Identifies the framework whose <c>RoutedEventArgs</c> base type the
+/// emitter should use for the args cast: <c>"WPF"</c> →
+/// <c>System.Windows.RoutedEventArgs</c>, <c>"Avalonia"</c> →
+/// <c>Avalonia.Interactivity.RoutedEventArgs</c>.
+/// </param>
+/// <param name="RoutedEventArgsFullName">
+/// Pre-resolved fully-qualified <c>RoutedEventArgs</c> base type for this
+/// framework, with <c>global::</c> prefix. Stored on the model so the
+/// emitter doesn't re-resolve it; mirrors the framework choice.
+/// </param>
+/// <param name="RaiseEventTypeFullName">
+/// Pre-resolved fully-qualified type that declares the
+/// <c>RaiseEvent(RoutedEventArgs)</c> method visible on the control. WPF →
+/// <c>System.Windows.UIElement</c>, Avalonia →
+/// <c>Avalonia.Interactivity.Interactive</c>. The emitter casts via
+/// <c>((&lt;RaiseEventTypeFullName&gt;)control)</c> to disambiguate base
+/// hierarchies that don't share a single common ancestor across frameworks.
+/// </param>
+internal sealed record RaisableEventModel(
+    string ControlTypeFullName,
+    string DeclaringTypeFullName,
+    string EventName,
+    string Framework,
+    string RoutedEventArgsFullName,
+    string RaiseEventTypeFullName);
 
 /// <summary>
 /// Carries enough information to reconstruct a Roslyn Diagnostic at the
