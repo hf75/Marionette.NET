@@ -268,13 +268,12 @@ jobs:
         # accepts a path argument so we can point it at either the JIT'd or the
         # AOT'd binary. The AOT-on build's --mcp --headless mode is what we want
         # to verify — spinning up the MCP server end-to-end with native code.
-        # Phase 4.2 caveat: the per-method dynamic tool path goes through
-        # ModelContextProtocol's ReflectionAIFunctionDescriptor which uses
-        # dynamic-code generation that does NOT survive AOT. The harness
-        # exercises the meta-tool path (invoke_method) which IS AOT-safe;
-        # continue-on-error tolerates the documented dynamic-tool failure
-        # mode pending Phase 6 SDK migration to source-generated bindings.
-        continue-on-error: true
+        # Phase 10 (2026-05-05): per-method dynamic tools are now AOT-clean
+        # (registration switched to McpServerTool.Create(AIFunction, ...) via
+        # the MarionetteAIFunction subclass; the SDK's reflection-based
+        # AIFunctionFactory.Create path is no longer in play). The handshake
+        # exercises both meta-tools and dynamic tools; failures here are real
+        # regressions, not the historical SDK-blocker.
         run: |
           dotnet build .phase0\StdioTest\StdioTest.csproj -c Debug
           $exe = Resolve-Path publish-aot-on\Sample.Wpf.StripeProbe.exe
@@ -336,14 +335,9 @@ jobs:
       - name: Smoke-test AOT-on Avalonia binary via stdio handshake
         # Same pattern as the StripeProbe step above. Use --avalonia mode in
         # the harness so DashboardViewModel's manifest is asserted, plus the
-        # per-method dynamic tools and resource subscribe path.
-        # Phase 4.2 caveat: the per-method dynamic tool path goes through
-        # ModelContextProtocol's ReflectionAIFunctionDescriptor which uses
-        # dynamic-code generation that does NOT survive AOT. The harness
-        # exercises the meta-tool path (invoke_method) which IS AOT-safe;
-        # continue-on-error tolerates the documented dynamic-tool failure
-        # mode pending Phase 6 SDK migration to source-generated bindings.
-        continue-on-error: true
+        # per-method dynamic tools and resource subscribe path. Phase 10:
+        # AOT-clean dynamic tools are now load-bearing — failures are real
+        # regressions.
         run: |
           $exe = Resolve-Path publish-aot-avalonia-on\Sample.Avalonia.Dashboard.exe
           dotnet .phase0\StdioTest\bin\Debug\net10.0\StdioTest.dll "$exe" --avalonia 2>&1 | Tee-Object -FilePath stdio-aot-avalonia.log
@@ -359,9 +353,12 @@ jobs:
       #   * TodoApp (WPF):     publishes cleanly, GUI under AOT crashes (Phase-0
       #                        Spike B-followup; WPF+AOT Microsoft-known limitation),
       #                        --mcp --headless handshake succeeds.
-      #   * FormLab (WinUI 3): publishes cleanly with .NET 10 + WindowsAppSDK 1.8
+      #   * FormLab (WinUI 3): publishes cleanly with .NET 10 + WindowsAppSDK 2.x
       #                        AOT support. Stripped GUI launch may or may not work
-      #                        — verify binary existence only.
+      #                        — verify binary existence only. The runtime install
+      #                        step below is required: an unpackaged WinAppSDK 2.x
+      #                        EXE hangs in the bootstrap on a runner without the
+      #                        2.x WindowsAppRuntime present.
       #   * PocketPlanner (MAUI):  MAUI 10.x AOT support is partial; publish may
       #                            emit framework IL3xxx warnings or fail outright.
       #                            continue-on-error makes the step non-fatal so
@@ -404,14 +401,30 @@ jobs:
         shell: pwsh
 
       - name: Smoke-test AOT-on TodoApp via stdio handshake (--todoapp)
-        # Phase 4.2 caveat: same as the Avalonia step above — dynamic-tool path
-        # fails under AOT, meta-tool path passes. continue-on-error documents
-        # the SDK-side limitation.
-        continue-on-error: true
+        # Phase 10: dynamic-tool path is AOT-clean (MarionetteAIFunction
+        # subclass + McpServerTool.Create(AIFunction, ...) overload). Failures
+        # here are real regressions.
         run: |
           $exe = Resolve-Path publish-aot-todoapp-on\Sample.Wpf.TodoApp.exe
           dotnet .phase0\StdioTest\bin\Debug\net10.0\StdioTest.dll "$exe" --todoapp 2>&1 | Tee-Object -FilePath stdio-aot-todoapp.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        shell: pwsh
+
+      - name: Install WindowsAppRuntime 2.x (required for unpackaged WinAppSDK 2.x bootstrap)
+        # WinAppSDK 2.x's unpackaged bootstrap needs the matching
+        # Microsoft.WindowsAppRuntime 2.x MSIX framework package on the
+        # runner. windows-latest images do not yet ship 2.x by default.
+        # Without this step, the FormLab `--mcp --headless` smoke test
+        # below hangs silently (no JSON-RPC frames, no stderr) waiting
+        # for a runtime it cannot find. The aka.ms shortlink redirects
+        # to the canonical Microsoft download.
+        run: |
+          $url = "https://aka.ms/windowsappsdk/2.0/2.0.1/windowsappruntimeinstall-x64.exe"
+          $exe = Join-Path $env:RUNNER_TEMP "WindowsAppRuntimeInstall-x64.exe"
+          Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+          & $exe --quiet
+          if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: WindowsAppRuntime install exited $LASTEXITCODE"; exit $LASTEXITCODE }
+          Get-AppxPackage -Name "*WindowsAppRuntime.2*" | Select-Object Name,Version,Architecture | Format-Table -AutoSize
         shell: pwsh
 
       - name: AOT publish — FormLab stripped (EnableMcpAutomation=false)
@@ -448,7 +461,7 @@ jobs:
         shell: pwsh
 
       - name: Smoke-test AOT-on FormLab via stdio handshake (--winui)
-        continue-on-error: true
+        # Phase 10: dynamic-tool path is AOT-clean across every adapter.
         run: |
           $exe = Resolve-Path publish-aot-formlab-on\Sample.WinUI.FormLab.exe
           dotnet .phase0\StdioTest\bin\Debug\net10.0\StdioTest.dll "$exe" --winui 2>&1 | Tee-Object -FilePath stdio-aot-formlab.log

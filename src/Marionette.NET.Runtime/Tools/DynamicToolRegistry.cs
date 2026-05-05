@@ -30,6 +30,19 @@
 // types; one MethodInfo lookup of `RaiseChanged` on the SDK's primitive
 // collection is the entire reflection surface (and it's against the SDK's
 // own type, not user code).
+//
+// Phase 10 (2026-05-05): tool registration switched from
+// `McpServerTool.Create((Delegate)handler, ...)` (which goes through
+// the SDK's AIFunctionFactory.Create reflection path) to
+// `McpServerTool.Create(AIFunction, ...)` with a custom AIFunction
+// subclass `MarionetteAIFunction`. The SDK's AIFunction-overload only
+// reads Name / Description / JsonSchema / UnderlyingMethod and invokes
+// `function.InvokeAsync(args, ct)`. We supply a pre-built JSON schema
+// (Phase 1.b source-generator output), set UnderlyingMethod=null so the
+// SDK skips its attribute/XML-doc reflection branches, and our
+// InvokeCoreAsync returns a CallToolResult directly so the existing
+// IsError contract is preserved. This closes the previous Phase 4.2
+// finding (per-method dynamic tools failing under AOT).
 
 using System;
 using System.Collections.Generic;
@@ -41,6 +54,7 @@ using Marionette.Runtime.Adapters;
 using Marionette.Runtime.Loop;
 using Marionette.Runtime.Manifest;
 
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 
 using ModelContextProtocol.Protocol;
@@ -397,13 +411,13 @@ public sealed class DynamicToolRegistry : IDisposable
         var manifest = _manifest;
         var logger = _logger;
 
-        // The handler delegate signature uses the SDK's request-context
-        // injection pattern: `RequestContext<CallToolRequestParams>` is
-        // auto-bound by the SDK and NOT included in the input schema. The
-        // handler reads the args dict directly from ctx.Params.Arguments
-        // and converts to the JsonElement bag MarionetteDispatch wants.
-        Func<RequestContext<CallToolRequestParams>, CancellationToken, ValueTask<CallToolResult>> handler =
-            async (ctx, ct) =>
+        // Phase 10: the InvokeCoreAsync closure runs the existing
+        // MarionetteDispatch pipeline. Returning a CallToolResult directly
+        // lets the SDK's AIFunctionMcpServerTool path pass it through with
+        // IsError preserved (the SDK has a dedicated arm for CallToolResult
+        // in its return-shape switch).
+        Func<AIFunctionArguments, CancellationToken, ValueTask<object?>> invoke =
+            async (args, ct) =>
             {
                 var registered = manifest.Find(rootName);
                 if (registered is null)
@@ -423,7 +437,7 @@ public sealed class DynamicToolRegistry : IDisposable
                     };
                 }
 
-                var argsElement = BuildArgsElement(ctx);
+                var argsElement = BuildArgsElement(args);
 
                 var resultJson = await MarionetteDispatch.InvokeAsync(
                     registered, callable, argsElement, dispatchAdapter, loopGuard, logger,
@@ -433,7 +447,7 @@ public sealed class DynamicToolRegistry : IDisposable
                 // client treats them as failures rather than success values.
                 bool isError = LooksLikeStructuredError(resultJson);
 
-                return new CallToolResult
+                return (object?)new CallToolResult
                 {
                     IsError = isError,
                     Content = new List<ContentBlock>
@@ -443,62 +457,91 @@ public sealed class DynamicToolRegistry : IDisposable
                 };
             };
 
+        var description = string.IsNullOrEmpty(callable.Description)
+            ? $"Invoke the [McpCallable] method {rootName}.{callable.Name}."
+            : callable.Description;
+
+        // Schema is the source-generator-emitted ParametersJsonSchema string
+        // (Phase 1.b). Parse once and hand the JsonElement to the AIFunction;
+        // the SDK reads it directly as the protocol Tool's InputSchema. If
+        // parsing fails, fall back to a minimal `{}` schema so the tool stays
+        // registered (with a logged warning).
+        JsonElement schema = ParseSchemaOrFallback(callable.ParametersJsonSchema, entry.ToolName);
+
+        var fn = new MarionetteAIFunction(entry.ToolName, description, schema, invoke);
+
         var options = new McpServerToolCreateOptions
         {
             Name = entry.ToolName,
-            Description = string.IsNullOrEmpty(callable.Description)
-                ? $"Invoke the [McpCallable] method {rootName}.{callable.Name}."
-                : callable.Description,
+            Description = description,
         };
 
-        var tool = McpServerTool.Create((Delegate)handler, options);
+        return McpServerTool.Create(fn, options);
+    }
 
-        // Phase 2.2: stamp the source-gen-emitted parameter schema onto the
-        // protocol Tool. The SDK auto-derives a default schema from the
-        // delegate's signature (which only sees RequestContext + ct after
-        // its DI/special-binding pass), so the default is the minimal
-        // {"type":"object"}. We replace it with the rich per-method schema.
-        try
+    private JsonElement ParseSchemaOrFallback(string? schemaJson, string toolName)
+    {
+        if (!string.IsNullOrEmpty(schemaJson))
         {
-            if (!string.IsNullOrEmpty(callable.ParametersJsonSchema))
+            try
             {
-                using var doc = JsonDocument.Parse(callable.ParametersJsonSchema);
-                tool.ProtocolTool.InputSchema = doc.RootElement.Clone();
+                using var doc = JsonDocument.Parse(schemaJson);
+                return doc.RootElement.Clone();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to parse ParametersJsonSchema for {Tool}; falling back to empty schema.",
+                    toolName);
             }
         }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to parse ParametersJsonSchema for {Tool}; falling back to SDK-derived default.", entry.ToolName);
-        }
-
-        return tool;
+        using var fallback = JsonDocument.Parse("{\"type\":\"object\"}");
+        return fallback.RootElement.Clone();
     }
 
     /// <summary>
-    /// Convert <c>ctx.Params.Arguments</c> (a dict of JsonElement values) into
-    /// a single <see cref="JsonElement"/> object that
+    /// Convert <see cref="AIFunctionArguments"/> (a dict of name → object?)
+    /// into a single <see cref="JsonElement"/> object that
     /// <see cref="MarionetteDispatch.InvokeAsync"/> can consume.
     /// </summary>
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-        Justification = "Phase 4.2: SerializeToElement is invoked on a JsonNode tree we built " +
-                        "ourselves out of primitive JsonNodes; the operation is AOT-safe in " +
-                        "practice. The cascading warning surfaces at MarionetteHost.")]
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-        Justification = "Phase 4.2: same reasoning — primitive JsonNode round-trip needs no dynamic code.")]
-    private static JsonElement? BuildArgsElement(RequestContext<CallToolRequestParams> ctx)
+    /// <remarks>
+    /// AOT-clean: every byte goes through <see cref="System.Text.Json.Nodes.JsonObject"/>
+    /// (typed JSON DOM) and <see cref="JsonDocument.Parse(string)"/> (the
+    /// allocator-only parser). We deliberately avoid
+    /// <see cref="JsonSerializer.SerializeToElement{TValue}(TValue)"/> /
+    /// <c>SerializeToElement(object?)</c> because both require a
+    /// <see cref="System.Text.Json.Serialization.Metadata.JsonTypeInfo"/> resolver
+    /// and throw <see cref="InvalidOperationException"/> at runtime under AOT
+    /// when reflection-based serialization is disabled.
+    /// </remarks>
+    private static JsonElement? BuildArgsElement(AIFunctionArguments args)
     {
-        var args = ctx.Params?.Arguments;
         if (args is null || args.Count == 0) return null;
 
-        // Construct a minimal JSON object via a JsonNode to avoid building a
-        // string. JsonNode → JsonElement round-trip is cheap and AOT-clean.
+        // The SDK populates AIFunctionArguments from CallToolRequestParams.Arguments,
+        // so each value is typically a JsonElement. We map back into a JsonObject
+        // so MarionetteDispatch sees the same JsonElement tree it always has.
         var obj = new System.Text.Json.Nodes.JsonObject();
-        foreach (var kvp in args)
+        foreach (var key in args.Keys)
         {
-            obj[kvp.Key] = System.Text.Json.Nodes.JsonNode.Parse(kvp.Value.GetRawText());
+            var value = args[key];
+            obj[key] = value switch
+            {
+                JsonElement el => System.Text.Json.Nodes.JsonNode.Parse(el.GetRawText()),
+                string s => System.Text.Json.Nodes.JsonValue.Create(s),
+                bool b => System.Text.Json.Nodes.JsonValue.Create(b),
+                int i => System.Text.Json.Nodes.JsonValue.Create(i),
+                long l => System.Text.Json.Nodes.JsonValue.Create(l),
+                double d => System.Text.Json.Nodes.JsonValue.Create(d),
+                null => null,
+                _ => System.Text.Json.Nodes.JsonValue.Create(value.ToString()),
+            };
         }
-        var root = System.Text.Json.Nodes.JsonNode.Parse(obj.ToJsonString());
-        return root is null ? (JsonElement?)null : JsonSerializer.SerializeToElement(root);
+        // Round-trip through JsonDocument.Parse so the result is a freestanding
+        // JsonElement value (no JsonNode-owned buffer, AOT-safe). JsonObject's
+        // ToJsonString uses its own writer — no JsonTypeInfo required.
+        using var doc = JsonDocument.Parse(obj.ToJsonString());
+        return doc.RootElement.Clone();
     }
 
     /// <summary>

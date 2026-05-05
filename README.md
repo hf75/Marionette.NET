@@ -107,6 +107,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .phase7\release-local.ps1
 - **[PHASE3_FINDINGS.md](PHASE3_FINDINGS.md)** - Phase 3 outcomes (WinUI adapter, simulate_input + raise_event, multi-window routing).
 - **[PHASE6_FINDINGS.md](PHASE6_FINDINGS.md)** - Phase 6 outcomes (testing toolkit, analyzer hint, skill-pack v2, docs).
 - **[PHASE7_FINDINGS.md](PHASE7_FINDINGS.md)** - Phase 7 local release-candidate outcomes.
+- **[PHASE8_FINDINGS.md](PHASE8_FINDINGS.md)** - Phase 8 outcomes (AOT JSON source-gen for events, observables, callables).
+- **[PHASE10_FINDINGS.md](PHASE10_FINDINGS.md)** - Phase 10 outcomes (AOT-clean per-method dynamic tools via AIFunction subclass).
 - **[.phase6/6a-testing-toolkit-dx.md](.phase6/6a-testing-toolkit-dx.md)** - Phase 6a testing toolkit slice.
 - **[.phase7/7a-distribution-dogfooding.md](.phase7/7a-distribution-dogfooding.md)** - Local package/showcase dogfooding plan.
 - **[docs/getting-started.md](docs/getting-started.md)** - Local NuGet consumption and host wiring.
