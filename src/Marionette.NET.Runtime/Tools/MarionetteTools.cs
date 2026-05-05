@@ -379,112 +379,25 @@ public sealed class MarionetteTools
     }
 
     // -------------------------------------------------------------------------
-    // raise_event  (Phase 3.1)
+    // raise_event has moved to MarionetteRaiseEventTools (Phase 11). The new
+    // class is registered alongside this one by MarionetteHost.RunAsync to
+    // preserve the historical six-tool surface. RunAsyncSourceGenSafe
+    // registers only this class so adopters who do not call raise_event get
+    // no [RequiresUnreferencedCode] warning at the host call site.
     // -------------------------------------------------------------------------
-
-    /// <summary>
-    /// Raise a routed/bubbling event on the named control. Bubbling/tunneling
-    /// is honoured by the framework — handlers on parent containers fire as
-    /// if the event came from a real source. Phase 3.1 defaults to
-    /// parameterless <see cref="System.Windows.RoutedEventArgs"/> (or the
-    /// Avalonia analogue); kind-specific args may be honoured in later
-    /// phases.
-    /// </summary>
-    [McpServerTool(Name = "raise_event")]
-    [Description(
-        "Raises a named routed event (e.g. Click) on a control resolved by AutomationId or x:Name. " +
-        "Bubbling and tunneling are honoured by the framework. Returns {success:true} or " +
-        "{success:false,errorCode,message}.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-        Justification = "Phase 4.2: the underlying IUiAutomationAdapter.RaiseEventAsync is " +
-                        "marked RequiresUnreferencedCode; the host's RunAsync entry point also " +
-                        "carries the warning so adopters see it at the boundary they own. " +
-                        "Suppression here is intentional — this MCP-tool method is one of " +
-                        "several reachable paths from the annotated host and re-surfacing the " +
-                        "warning at every call site spam adopter logs.")]
-    public static async Task<string> RaiseEventAsync(
-        ManifestRegistry registry,
-        IUiAutomationAdapter adapter,
-        LoopProtectionService loopGuard,
-        ILogger<MarionetteHostMarker> logger,
-        [Description("Manifest name of the [McpRoot] that owns the control (multi-window disambiguation hint).")]
-        string root,
-        [Description("AutomationId or x:Name of the target control.")]
-        string control,
-        [Description("Event name as declared in C# (e.g. \"Click\", \"MouseDown\"). Inherited events on base types resolve too.")]
-        string @event,
-        [Description("Optional EventArgs property bag. Phase 3.1 ships default-constructed args.")]
-        JsonElement? args = null,
-        [Description("Optional Phase-3.3 window ID (e.g. 'w1', 'w2'). When omitted, the adapter walks every open window.")]
-        string? windowId = null,
-        CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrEmpty(root))
-            return MakeError("argument_marshalling_failed", "root must be non-empty.").ToJsonString();
-        if (string.IsNullOrEmpty(control))
-            return MakeError("argument_marshalling_failed", "control must be non-empty.").ToJsonString();
-        if (string.IsNullOrEmpty(@event))
-            return MakeError("argument_marshalling_failed", "event must be non-empty.").ToJsonString();
-
-        var hop = loopGuard.TryEnterHop();
-        if (hop.Exceeded)
-        {
-            return new JsonObject
-            {
-                ["success"] = false,
-                ["errorCode"] = "loop_limit_exceeded",
-                ["message"] = $"Hop counter {hop.Hops} exceeds limit {loopGuard.MaxDepth}.",
-                ["hops"] = hop.Hops,
-            }.ToJsonString();
-        }
-
-        IReadOnlyDictionary<string, object?>? argMap = null;
-        try
-        {
-            argMap = MaterialiseArgs(args);
-        }
-        catch (Exception ex)
-        {
-            return MakeError("argument_marshalling_failed", ex.Message).ToJsonString();
-        }
-
-        try
-        {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(10));
-            var ok = await adapter.RaiseEventAsync(root, control, @event, argMap, windowId, cts.Token).ConfigureAwait(false);
-            if (ok)
-            {
-                return new JsonObject
-                {
-                    ["success"] = true,
-                    ["root"] = root,
-                    ["control"] = control,
-                    ["event"] = @event,
-                }.ToJsonString();
-            }
-            return MakeError("raise_event_not_supported",
-                $"Adapter could not raise '{@event}' on '{root}.{control}'. The control may not exist, the event may not resolve on the control's type chain, or the active adapter doesn't implement event raising.")
-                .ToJsonString();
-        }
-        catch (OperationCanceledException)
-        {
-            return MakeError("cancelled", "raise_event was cancelled or timed out (10s).").ToJsonString();
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "raise_event failed: {Root}.{Control} event={Event}", root, control, @event);
-            return MakeError("raise_event_failed", ex.Message).ToJsonString();
-        }
-    }
 
     /// <summary>
     /// Convert a JSON object element into the dictionary shape the adapter
     /// surface uses. Returns <see langword="null"/> for null/undefined args
     /// (the adapter treats this as "use defaults"). Throws on non-object
     /// JSON shapes — the runtime surfaces this as
-    /// <c>argument_marshalling_failed</c>.
+    /// <c>argument_marshalling_failed</c>. Exposed at <c>internal</c>
+    /// visibility so <see cref="MarionetteRaiseEventTools"/> can share the
+    /// helper.
     /// </summary>
+    internal static IReadOnlyDictionary<string, object?>? MaterialiseArgsForRaiseEvent(JsonElement? args)
+        => MaterialiseArgs(args);
+
     private static IReadOnlyDictionary<string, object?>? MaterialiseArgs(JsonElement? args)
     {
         if (args is not { } el || el.ValueKind == JsonValueKind.Null || el.ValueKind == JsonValueKind.Undefined)

@@ -282,7 +282,12 @@ public class SnapshotTests
         Assert.Contains("CreateQueueInfo", generated);
         Assert.Contains("CreateIDictionaryInfo", generated);
         Assert.Contains("CreateIReadOnlyDictionaryInfo", generated);
-        // Non-string dictionary keys: int + enum.
+        // Non-string dictionary keys: int + enum. The known-shape path
+        // substitutes canonical CLR full names into its template (so the
+        // emitted output uses System.Int32 / System.String, not the C#
+        // keyword aliases). The interface-fallback path on Phase-11 picks
+        // up display strings instead — that case is exercised in the
+        // GoldenInterfaceFallbackShapes fixture.
         Assert.Contains("Dictionary<global::System.Int32, global::System.String>", generated);
         Assert.Contains("Dictionary<global::Demo.Severity, global::System.Int32>", generated);
         // ObjectCreator should pick HashSet for set-like interfaces.
@@ -332,6 +337,139 @@ public class SnapshotTests
         // The descriptor must still emit (events surface in the manifest);
         // the assertion is just that it did not get a JSON-context entry.
         Assert.Contains("\"Fired\"", generated);
+    }
+
+    [Fact]
+    public void GoldenInterfaceFallbackShapes_EmitsExpectedManifest()
+    {
+        // Phase 11: every type the interface-fallback path picks up. The
+        // fixture exercises:
+        //   - ConcurrentDictionary<K,V>          → IDictionary kind
+        //   - ConcurrentQueue<T>                 → IEnumerable kind
+        //   - ConcurrentStack<T>                 → IEnumerable kind
+        //   - ConcurrentBag<T>                   → IEnumerable kind
+        //   - A user-defined sealed class       MyCustomList<T> : IList<T>
+        //                                          → IList kind
+        //   - A user-defined sealed class       MyCustomSet<T>  : ISet<T>
+        //                                          → ISet kind
+        //   - A user-defined sealed class       MyCustomDict<K,V> : IDictionary<K,V>
+        //                                          → IDictionary kind
+        // The shapes are exposed via [McpEvent] args. We assert the generated
+        // text references the matching factory and uses the user/concurrent
+        // type as the ObjectCreator's concrete container (not a default
+        // substitute).
+        var source = """
+            using System.Collections.Concurrent;
+            using System.Collections.Generic;
+            using System;
+            using Marionette;
+
+            namespace Demo;
+
+            // Stand-in user types implementing the standard collection
+            // interfaces. The generator does NOT inspect their bodies — only
+            // their interface implementation list and the public parameterless
+            // ctor. We provide trivial wrappers that delegate to a backing
+            // collection so the test compiles cleanly.
+            public sealed class MyCustomList<T> : List<T> { public MyCustomList() { } }
+            public sealed class MyCustomSet<T>  : HashSet<T> { public MyCustomSet() { } }
+            public sealed class MyCustomDict<K, V> : Dictionary<K, V> where K : notnull { public MyCustomDict() { } }
+
+            public sealed class FallbackEventArgs : EventArgs
+            {
+                public FallbackEventArgs() { }
+                public ConcurrentDictionary<string, int> ConcDict { get; init; } = new();
+                public ConcurrentQueue<string> ConcQueue { get; init; } = new();
+                public ConcurrentStack<int> ConcStack { get; init; } = new();
+                public ConcurrentBag<string> ConcBag { get; init; } = new();
+                public MyCustomList<int> CustomList { get; init; } = new();
+                public MyCustomSet<string> CustomSet { get; init; } = new();
+                public MyCustomDict<string, int> CustomDict { get; init; } = new();
+            }
+
+            [McpRoot("fallbackroot")]
+            public class FallbackRoot
+            {
+                [McpEvent("Custom + concurrent collections via interface fallback.")]
+                public event EventHandler<FallbackEventArgs>? Fired;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+
+        // Each user/concurrent type must be registered AND its ObjectCreator
+        // must reference the user/concurrent type itself (not a Dictionary /
+        // List / HashSet substitute). The "Custom_" prefix on the encoded
+        // property name is what the interface-fallback path emits. C#
+        // FullyQualifiedFormat uses keyword aliases inside generic arg lists
+        // (e.g. `<string, int>` rather than `<System.String, System.Int32>`).
+        Assert.Contains("Custom_System_Collections_Concurrent_ConcurrentDictionary", generated);
+        Assert.Contains("new global::System.Collections.Concurrent.ConcurrentDictionary<string, int>()", generated);
+        Assert.Contains("Custom_System_Collections_Concurrent_ConcurrentQueue", generated);
+        Assert.Contains("new global::System.Collections.Concurrent.ConcurrentQueue<string>()", generated);
+        Assert.Contains("Custom_System_Collections_Concurrent_ConcurrentStack", generated);
+        Assert.Contains("new global::System.Collections.Concurrent.ConcurrentStack<int>()", generated);
+        Assert.Contains("Custom_System_Collections_Concurrent_ConcurrentBag", generated);
+        Assert.Contains("new global::System.Collections.Concurrent.ConcurrentBag<string>()", generated);
+        Assert.Contains("Custom_Demo_MyCustomList", generated);
+        Assert.Contains("new global::Demo.MyCustomList<int>()", generated);
+        Assert.Contains("Custom_Demo_MyCustomSet", generated);
+        Assert.Contains("new global::Demo.MyCustomSet<string>()", generated);
+        Assert.Contains("Custom_Demo_MyCustomDict", generated);
+        Assert.Contains("new global::Demo.MyCustomDict<string, int>()", generated);
+    }
+
+    [Fact]
+    public void GoldenAbstractCustomCollection_FallsBackToReflection()
+    {
+        // Phase 11 contract: types that implement a supported interface but
+        // lack a public parameterless ctor stay on the legacy reflection
+        // path — their ObjectCreator would otherwise throw at runtime.
+        var source = """
+            using System.Collections.Generic;
+            using System;
+            using Marionette;
+
+            namespace Demo;
+
+            // Lacks a public parameterless ctor → interface fallback rejects.
+            public sealed class CtorRequiredList<T> : List<T>
+            {
+                public CtorRequiredList(int capacity) : base(capacity) { }
+            }
+
+            public sealed class NoCtorEventArgs : EventArgs
+            {
+                public NoCtorEventArgs() { }
+                public CtorRequiredList<int> Items { get; init; } = new(0);
+            }
+
+            [McpRoot("noctorroot")]
+            public class NoCtorRoot
+            {
+                [McpEvent("Args type that implements IList<T> but lacks a public parameterless ctor.")]
+                public event EventHandler<NoCtorEventArgs>? Fired;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        // The args type itself must NOT appear as a registered context entry,
+        // because its CtorRequiredList<int> property forced rollback.
+        Assert.DoesNotContain("Demo_NoCtorEventArgs", generated);
     }
 
     private static string Normalize(string s) => s.Replace("\r\n", "\n");

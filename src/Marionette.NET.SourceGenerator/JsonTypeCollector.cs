@@ -290,8 +290,20 @@ internal sealed class JsonTypeCollector
                 return dictKey;
             }
 
-            // Any other generic instantiation: still unsupported (caller
-            // falls back to runtime reflection serialiser).
+            // Phase 11: interface fallback. The exact unbound generic name did
+            // not match a known shape, but the type might still be a custom
+            // user collection (e.g. `class MyList<T> : IList<T>`) or a BCL
+            // concurrent collection (`ConcurrentDictionary<K,V>`,
+            // `ConcurrentQueue<T>`, `ConcurrentStack<T>`, `ConcurrentBag<T>`).
+            // Walk the implemented interfaces — most-specific wins — and
+            // register the user type as that kind, with TCollection = user
+            // type and ConcreteContainerOverride = user type's FQN so the
+            // ObjectCreator allocates the correct concrete instance.
+            var fallbackKey = TryRegisterViaInterfaceFallback(genericSym, visiting, depth);
+            if (fallbackKey is not null) return fallbackKey;
+
+            // Any other generic instantiation we cannot route: caller falls
+            // back to the runtime reflection serialiser.
             return null;
         }
 
@@ -442,6 +454,180 @@ internal sealed class JsonTypeCollector
     }
 
     /// <summary>
+    /// Phase 11: when an unknown generic type is encountered, walk its
+    /// implemented interfaces to find one of the standard collection
+    /// contracts STJ has a factory for. Returns the registered property name
+    /// when a match was made, or <see langword="null"/> when no supported
+    /// interface was found.
+    /// </summary>
+    /// <remarks>
+    /// Most-specific match wins. The dispatch order is:
+    /// <list type="number">
+    ///   <item><description>
+    ///     <c>IDictionary&lt;K, V&gt;</c> → <see cref="JsonTypeKind.IDictionary"/>
+    ///     (covers <c>ConcurrentDictionary&lt;K,V&gt;</c>, custom user dictionaries)
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>IReadOnlyDictionary&lt;K, V&gt;</c> → <see cref="JsonTypeKind.IReadOnlyDictionary"/>
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>ISet&lt;T&gt;</c> → <see cref="JsonTypeKind.ISet"/>
+    ///     (covers any user set; <c>HashSet&lt;T&gt;</c> hits its dedicated
+    ///     <see cref="JsonTypeKind.HashSet"/> match earlier)
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>IList&lt;T&gt;</c> → <see cref="JsonTypeKind.IList"/>
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>ICollection&lt;T&gt;</c> → <see cref="JsonTypeKind.ICollection"/>
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>IEnumerable&lt;T&gt;</c> → <see cref="JsonTypeKind.IEnumerable"/>
+    ///     (covers <c>ConcurrentQueue</c>, <c>ConcurrentStack</c>,
+    ///     <c>ConcurrentBag</c>, custom enumerables)
+    ///   </description></item>
+    /// </list>
+    /// The user type must have a public parameterless constructor; otherwise
+    /// the runtime <c>ObjectCreator</c> would throw at deserialisation time
+    /// (we cannot detect "needs init args" from the type alone). Types lacking
+    /// a parameterless ctor stay on the legacy reflection-fallback path.
+    /// </remarks>
+    private string? TryRegisterViaInterfaceFallback(
+        INamedTypeSymbol type,
+        HashSet<string> visiting,
+        int depth)
+    {
+        // The user type must be concrete and instantiable.
+        if (type.IsAbstract || type.IsStatic) return null;
+        if (type.TypeKind == TypeKind.Interface) return null;
+        if (!HasPublicParameterlessCtor(type)) return null;
+
+        var typeFqn = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+        // Inspect every interface (direct + transitive) for a known shape.
+        // We track the matched kind + the matched interface's type arguments
+        // by unbound-generic-name string instead of by symbol reference, so
+        // Roslyn's RS1024 (use SymbolEqualityComparer for symbol comparisons)
+        // doesn't trigger.
+        ITypeSymbol? matchedKey = null;
+        ITypeSymbol? matchedValueOrElement = null;
+        JsonTypeKind? matchedKind = null;
+        // Most-specific first; once a kind is matched we stop refining.
+        foreach (var iface in type.AllInterfaces)
+        {
+            if (!iface.IsGenericType || iface.IsUnboundGenericType) continue;
+            var unbound = iface.ConstructUnboundGenericType()
+                .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            JsonTypeKind? candidateKind = unbound switch
+            {
+                "global::System.Collections.Generic.IDictionary<,>" => JsonTypeKind.IDictionary,
+                "global::System.Collections.Generic.IReadOnlyDictionary<,>" => JsonTypeKind.IReadOnlyDictionary,
+                "global::System.Collections.Generic.ISet<>" => JsonTypeKind.ISet,
+                "global::System.Collections.Generic.IList<>" => JsonTypeKind.IList,
+                "global::System.Collections.Generic.ICollection<>" => JsonTypeKind.ICollection,
+                "global::System.Collections.Generic.IEnumerable<>" => JsonTypeKind.IEnumerable,
+                _ => null,
+            };
+            if (candidateKind is null) continue;
+            // More-specific wins. The numeric ordering is hand-picked so that
+            // smaller kind values are MORE specific. (See PrecedenceRank.)
+            if (matchedKind is null || PrecedenceRank(candidateKind.Value) < PrecedenceRank(matchedKind.Value))
+            {
+                matchedKind = candidateKind;
+                if (candidateKind is JsonTypeKind.IDictionary or JsonTypeKind.IReadOnlyDictionary)
+                {
+                    matchedKey = iface.TypeArguments[0];
+                    matchedValueOrElement = iface.TypeArguments[1];
+                }
+                else
+                {
+                    matchedKey = null;
+                    matchedValueOrElement = iface.TypeArguments[0];
+                }
+            }
+        }
+        if (matchedKind is null) return null;
+
+        var unprefixedTypeFqn = typeFqn.StartsWith("global::", System.StringComparison.Ordinal)
+            ? typeFqn.Substring("global::".Length)
+            : typeFqn;
+        var customKey = "Custom_" + EncodePropertyName(typeFqn);
+
+        if (matchedKind is JsonTypeKind.IDictionary or JsonTypeKind.IReadOnlyDictionary)
+        {
+            if (!IsSupportedDictionaryKey(matchedKey!)) return null;
+            var keyName = TryRegister(matchedKey!, visiting, depth + 1);
+            if (keyName is null) return null;
+            var keyCanonical = _types[keyName].TypeFullName;
+            var valueName = TryRegister(matchedValueOrElement!, visiting, depth + 1);
+            if (valueName is null) return null;
+            var valueCanonical = _types[valueName].TypeFullName;
+            if (!_types.ContainsKey(customKey))
+            {
+                _types[customKey] = new JsonTypeModel(
+                    TypeFullName: unprefixedTypeFqn,
+                    PropertyName: customKey,
+                    Kind: matchedKind.Value,
+                    PrimitiveConverter: null,
+                    UnderlyingTypeFullName: null,
+                    Properties: EquatableArray<JsonPropertyModel>.Empty,
+                    ElementContextName: valueName,
+                    KeyContextName: keyName,
+                    ElementTypeFullName: valueCanonical,
+                    KeyTypeFullName: keyCanonical,
+                    ConcreteContainerOverride: unprefixedTypeFqn);
+            }
+            return customKey;
+        }
+        else
+        {
+            var elementName = TryRegister(matchedValueOrElement!, visiting, depth + 1);
+            if (elementName is null) return null;
+            var elementCanonical = _types[elementName].TypeFullName;
+            if (!_types.ContainsKey(customKey))
+            {
+                _types[customKey] = new JsonTypeModel(
+                    TypeFullName: unprefixedTypeFqn,
+                    PropertyName: customKey,
+                    Kind: matchedKind.Value,
+                    PrimitiveConverter: null,
+                    UnderlyingTypeFullName: null,
+                    Properties: EquatableArray<JsonPropertyModel>.Empty,
+                    ElementContextName: elementName,
+                    ElementTypeFullName: elementCanonical,
+                    ConcreteContainerOverride: unprefixedTypeFqn);
+            }
+            return customKey;
+        }
+    }
+
+    /// <summary>
+    /// Lower rank = more specific. Used by the interface-fallback walker to
+    /// prefer the most-specific supported interface when a user type
+    /// implements several at once.
+    /// </summary>
+    private static int PrecedenceRank(JsonTypeKind kind) => kind switch
+    {
+        JsonTypeKind.IDictionary => 0,
+        JsonTypeKind.IReadOnlyDictionary => 1,
+        JsonTypeKind.ISet => 2,
+        JsonTypeKind.IList => 3,
+        JsonTypeKind.ICollection => 4,
+        JsonTypeKind.IEnumerable => 5,
+        _ => 99,
+    };
+
+    private static bool HasPublicParameterlessCtor(INamedTypeSymbol type)
+    {
+        foreach (var ctor in type.InstanceConstructors)
+        {
+            if (ctor.DeclaredAccessibility == Accessibility.Public && ctor.Parameters.Length == 0)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Phase 8.5: STJ ships built-in <c>JsonConverter</c>s for a fixed set of
     /// dictionary key types. This helper enumerates that set so the collector
     /// only registers a dictionary type whose key actually round-trips through
@@ -496,11 +682,19 @@ internal sealed class JsonTypeCollector
     }
 
     /// <summary>
-    /// Replace dots / globals / colons with <c>'_'</c> so a CLR full name
-    /// becomes a valid C# identifier suitable for a <see cref="JsonTypeInfo{T}"/>
-    /// property name on the generated context. Deterministic + collision-free
-    /// across namespaces.
+    /// Replace dots / globals / colons / generic-syntax characters with
+    /// <c>'_'</c> so a CLR full name becomes a valid C# identifier suitable
+    /// for a <see cref="JsonTypeInfo{T}"/> property name on the generated
+    /// context. Deterministic + collision-free across namespaces, even for
+    /// closed generics like <c>MyDict&lt;string, int&gt;</c>.
     /// </summary>
+    /// <remarks>
+    /// Characters mapped to <c>'_'</c>: <c>'.'</c>, <c>'&lt;'</c>,
+    /// <c>'&gt;'</c>, <c>','</c>, space, <c>'?'</c> (nullable suffix),
+    /// <c>'['</c>, <c>']'</c>. Consecutive runs of these collapse into
+    /// underscores in the output, which is fine — the output is meant to
+    /// be a stable token, not a round-trippable encoding.
+    /// </remarks>
     public static string EncodePropertyName(string typeFullName)
     {
         var name = typeFullName;
@@ -510,7 +704,22 @@ internal sealed class JsonTypeCollector
         var sb = new StringBuilder(name.Length);
         foreach (var ch in name)
         {
-            sb.Append(ch == '.' ? '_' : ch);
+            switch (ch)
+            {
+                case '.':
+                case '<':
+                case '>':
+                case ',':
+                case ' ':
+                case '?':
+                case '[':
+                case ']':
+                    sb.Append('_');
+                    break;
+                default:
+                    sb.Append(ch);
+                    break;
+            }
         }
         return sb.ToString();
     }

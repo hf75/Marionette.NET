@@ -288,7 +288,14 @@ internal static class JsonContextEmitter
     {
         var elementFqn = StripGlobalPrefix(type.ElementTypeFullName!);
         var collectionFqn = StripGlobalPrefix(type.TypeFullName);
-        var concreteContainer = concreteContainerTemplate.Replace("{T}", "global::" + elementFqn);
+
+        // Phase 11: when the collector matched a user type via interface
+        // fallback (e.g. ConcurrentQueue<int> as IEnumerable), the override
+        // carries the user type so the runtime allocates the correct
+        // concrete container instead of the template-default substitute.
+        var concreteContainer = type.ConcreteContainerOverride is { } overrideFqn
+            ? "global::" + StripGlobalPrefix(overrideFqn)
+            : concreteContainerTemplate.Replace("{T}", "global::" + elementFqn);
 
         sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.");
         sb.Append(factoryName);
@@ -328,9 +335,13 @@ internal static class JsonContextEmitter
         var keyFqn = StripGlobalPrefix(type.KeyTypeFullName!);
         var valueFqn = StripGlobalPrefix(type.ElementTypeFullName!);
         var collectionFqn = StripGlobalPrefix(type.TypeFullName);
-        var concreteContainer = concreteContainerTemplate
-            .Replace("{K}", "global::" + keyFqn)
-            .Replace("{V}", "global::" + valueFqn);
+        // Phase 11: same override semantics as element collections (e.g.
+        // ConcurrentDictionary<K,V> matched via IDictionary<K,V> interface).
+        var concreteContainer = type.ConcreteContainerOverride is { } overrideFqn
+            ? "global::" + StripGlobalPrefix(overrideFqn)
+            : concreteContainerTemplate
+                .Replace("{K}", "global::" + keyFqn)
+                .Replace("{V}", "global::" + valueFqn);
 
         sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.");
         sb.Append(factoryName);

@@ -62,6 +62,11 @@ internal static class GeneratorRunner
             MetadataReference.CreateFromFile(typeof(System.Text.Json.JsonSerializer).Assembly.Location),
             MetadataReference.CreateFromFile(typeof(System.ComponentModel.Component).Assembly.Location),
             MetadataReference.CreateFromFile(typeof(System.Collections.Generic.IReadOnlyDictionary<,>).Assembly.Location),
+            // Phase 11: System.Collections.Concurrent ships in its own
+            // assembly; the interface-fallback fixture references
+            // ConcurrentDictionary / ConcurrentQueue / etc. which the test
+            // compilation must be able to resolve.
+            MetadataReference.CreateFromFile(typeof(System.Collections.Concurrent.ConcurrentDictionary<,>).Assembly.Location),
             // Marionette attributes.
             MetadataReference.CreateFromFile(typeof(global::Marionette.McpRootAttribute).Assembly.Location),
             // Phase 1.2: the generated Marionette.g.cs references descriptor

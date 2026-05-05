@@ -309,6 +309,17 @@ internal enum JsonTypeKind
 /// the emitter needs the full name to render the factory's <c>TKey</c> generic
 /// argument. Always <see langword="null"/> for non-dictionary kinds.
 /// </param>
+/// <param name="ConcreteContainerOverride">
+/// Phase 11: when set, this is the canonical full name of the concrete container
+/// the emitter should pass to the factory's <c>ObjectCreator</c>. Built-in
+/// shapes (<c>List&lt;T&gt;</c>, <c>Dictionary&lt;K,V&gt;</c>, <c>HashSet&lt;T&gt;</c>, …) leave this
+/// <see langword="null"/> and the emitter substitutes a hard-coded template
+/// (<c>List&lt;T&gt;</c>, <c>HashSet&lt;T&gt;</c>, etc.). When the collector matches a user
+/// type that implements one of the supported interfaces (e.g.
+/// <c>ConcurrentDictionary&lt;K,V&gt;</c> via <see cref="JsonTypeKind.IDictionary"/>),
+/// the override carries the user type so the runtime allocates the correct
+/// concrete instance instead of a default substitute.
+/// </param>
 internal sealed record JsonTypeModel(
     string TypeFullName,
     string PropertyName,
@@ -319,7 +330,8 @@ internal sealed record JsonTypeModel(
     string? ElementContextName = null,
     string? KeyContextName = null,
     string? ElementTypeFullName = null,
-    string? KeyTypeFullName = null);
+    string? KeyTypeFullName = null,
+    string? ConcreteContainerOverride = null);
 
 /// <summary>
 /// Phase 8.1: a single property on a Json-context-tracked object type. The

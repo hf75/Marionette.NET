@@ -204,7 +204,10 @@ public sealed class MarionetteTestHost
         CancellationToken cancellationToken = default)
     {
         var jsonArgs = MarionetteJson.ToJsonElement(args);
-        return MarionetteTools.RaiseEventAsync(
+        // Phase 11: raise_event was extracted into its own
+        // [McpServerToolType] so RunAsyncSourceGenSafe can omit it. The
+        // testing toolkit always exposes the full surface.
+        return MarionetteRaiseEventTools.RaiseEventAsync(
             _registry,
             _adapter,
             _loopProtection,

@@ -284,10 +284,10 @@ Each per-kind dispatch arm in the emitter's switch is now a single call with the
 
 ### Remaining limitations
 
-- Multi-dimensional arrays (`T[,]`, `T[,,]`): no STJ factory; not coverable by source-gen.
-- Custom collection types (e.g. user-defined `MyList<T> : IList<T>`): the collector matches by exact unbound generic name and does not yet recognise interface-implementations of supported shapes. Workaround: expose an `IList<T>`-typed property instead.
-- Tuple-keyed dictionaries (`Dictionary<(int, int), V>`): STJ has no built-in tuple-key converter; rejected by `IsSupportedDictionaryKey`.
-- Concurrent collections (`ConcurrentDictionary`, `ConcurrentBag`, etc.): STJ ships dedicated factories but they're rarely used as `[McpEvent]` payloads. Deferred until adopter demand surfaces.
+- Multi-dimensional arrays (`T[,]`, `T[,]`): no STJ factory; not coverable by source-gen.
+- Tuple-keyed dictionaries (`Dictionary<(int, int), V>`): STJ has no built-in tuple-key converter; rejected by `IsSupportedDictionaryKey`. Adopters serialise composite keys as a single string instead.
+- ~~Custom collection types implementing standard interfaces~~ — closed in Phase 11 via the interface-fallback walker. Any `class MyList<T> : IList<T>` (and similar for ICollection / ISet / IDictionary / IEnumerable) with a public parameterless ctor now registers automatically.
+- ~~Concurrent collections~~ — closed in Phase 11. `ConcurrentDictionary<K,V>` matches `IDictionary<K,V>`; `ConcurrentQueue<T>` / `ConcurrentStack<T>` / `ConcurrentBag<T>` match `IEnumerable<T>`. See [PHASE11_FINDINGS.md](PHASE11_FINDINGS.md).
 
 These items continue to fall back to the legacy reflection-based serialiser; the runtime fallback path remains correct. The host's `[RequiresUnreferencedCode]` annotation explicitly carries the "out-of-scope shapes trigger the descriptor's runtime `JsonSerializer.Serialize` fallback" caveat for adopter visibility.
 

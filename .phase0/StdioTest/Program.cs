@@ -594,6 +594,36 @@ internal static class Program
                     Console.Error.WriteLine($"FAIL — LastAddedTitle after AddAppointment = '{afterTitle ?? "<error>"}', expected 'Lunch'");
                     failures++;
                 }
+
+                // ---- Phase 10: AddAppointment VIA THE DYNAMIC TOOL.
+                //      Hitting the per-method dynamic tool directly to verify
+                //      the AOT-clean MarionetteAIFunction registration path
+                //      against the AOT'd PocketPlanner binary. Uses a
+                //      DateTime parameter to exercise the source-gen JSON
+                //      type info for the AppointmentAdded args graph.
+                var dynBefore = await ReadObservableInt(child, stdoutMessages, "PlannerViewModel", "AppointmentCount");
+                var dynamicAdd = await InvokeDynamicToolAsync(child, stdoutMessages,
+                    "PlannerViewModel.AddAppointment",
+                    new { title = "Dinner", startTime = "2026-05-04T19:30:00", durationMinutes = 90 });
+                if (!dynamicAdd.Success)
+                {
+                    Console.Error.WriteLine($"FAIL — [via dynamic tool] PlannerViewModel.AddAppointment failed: {dynamicAdd.Detail}");
+                    failures++;
+                }
+                else
+                {
+                    var dynAfter = await ReadObservableInt(child, stdoutMessages, "PlannerViewModel", "AppointmentCount");
+                    var dynTitle = await ReadObservableString(child, stdoutMessages, "PlannerViewModel", "LastAddedTitle");
+                    if (dynAfter == (dynBefore ?? 0) + 1 && dynTitle == "Dinner")
+                    {
+                        Console.WriteLine($"PASS — [via dynamic tool] PlannerViewModel.AddAppointment({{title=\"Dinner\"}}) succeeded; AppointmentCount {dynBefore} -> {dynAfter}, LastAddedTitle = 'Dinner'");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"FAIL — [via dynamic tool] AddAppointment returned success but AppointmentCount={dynAfter} (expected {(dynBefore ?? 0) + 1}), LastAddedTitle='{dynTitle ?? "<error>"}' (expected 'Dinner').");
+                        failures++;
+                    }
+                }
             }
             else if (winuiMode)
             {
@@ -766,6 +796,33 @@ internal static class Program
                 {
                     Console.Error.WriteLine($"FAIL — NotificationsEnabled after Toggle = {afterToggle?.ToString() ?? "<error>"}, expected false");
                     failures++;
+                }
+
+                // ---- Phase 10: invoke FormLabViewModel.SetTheme VIA THE DYNAMIC TOOL.
+                //      Same operation shape as the meta-tool path above, but
+                //      hitting the per-method dynamic tool directly to verify
+                //      the AOT-clean MarionetteAIFunction registration path
+                //      against the AOT'd FormLab binary.
+                var beforeTheme = await ReadObservableString(child, stdoutMessages, "FormLabViewModel", "Theme");
+                var dynamicSetTheme = await InvokeDynamicToolAsync(child, stdoutMessages,
+                    "FormLabViewModel.SetTheme", new { theme = "Dark" });
+                if (!dynamicSetTheme.Success)
+                {
+                    Console.Error.WriteLine($"FAIL — [via dynamic tool] FormLabViewModel.SetTheme failed: {dynamicSetTheme.Detail}");
+                    failures++;
+                }
+                else
+                {
+                    var afterDynamicTheme = await ReadObservableString(child, stdoutMessages, "FormLabViewModel", "Theme");
+                    if (afterDynamicTheme == "Dark")
+                    {
+                        Console.WriteLine($"PASS — [via dynamic tool] FormLabViewModel.SetTheme({{theme=\"Dark\"}}) succeeded; Theme '{beforeTheme ?? "<null>"}' -> 'Dark'");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"FAIL — [via dynamic tool] SetTheme returned success but Theme = '{afterDynamicTheme ?? "<error>"}', expected 'Dark'.");
+                        failures++;
+                    }
                 }
 
                 // ---- subscribe to events/FormSubmitted BEFORE the Submit call

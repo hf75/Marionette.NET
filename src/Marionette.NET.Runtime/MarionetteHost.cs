@@ -145,18 +145,69 @@ public static class MarionetteHost
         "T[], List<T>, every standard IEnumerable/IList/ICollection/ISet/Stack/Queue, " +
         "Dictionary/IDictionary/IReadOnlyDictionary across STJ-supported key types) are " +
         "AOT-clean by source-gen and never hit this surface. Suppress at the call site after " +
-        "auditing both raise_event use and your payload type graphs.")]
+        "auditing both raise_event use and your payload type graphs. Adopters who do NOT call " +
+        "raise_event AND stay within source-gen-eligible payloads should use " +
+        "RunAsyncSourceGenSafe instead — that overload carries no annotation.")]
     [RequiresDynamicCode(
         "MarionetteHost.RunAsync's legacy JSON fallback uses JsonSerializer over boxed objects " +
         "for [McpEvent] args / [McpObservable] values / [McpCallable] returns whose type graph " +
         "is not fully covered by the Phase-8 JSON source generator. Source-gen-eligible payloads " +
-        "go through typed JsonTypeInfo<T> and need no dynamic code. Suppress at the call site " +
+        "go through typed JsonTypeInfo<T> and need no dynamic code. Use RunAsyncSourceGenSafe " +
         "if your payloads stay within the supported shapes.")]
-    public static async Task<int> RunAsync(
+    public static Task<int> RunAsync(
         string[] args,
         IReadOnlyList<RootDescriptor> roots,
         IUiAutomationAdapter? adapter = null,
         CancellationToken ct = default)
+        => RunAsyncCore(args, roots, adapter, includeRaiseEventTool: true, ct);
+
+    /// <summary>
+    /// Phase-11 annotation-free entry point for adopters who confirm both:
+    /// <list type="bullet">
+    ///   <item><description>they do NOT call <c>raise_event</c> from MCP clients
+    ///     (the runtime never registers <see cref="MarionetteRaiseEventTools"/>
+    ///     and therefore never invokes the reflective event-name resolution path);</description></item>
+    ///   <item><description>every <c>[McpEvent]</c> args type, <c>[McpObservable]</c> value
+    ///     type, and <c>[McpCallable]</c> return / parameter type is covered by the
+    ///     Phase-8 / 8.5 / 11 JSON source generator (primitives, user records,
+    ///     <c>Nullable&lt;T&gt;</c>, enums, every standard collection interface,
+    ///     <c>Dictionary</c> / <c>IDictionary</c> / <c>IReadOnlyDictionary</c>
+    ///     across STJ-supported key types, plus user / concurrent collection
+    ///     types matched via the interface-fallback walker).</description></item>
+    /// </list>
+    /// Under those promises every Marionette code path is reflection-free and
+    /// AOT-safe, so this overload omits <see cref="RequiresUnreferencedCodeAttribute"/>
+    /// and <see cref="RequiresDynamicCodeAttribute"/>. Misuse (calling this with
+    /// non-source-gen-eligible payloads) does not produce a build-time error;
+    /// it produces a runtime <see cref="System.InvalidOperationException"/>
+    /// from <c>JsonSerializer</c> with reflection-disabled, exactly the
+    /// behaviour of any other AOT-published .NET app that hits an unsupported
+    /// reflection path.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Caller-acknowledged contract: raise_event is excluded from registration " +
+                        "and payload types are source-gen-eligible. Documented on RunAsyncSourceGenSafe.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Caller-acknowledged contract — see Trimming justification above.")]
+    public static Task<int> RunAsyncSourceGenSafe(
+        string[] args,
+        IReadOnlyList<RootDescriptor> roots,
+        IUiAutomationAdapter? adapter = null,
+        CancellationToken ct = default)
+        => RunAsyncCore(args, roots, adapter, includeRaiseEventTool: false, ct);
+
+    [RequiresUnreferencedCode(
+        "Internal core. RunAsync forwards here with includeRaiseEventTool=true; " +
+        "RunAsyncSourceGenSafe forwards with includeRaiseEventTool=false and suppresses the " +
+        "annotation under its documented contract.")]
+    [RequiresDynamicCode(
+        "Internal core; see RunAsync / RunAsyncSourceGenSafe contracts.")]
+    private static async Task<int> RunAsyncCore(
+        string[] args,
+        IReadOnlyList<RootDescriptor> roots,
+        IUiAutomationAdapter? adapter,
+        bool includeRaiseEventTool,
+        CancellationToken ct)
     {
         if (args is null) throw new ArgumentNullException(nameof(args));
         if (roots is null) throw new ArgumentNullException(nameof(roots));
@@ -244,9 +295,20 @@ public static class MarionetteHost
             })
             .WithStdioServerTransport()
             // Generic-typed tool registration is the AOT-friendly path
-            // (PHASE0_FINDINGS implication 6 + Spike B). The four Phase-1 tools
-            // live as static methods on MarionetteTools.
-            .WithTools<MarionetteTools>()
+            // (PHASE0_FINDINGS implication 6 + Spike B). The five Phase-1 / 3.1
+            // tools other than raise_event live as static methods on
+            // MarionetteTools.
+            .WithTools<MarionetteTools>();
+
+        // Phase 11: raise_event is hosted on its own [McpServerToolType] so
+        // RunAsyncSourceGenSafe can exclude it. The flag is set by the entry
+        // point (RunAsync = true, RunAsyncSourceGenSafe = false).
+        if (includeRaiseEventTool)
+        {
+            mcpBuilder = mcpBuilder.WithTools<MarionetteRaiseEventTools>();
+        }
+
+        mcpBuilder = mcpBuilder
             // Resource handlers — Phase 1.6 dispatches between the watchable
             // observable provider and the event provider based on URI shape.
             // Both providers are singletons; the host fans out list/read/
