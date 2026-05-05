@@ -472,6 +472,78 @@ public class SnapshotTests
         Assert.DoesNotContain("Demo_NoCtorEventArgs", generated);
     }
 
+    [Fact]
+    public void GoldenJsonIgnoreConditions_EmitsExpectedManifest()
+    {
+        // Phase 12.7: [JsonIgnore(Condition = …)] sub-modes:
+        //   * (no attribute)             → no IgnoreCondition emitted (default null)
+        //   * [JsonIgnore]               → property dropped (Always semantic)
+        //   * [JsonIgnore(Always)]       → property dropped (explicit)
+        //   * [JsonIgnore(Never)]        → property included, no IgnoreCondition (acts like no attribute)
+        //   * [JsonIgnore(WhenWritingDefault)] → property included, IgnoreCondition.WhenWritingDefault emitted
+        //   * [JsonIgnore(WhenWritingNull)]    → property included, IgnoreCondition.WhenWritingNull emitted
+        var source = """
+            using System;
+            using System.Text.Json.Serialization;
+            using Marionette;
+
+            namespace Demo;
+
+            public sealed class IgnoreEventArgs : EventArgs
+            {
+                public IgnoreEventArgs() { }
+
+                public string Plain { get; init; } = "";
+
+                [JsonIgnore]
+                public string DroppedDefault { get; init; } = "secret";
+
+                [JsonIgnore(Condition = JsonIgnoreCondition.Always)]
+                public string DroppedExplicit { get; init; } = "secret";
+
+                [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+                public string AlwaysInclude { get; init; } = "kept";
+
+                [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+                public int? OptionalCount { get; init; }
+
+                [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+                public string? OptionalNote { get; init; }
+            }
+
+            [McpRoot("ignoreroot")]
+            public class IgnoreRoot
+            {
+                [McpEvent("Args type with every JsonIgnore mode.")]
+                public event EventHandler<IgnoreEventArgs>? Fired;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+
+        // Plain + AlwaysInclude must appear as JsonPropertyInfo entries.
+        Assert.Contains("PropertyName = \"Plain\"", generated);
+        Assert.Contains("PropertyName = \"AlwaysInclude\"", generated);
+        Assert.Contains("PropertyName = \"OptionalCount\"", generated);
+        Assert.Contains("PropertyName = \"OptionalNote\"", generated);
+
+        // Always-dropped properties must NOT appear (PropertyName = "DroppedX" never emitted).
+        Assert.DoesNotContain("PropertyName = \"DroppedDefault\"", generated);
+        Assert.DoesNotContain("PropertyName = \"DroppedExplicit\"", generated);
+
+        // Plain + AlwaysInclude (Never condition) get IgnoreCondition = null.
+        // OptionalCount + OptionalNote get IgnoreCondition.WhenWritingDefault / WhenWritingNull.
+        Assert.Contains("IgnoreCondition = global::System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault", generated);
+        Assert.Contains("IgnoreCondition = global::System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull", generated);
+    }
+
     private static string Normalize(string s) => s.Replace("\r\n", "\n");
 
     private static string FormatDiagnostics(System.Collections.Generic.IEnumerable<Microsoft.CodeAnalysis.Diagnostic> diags)

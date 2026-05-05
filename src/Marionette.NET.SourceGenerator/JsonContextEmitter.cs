@@ -482,7 +482,18 @@ internal static class JsonContextEmitter
         sb.Append(prop.Name);
         sb.AppendLine(",");
         sb.AppendLine("                        Setter = null,");
-        sb.AppendLine("                        IgnoreCondition = null,");
+        // Phase 12.7: emit JsonIgnoreCondition.<Mode> when the property
+        // carries [JsonIgnore(Condition = WhenWritingDefault | WhenWritingNull)].
+        if (prop.IgnoreConditionLiteral is null)
+        {
+            sb.AppendLine("                        IgnoreCondition = null,");
+        }
+        else
+        {
+            sb.Append("                        IgnoreCondition = global::System.Text.Json.Serialization.JsonIgnoreCondition.");
+            sb.Append(prop.IgnoreConditionLiteral);
+            sb.AppendLine(",");
+        }
         sb.AppendLine("                        HasJsonInclude = false,");
         sb.AppendLine("                        IsExtensionData = false,");
         sb.AppendLine("                        NumberHandling = null,");

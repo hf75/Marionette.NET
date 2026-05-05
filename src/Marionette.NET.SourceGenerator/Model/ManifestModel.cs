@@ -346,11 +346,23 @@ internal sealed record JsonTypeModel(
 /// (e.g. <c>System_String</c>, <c>System_DateTime</c>). The emitter uses this
 /// to wire the <c>PropertyTypeInfo</c> field of <c>JsonPropertyInfoValues</c>.
 /// </param>
+/// <param name="IgnoreConditionLiteral">
+/// Phase 12.7: a pre-rendered <c>JsonIgnoreCondition.X</c> literal (e.g.
+/// <c>"WhenWritingDefault"</c> or <c>"WhenWritingNull"</c>) to emit into
+/// <c>JsonPropertyInfoValues.IgnoreCondition</c>. <see langword="null"/>
+/// when the property has no <c>[JsonIgnore]</c> at all OR has
+/// <c>[JsonIgnore(Condition = JsonIgnoreCondition.Never)]</c>. Properties
+/// with <c>Condition.Always</c> (the default) and <c>WhenWritingDefault</c>
+/// /<c>WhenWritingNull</c> are handled by <see cref="JsonTypeCollector"/>:
+/// <c>Always</c> drops the property entirely; the conditional cases keep
+/// the property and store the condition here.
+/// </param>
 internal sealed record JsonPropertyModel(
     string Name,
     string DeclaringTypeFullName,
     string PropertyTypeFullName,
-    string PropertyTypeContextName);
+    string PropertyTypeContextName,
+    string? IgnoreConditionLiteral = null);
 
 /// <summary>
 /// One [McpEvent] event (Phase 1.6). Carries the delegate shape information

@@ -362,15 +362,17 @@ internal sealed class JsonTypeCollector
             if (prop.IsIndexer) continue;
             if (prop.GetMethod is null) continue;
             if (prop.GetMethod.DeclaredAccessibility != Accessibility.Public) continue;
-            // Phase 8.3: honour [JsonIgnore]. The attribute is matched by
+            // Phase 8.3 + 12.7: honour [JsonIgnore]. The attribute is matched by
             // metadata-name string (we cannot reference STJ from a
             // netstandard2.0 analyzer that doesn't reference the runtime
-            // assembly directly). [JsonIgnore(Condition = ...)] sub-modes
-            // are not differentiated — any non-default Condition is treated
-            // as "always ignore" for source-gen purposes; adopters who need
-            // conditional ignoring should keep the property out of the
-            // generated context entirely.
-            if (HasJsonIgnoreAttribute(prop)) continue;
+            // assembly directly).
+            //
+            // The `Condition` named argument selects the sub-mode:
+            //   * Always (default; or no Condition arg)  → drop the property
+            //   * Never                                  → include unconditionally (no IgnoreCondition emitted)
+            //   * WhenWritingDefault / WhenWritingNull   → include + emit IgnoreCondition.<Mode>
+            var ignoreMode = GetJsonIgnoreCondition(prop);
+            if (ignoreMode == JsonIgnoreMode.Always) continue;
 
             var childName = TryRegister(prop.Type, visiting, depth + 1);
             if (childName is null)
@@ -386,11 +388,19 @@ internal sealed class JsonTypeCollector
             // emitted code.
             var canonicalPropTypeFqn = _types[childName].TypeFullName;
 
+            string? ignoreLiteral = ignoreMode switch
+            {
+                JsonIgnoreMode.WhenWritingDefault => "WhenWritingDefault",
+                JsonIgnoreMode.WhenWritingNull => "WhenWritingNull",
+                _ => null,
+            };
+
             props.Add(new JsonPropertyModel(
                 Name: prop.Name,
                 DeclaringTypeFullName: declaringFqn,
                 PropertyTypeFullName: canonicalPropTypeFqn,
-                PropertyTypeContextName: childName));
+                PropertyTypeContextName: childName,
+                IgnoreConditionLiteral: ignoreLiteral));
         }
 
         visiting.Remove(typeKey);
@@ -648,20 +658,61 @@ internal sealed class JsonTypeCollector
     }
 
     /// <summary>
-    /// Phase 8.3: detect <c>[JsonIgnore]</c> on a property. We match by
-    /// metadata-name string because the generator may run in a Roslyn host
-    /// that doesn't reference <c>System.Text.Json</c> directly. The actual
-    /// <c>Condition</c> property is not inspected — adopters who need
-    /// conditional ignoring should not rely on source-gen for that property.
+    /// Phase 12.7: detect <c>[JsonIgnore]</c> + extract the
+    /// <c>Condition</c> named argument. Returns:
+    /// <list type="bullet">
+    ///   <item><description><see cref="JsonIgnoreMode.None"/> — no <c>[JsonIgnore]</c> on the property.</description></item>
+    ///   <item><description><see cref="JsonIgnoreMode.Always"/> — <c>[JsonIgnore]</c> with no Condition or <c>Condition = Always</c>.</description></item>
+    ///   <item><description><see cref="JsonIgnoreMode.Never"/> — <c>Condition = Never</c> (treated like no [JsonIgnore]).</description></item>
+    ///   <item><description><see cref="JsonIgnoreMode.WhenWritingDefault"/> / <see cref="JsonIgnoreMode.WhenWritingNull"/> — emit conditional skip.</description></item>
+    /// </list>
+    /// The attribute is matched by metadata-name string because the
+    /// generator may run in a Roslyn host that doesn't reference
+    /// <c>System.Text.Json</c> directly.
     /// </summary>
-    private static bool HasJsonIgnoreAttribute(IPropertySymbol prop)
+    private static JsonIgnoreMode GetJsonIgnoreCondition(IPropertySymbol prop)
     {
         foreach (var attr in prop.GetAttributes())
         {
-            if (attr.AttributeClass?.ToDisplayString() == "System.Text.Json.Serialization.JsonIgnoreAttribute")
-                return true;
+            if (attr.AttributeClass?.ToDisplayString() != "System.Text.Json.Serialization.JsonIgnoreAttribute")
+                continue;
+            // Look for `Condition = JsonIgnoreCondition.X` in named args.
+            foreach (var na in attr.NamedArguments)
+            {
+                if (na.Key != "Condition") continue;
+                // The TypedConstant for an enum carries the underlying value
+                // as Int32 + the enum's CLR type. Match by integer.
+                // JsonIgnoreCondition: Never=0, Always=1, WhenWritingDefault=2, WhenWritingNull=3.
+                if (na.Value.Value is int v)
+                {
+                    return v switch
+                    {
+                        0 => JsonIgnoreMode.Never,
+                        1 => JsonIgnoreMode.Always,
+                        2 => JsonIgnoreMode.WhenWritingDefault,
+                        3 => JsonIgnoreMode.WhenWritingNull,
+                        _ => JsonIgnoreMode.Always,
+                    };
+                }
+            }
+            // Bare [JsonIgnore] without Condition argument — default is
+            // Always (per STJ docs).
+            return JsonIgnoreMode.Always;
         }
-        return false;
+        return JsonIgnoreMode.None;
+    }
+
+    /// <summary>
+    /// Phase 12.7: encoded <c>System.Text.Json.Serialization.JsonIgnoreCondition</c>
+    /// values plus a sentinel <see cref="None"/> for "no attribute".
+    /// </summary>
+    private enum JsonIgnoreMode
+    {
+        None = -1,
+        Never = 0,
+        Always = 1,
+        WhenWritingDefault = 2,
+        WhenWritingNull = 3,
     }
 
     /// <summary>
