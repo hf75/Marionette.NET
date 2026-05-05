@@ -1,6 +1,8 @@
 # Marionette.NET
 
-> AI-controllable, AI-testable, AI-observable C# desktop apps. Drop a NuGet, decorate with attributes, ship.
+> Your C# desktop app, talking fluent MCP. In about three lines.
+
+**👉 [Read SHOWCASE.md](SHOWCASE.md) for the 90-second pitch + live demo walkthrough.**
 
 Marionette.NET turns any C# desktop application into an MCP server that Claude (or any MCP-aware agent) can drive end-to-end. **In-process**, **attribute-driven**, **cross-framework** (WPF + Avalonia + WinUI 3 + MAUI today; Uno on the roadmap), **AOT-friendly**, and **strippable to literal zero footprint** in production builds.
 
@@ -49,7 +51,7 @@ Claude can now call `TodoListViewModel.AddTodo({"title": "buy milk"})` directly 
 
 ## Status
 
-**Pre-alpha, post-Phase-11 local release candidate.** What works today:
+**v0.1.0-preview — post-Phase-14 release candidate.** What works today:
 
 - The four meta-tools, channel push, watchable resources, `[McpEvent]` (Phase 1.2 / 1.6).
 - Source generator emits AOT-clean dispatcher tables + per-method JSON schemas; 32/32 generator tests green.
@@ -64,12 +66,15 @@ Claude can now call `TodoListViewModel.AddTodo({"title": "buy milk"})` directly 
 - **AOT JSON source generator** — typed `JsonTypeInfo<T>` for `[McpEvent]` args / `[McpObservable]` values / `[McpCallable]` returns + parameters across primitives, user records, `Nullable<T>`, enums, `T[]`, `List<T>`, every standard `IEnumerable`/`IList`/`ICollection`/`ISet`/`Stack`/`Queue`, `Dictionary` / `IDictionary` / `IReadOnlyDictionary` across STJ-supported key types, and (Phase 11) any user / concurrent type that implements one of those interfaces (Phase 8 / 8.5 / 11).
 - **AOT-clean per-method dynamic tools** via the `MarionetteAIFunction` subclass + `McpServerTool.Create(AIFunction, …)` overload — registration is reflection-free and verified end-to-end against AOT-published binaries on all four adapters (Phase 10).
 - **`MarionetteHost.RunAsyncSourceGenSafe`** — annotation-free entry point for adopters who do not call `raise_event` and stay within source-gen-eligible JSON shapes (Phase 11). `RaiseEventAsync` extracted into its own `MarionetteRaiseEventTools` class so the strict entry point can omit it cleanly.
-- **Sample.Wpf.TodoApp + Sample.Avalonia.Dashboard + Sample.WinUI.FormLab + Sample.Maui.PocketPlanner** — all compatible with the skill-pack v2 workflows.
+- **Phase 12.2** — `[McpRaisable]` opt-in catalog: AOT-clean `raise_event` for WPF + Avalonia via assembly-level declarations + source-generated typed dispatcher.
+- **Phase 13** — every source-generator shape gap closed: multi-dim arrays rank 3+4, tuple keys rank 4+5, `in` parameters, Stream params via base64, custom `[JsonConverter]` (type + property level), generic `[McpRoot]` via `[assembly: McpClosedRoot]`, generic `[McpCallable]` via `ClosedTypes`. 49/49 source-gen tests.
+- **Phase 14** — consolidated event layer: Win32 `SendInput` core for WPF/WinUI/MAUI Windows-head, Avalonia reflection-opt-in for raw input. Closes the last input/event caps.
+- **Sample.Wpf.TodoApp + Sample.Avalonia.Dashboard + Sample.WinUI.FormLab + Sample.Maui.PocketPlanner + Sample.Wpf.NeonControlCenter** — all compatible with the skill-pack v2 workflows. NeonControlCenter is the end-of-phase showcase: 13/13 PASS live-driven via MCP in GUI mode.
 - 7 end-to-end eval-cases (`dotnet test`) + 3 conditional GUI eval-cases (EC-8 simulate_input, EC-9 raise_event, EC-10 multi-window; gated on `MARIONETTE_GUI_TESTS=1`).
 - Local showcase publish + dogfood: WPF TodoApp, Avalonia Dashboard, and WinUI FormLab publish to `artifacts/showcases` and pass headless MCP handshake checks.
 - **AOT-publish + AOT-runtime stdio handshake**: 5 samples × stripped + full publish (10 publishes) all clean, 0 Marionette IL warnings; AOT-runtime handshake exercises explicit dynamic-tool invocation on all four UI-framework adapters (Phase 10 / 11).
 
-What is **not** yet here: Uno adapter, public NuGet push, `git push`, GitHub release. Those are deliberately held until manual testing is complete. See [MASTERPLAN.md](MASTERPLAN.md) for the full roadmap.
+What is **not** yet here: Uno adapter (planned for v0.2), public NuGet push, GitHub Release tag. The repo is now public; the NuGet push is the next milestone. See [MASTERPLAN.md](MASTERPLAN.md) for the full roadmap.
 
 ## Quickstart
 
@@ -114,7 +119,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .phase7\release-local.ps1
 - **[PHASE9_FINDINGS.md](PHASE9_FINDINGS.md)** - Phase 9 outcomes (Avalonia type_text, MAUI multi-window tracking, WinUI input-injection Win11 reality + adopter docs).
 - **[PHASE10_FINDINGS.md](PHASE10_FINDINGS.md)** - Phase 10 outcomes (AOT-clean per-method dynamic tools via AIFunction subclass).
 - **[PHASE11_FINDINGS.md](PHASE11_FINDINGS.md)** - Phase 11 outcomes (interface fallback for custom + concurrent collections, AOT-strict `RunAsyncSourceGenSafe`).
-- **[PHASE12_FINDINGS.md](PHASE12_FINDINGS.md)** - Phase 12 outcomes (MAUI semantic input completion, multi-dim arrays rank 2, no-ctor collections serialise-only, [JsonIgnore(Condition)] sub-modes, type-graph depth lift to 64).
+- **[PHASE12_FINDINGS.md](PHASE12_FINDINGS.md)** - Phase 12 outcomes (MAUI semantic input completion, multi-dim arrays rank 2, no-ctor collections serialise-only, [JsonIgnore(Condition)] sub-modes, type-graph depth lift to 64, raise_event AOT catalog, tuple-keyed dictionaries).
+- **[PHASE13_FINDINGS.md](PHASE13_FINDINGS.md)** - Phase 13 outcomes (every source-generator shape gap: multi-dim ranks 3+4, tuple keys ranks 4+5, `in` params, Stream base64, custom `[JsonConverter]`, generic `[McpRoot]`/`[McpCallable]`).
+- **[PHASE14_FINDINGS.md](PHASE14_FINDINGS.md)** - Phase 14 outcomes (consolidated event layer: Win32 `SendInput` for WPF/WinUI/MAUI, Avalonia reflection opt-in).
 - **[.phase6/6a-testing-toolkit-dx.md](.phase6/6a-testing-toolkit-dx.md)** - Phase 6a testing toolkit slice.
 - **[.phase7/7a-distribution-dogfooding.md](.phase7/7a-distribution-dogfooding.md)** - Local package/showcase dogfooding plan.
 - **[docs/getting-started.md](docs/getting-started.md)** - Local NuGet consumption and host wiring.
