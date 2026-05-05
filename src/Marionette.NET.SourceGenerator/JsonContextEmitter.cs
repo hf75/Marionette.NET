@@ -246,9 +246,40 @@ internal static class JsonContextEmitter
                     factoryName: "CreateIReadOnlyDictionaryInfo",
                     concreteContainerTemplate: "global::System.Collections.Generic.Dictionary<{K}, {V}>");
                 break;
+            case JsonTypeKind.MultiDimArrayRank2:
+                EmitMultiDimArrayRank2Creation(sb, type);
+                break;
         }
 
         sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Phase 12.4: render a <c>JsonTypeInfo&lt;T[,]&gt;</c> backed by the
+    /// runtime <see cref="Marionette.Runtime.Json.MultiDimArrayRank2Converter{TElement}"/>.
+    /// The element type is constrained to be a primitive (per the
+    /// collector's gate) so the converter's per-element delegate is
+    /// fetched from <c>JsonMetadataServices.&lt;Element&gt;Converter</c>.
+    /// </summary>
+    private static void EmitMultiDimArrayRank2Creation(StringBuilder sb, JsonTypeModel type)
+    {
+        var elementFqn = StripGlobalPrefix(type.ElementTypeFullName!);
+        // The element kind is Primitive per the collector's gate; we read
+        // the typed converter off the inner JsonTypeInfo's Converter
+        // member rather than hard-coding the primitive name, so future
+        // collector expansions (e.g. enums as elements) compose cleanly.
+        sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::");
+        sb.Append(elementFqn);
+        sb.AppendLine("[,]>(");
+        sb.AppendLine("            Options,");
+        sb.Append("            new global::Marionette.Runtime.Json.MultiDimArrayRank2Converter<global::");
+        sb.Append(elementFqn);
+        sb.AppendLine(">(");
+        sb.Append("                (global::System.Text.Json.Serialization.JsonConverter<global::");
+        sb.Append(elementFqn);
+        sb.Append(">)");
+        sb.Append(type.ElementContextName);
+        sb.AppendLine(".Converter));");
     }
 
     private static void EmitArrayCreation(StringBuilder sb, JsonTypeModel type)

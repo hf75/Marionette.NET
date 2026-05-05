@@ -295,30 +295,32 @@ public class SnapshotTests
     }
 
     [Fact]
-    public void GoldenUnsupportedShapes_FallsBackToReflection()
+    public void GoldenMultiDimArrayRank2_RegistersWithCustomConverter()
     {
-        // Phase 8.5: types the generator deliberately does NOT cover (multi-
-        // dim arrays, abstract bases, exotic generics) leave the descriptor's
-        // typed Serialize lambda null. The runtime then takes the legacy
-        // reflection path. This fixture verifies that unsupported types do
-        // not appear as JsonTypeInfo properties on the emitted context.
+        // Phase 12.4: rank-2 multi-dim arrays of primitive elements now
+        // register via the runtime MultiDimArrayRank2Converter<T>. The
+        // emitted context wires JsonMetadataServices.CreateValueInfo<T[,]>
+        // with the converter, which itself delegates per-element write to
+        // the primitive's own JsonConverter (read from the inner
+        // JsonTypeInfo's .Converter property).
         var source = """
             using System;
             using Marionette;
 
             namespace Demo;
 
-            public sealed class UnsupportedEventArgs : EventArgs
+            public sealed class MatrixEventArgs : EventArgs
             {
-                public UnsupportedEventArgs() { }
-                public int[,] MultiDimArray { get; init; } = new int[0,0];
+                public MatrixEventArgs() { }
+                public int[,] Pixels { get; init; } = new int[0,0];
+                public double[,] Heatmap { get; init; } = new double[0,0];
             }
 
-            [McpRoot("unsupported")]
-            public class UnsupportedRoot
+            [McpRoot("matrixroot")]
+            public class MatrixRoot
             {
-                [McpEvent("Args type the generator cannot register.")]
-                public event EventHandler<UnsupportedEventArgs>? Fired;
+                [McpEvent("Args carrying rank-2 multi-dim arrays.")]
+                public event EventHandler<MatrixEventArgs>? Fired;
             }
             """;
 
@@ -330,12 +332,50 @@ public class SnapshotTests
             $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
 
         var generated = result.GeneratedText;
-        // The MarionetteEventArgsJsonContext should NOT register the
-        // unsupported type — the descriptor's SerializeArgs stays null and
-        // runtime serialisation handles it.
-        Assert.DoesNotContain("Demo_UnsupportedEventArgs", generated);
-        // The descriptor must still emit (events surface in the manifest);
-        // the assertion is just that it did not get a JSON-context entry.
+        // Both rank-2 arrays land as JsonTypeInfo properties.
+        Assert.Contains("MultiDimArray2_System_Int32", generated);
+        Assert.Contains("MultiDimArray2_System_Double", generated);
+        // The runtime converter is wired with the element's typed converter.
+        Assert.Contains("MultiDimArrayRank2Converter<global::System.Int32>", generated);
+        Assert.Contains("MultiDimArrayRank2Converter<global::System.Double>", generated);
+    }
+
+    [Fact]
+    public void GoldenUnsupportedShapes_FallsBackToReflection()
+    {
+        // Phase 12.4 update: rank-2 of primitives is now supported (see
+        // GoldenMultiDimArrayRank2). Rank 3+ remains unsupported.
+        var source = """
+            using System;
+            using Marionette;
+
+            namespace Demo;
+
+            public sealed class Rank3EventArgs : EventArgs
+            {
+                public Rank3EventArgs() { }
+                public int[,,] Volumetric { get; init; } = new int[0,0,0];
+            }
+
+            [McpRoot("unsupported")]
+            public class UnsupportedRoot
+            {
+                [McpEvent("Args type the generator cannot register (rank-3 array).")]
+                public event EventHandler<Rank3EventArgs>? Fired;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        // Rank-3+ array forced rollback of the args type.
+        Assert.DoesNotContain("Demo_Rank3EventArgs", generated);
+        // Event still surfaces in the manifest with a string-based fallback.
         Assert.Contains("\"Fired\"", generated);
     }
 

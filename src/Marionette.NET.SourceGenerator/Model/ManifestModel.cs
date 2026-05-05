@@ -257,6 +257,14 @@ internal enum JsonTypeKind
     /// <c>CreateIReadOnlyDictionaryInfo&lt;TCollection, TKey, TValue&gt;</c>.
     /// </summary>
     IReadOnlyDictionary,
+    /// <summary>
+    /// Phase 12.4: rank-2 multi-dimensional arrays (<c>T[,]</c>). STJ has no
+    /// built-in metadata factory for them; the emitter wires
+    /// <c>JsonMetadataServices.CreateValueInfo&lt;T[,]&gt;</c> against a
+    /// runtime-supplied <see cref="Marionette.Runtime.Json.MultiDimArrayRank2Converter{TElement}"/>.
+    /// Higher ranks (T[,,], T[,,,]) remain unsupported.
+    /// </summary>
+    MultiDimArrayRank2,
 }
 
 /// <summary>

@@ -161,28 +161,67 @@ internal sealed class JsonTypeCollector
             return primKey;
         }
 
-        // Phase 8.4: arrays — IArrayTypeSymbol carries the element type via
-        // .ElementType. Multi-dim arrays are unsupported (STJ requires a
-        // typed factory shape that doesn't exist for them).
-        if (unannotated is IArrayTypeSymbol arrSym && arrSym.Rank == 1)
+        // Phase 8.4 + 12.4: arrays. Rank 1 uses STJ's CreateArrayInfo
+        // factory. Rank 2 is registered as MultiDimArrayRank2 — the
+        // emitter wires a runtime MultiDimArrayRank2Converter<T> via
+        // CreateValueInfo. Higher ranks (T[,,], T[,,,]) remain
+        // unsupported (no STJ factory, and our converter only handles
+        // rank 2 — adopters can derive their own JsonConverter for
+        // higher ranks if needed).
+        if (unannotated is IArrayTypeSymbol arrSym)
         {
-            var elementName = TryRegister(arrSym.ElementType, visiting, depth + 1);
-            if (elementName is null) return null;
-            var elementCanonical = _types[elementName].TypeFullName;
-            var arrKey = "Array_" + elementName;
-            if (!_types.ContainsKey(arrKey))
+            if (arrSym.Rank == 1)
             {
-                _types[arrKey] = new JsonTypeModel(
-                    TypeFullName: elementCanonical + "[]",
-                    PropertyName: arrKey,
-                    Kind: JsonTypeKind.Array,
-                    PrimitiveConverter: null,
-                    UnderlyingTypeFullName: null,
-                    Properties: EquatableArray<JsonPropertyModel>.Empty,
-                    ElementContextName: elementName,
-                    ElementTypeFullName: elementCanonical);
+                var elementName = TryRegister(arrSym.ElementType, visiting, depth + 1);
+                if (elementName is null) return null;
+                var elementCanonical = _types[elementName].TypeFullName;
+                var arrKey = "Array_" + elementName;
+                if (!_types.ContainsKey(arrKey))
+                {
+                    _types[arrKey] = new JsonTypeModel(
+                        TypeFullName: elementCanonical + "[]",
+                        PropertyName: arrKey,
+                        Kind: JsonTypeKind.Array,
+                        PrimitiveConverter: null,
+                        UnderlyingTypeFullName: null,
+                        Properties: EquatableArray<JsonPropertyModel>.Empty,
+                        ElementContextName: elementName,
+                        ElementTypeFullName: elementCanonical);
+                }
+                return arrKey;
             }
-            return arrKey;
+            if (arrSym.Rank == 2)
+            {
+                // The runtime converter delegates per-element write to a
+                // primitive JsonConverter<TElement>, so the element type
+                // must be a primitive shape we ship a typed converter for.
+                var elementName = TryRegister(arrSym.ElementType, visiting, depth + 1);
+                if (elementName is null) return null;
+                var elementModel = _types[elementName];
+                if (elementModel.Kind != JsonTypeKind.Primitive)
+                {
+                    // Multi-dim arrays of complex objects are out of scope
+                    // for the current converter; fall back to runtime path.
+                    return null;
+                }
+                var elementCanonical = elementModel.TypeFullName;
+                var arrKey = "MultiDimArray2_" + elementName;
+                if (!_types.ContainsKey(arrKey))
+                {
+                    _types[arrKey] = new JsonTypeModel(
+                        TypeFullName: elementCanonical + "[,]",
+                        PropertyName: arrKey,
+                        Kind: JsonTypeKind.MultiDimArrayRank2,
+                        PrimitiveConverter: null,
+                        UnderlyingTypeFullName: null,
+                        Properties: EquatableArray<JsonPropertyModel>.Empty,
+                        ElementContextName: elementName,
+                        ElementTypeFullName: elementCanonical);
+                }
+                return arrKey;
+            }
+            // Rank 3+: unsupported.
+            return null;
         }
 
         // Phase 8.4 + 8.5: generic collection / dictionary types. Each
