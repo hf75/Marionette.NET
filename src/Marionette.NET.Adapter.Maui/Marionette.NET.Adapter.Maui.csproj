@@ -18,8 +18,8 @@
           adapter source compiles unchanged (UseMaui + the platform-neutral
           Microsoft.Maui.Controls API surface is what we depend on).
 
-      Pinned to the locally-cached MAUI 10.0.20 stable. Adopters who track a
-      newer stable can override the package version in their own csproj.
+      Pinned to the current MAUI 10.0.x stable. Adopters who need to track a
+      different patch line can override the package version in their own csproj.
     -->
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseMaui>true</UseMaui>
@@ -66,7 +66,25 @@
     4.1 has no use for legacy Xamarin.Forms compat shapes.
   -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.20" />
+    <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.60" />
   </ItemGroup>
+
+  <!--
+    MAUI 10.0.60 + WinAppSDK 2.x transitive: the leaf consumer's PRI-generation
+    step (WINAPPSDKGENERATEPROJECTPRIFILE) at publish time looks for every
+    project reference's .pri at $(OutDir)<RID>\<AssemblyName>.pri instead of
+    the non-RID location the adapter library naturally produces. Copy the
+    adapter's .pri into a per-RID subfolder so the consumer's publish chain
+    can find it. Without this, publishing a MAUI app that references this
+    adapter fails with PRI175 / PRI252.
+  -->
+  <Target Name="_CopyPriToRidSubfolder"
+          AfterTargets="Build"
+          Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0' AND Exists('$(OutDir)$(AssemblyName).pri')">
+    <MakeDir Directories="$(OutDir)win-x64" />
+    <Copy SourceFiles="$(OutDir)$(AssemblyName).pri"
+          DestinationFolder="$(OutDir)win-x64"
+          SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

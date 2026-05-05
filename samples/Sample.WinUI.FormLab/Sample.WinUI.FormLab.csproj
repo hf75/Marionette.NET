@@ -80,7 +80,7 @@
 
   <!-- Windows App SDK. Pinned to the same stable version as the adapter. -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260416003" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.0.1" />
   </ItemGroup>
 
   <!-- Emit Marionette.g.cs to disk so adopters can see what the generator produced. -->

@@ -54,7 +54,7 @@ Claude can now call `TodoListViewModel.AddTodo({"title": "buy milk"})` directly 
 - The four meta-tools, channel push, watchable resources, `[McpEvent]` (Phase 1.2 / 1.6).
 - Source generator emits AOT-clean dispatcher tables + per-method JSON schemas; 26/26 generator tests green.
 - **Adapter.Wpf** — Dispatcher marshalling, RenderTargetBitmap screenshots, name-resolved control lookup (Phase 1.3).
-- **Adapter.Avalonia** — Cross-platform (`net10.0`, NOT `-windows`), Avalonia 11.3.14, Dispatcher.UIThread + RenderTargetBitmap-with-PixelSize semantics (Phase 2.1).
+- **Adapter.Avalonia** — Cross-platform (`net10.0`, NOT `-windows`), Avalonia 12.0.2, Dispatcher.UIThread + RenderTargetBitmap-with-PixelSize semantics (Phase 2.1).
 - **Adapter.WinUI** — Windows App SDK / WinUI 3 (`net10.0-windows10.0.19041.0`), unpackaged-first, AutomationPeer-first input strategy (Phase 3.2).
 - **Adapter.Maui** - .NET MAUI 10.x Windows head with MAUI dispatcher / handler integration (Phase 4.1).
 - **Marionette.NET.Testing** - framework-neutral in-process harness, structured-error assertions, and xUnit/NUnit helper adapters (Phase 6).
@@ -69,6 +69,8 @@ Claude can now call `TodoListViewModel.AddTodo({"title": "buy milk"})` directly 
 What is **not** yet here: Uno adapter, public NuGet push, `git push`, GitHub release. Those are deliberately held until manual testing is complete. See [MASTERPLAN.md](MASTERPLAN.md) for the full roadmap.
 
 ## Quickstart
+
+Prerequisites: .NET 10 SDK matching `global.json`. Running the WinUI showcase additionally requires `Microsoft.WindowsAppRuntime 2.x` (see [docs/getting-started.md](docs/getting-started.md)). AOT publish requires the Visual Studio C++ desktop workload.
 
 ```
 git clone <this-repo> && cd nw.Automation

@@ -9,7 +9,7 @@
 //               adapter uses (MauiInputSimulator.cs). Covers the primary
 //               LLM use case "type something into a form".
 //
-// Architectural constraints (still true in Avalonia 11.3.14):
+// Architectural constraints (still true in Avalonia 12.0.2):
 //
 // Avalonia exposes `Avalonia.Input.InputManager.Instance` and
 // `IInputManager.ProcessInput(RawInputEventArgs)`, but the EVENT-ARGS-LEVEL
@@ -75,7 +75,7 @@ internal static class AvaloniaInputSimulator
             case "mouse_move":
                 log.LogInformation(
                     "simulate_input: kind '{Kind}' is not supported by the Avalonia adapter " +
-                    "(Avalonia 11.x has internal ctors for KeyEventArgs / PointerEventArgs and the " +
+                    "(Avalonia 12.x has internal ctors for KeyEventArgs / PointerEventArgs and the " +
                     "raw-input pipeline requires platform-host plumbing the adapter does not have). " +
                     "Use raise_event with the framework event name (when its args type is publicly " +
                     "constructible), OR a [McpCallable] method that performs the semantic action.",
@@ -108,7 +108,7 @@ internal static class AvaloniaInputSimulator
         var text = raw as string ?? raw?.ToString() ?? string.Empty;
 
         // Order matters: derived types must come before their base. In
-        // Avalonia 11.x, MaskedTextBox : TextBox — handle it first or the
+        // Avalonia 12.x, MaskedTextBox : TextBox — handle it first or the
         // TextBox case would shadow it (the C# compiler also flags this as
         // CS8120 if the order is wrong).
         switch (target)
@@ -139,7 +139,7 @@ internal static class AvaloniaInputSimulator
 
     /// <summary>
     /// Raise <see cref="Button.ClickEvent"/> on the target control. Works on
-    /// any Avalonia <see cref="Button"/> (Avalonia 11.x has no ButtonBase
+    /// any Avalonia <see cref="Button"/> (Avalonia 12.x has no ButtonBase
     /// class — Button is the public abstraction). For non-Button targets
     /// the method walks up the logical tree looking for a Button ancestor —
     /// typical when the LLM clicks an element nested inside a button
@@ -162,7 +162,7 @@ internal static class AvaloniaInputSimulator
             // Avalonia.Interactivity.RoutedEventArgs is publicly constructible.
             // RaiseEvent traverses the routed-event pipeline — handlers +
             // bubbling. Button.ClickEvent is the canonical click-routed-event
-            // in Avalonia 11.x.
+            // in Avalonia 12.x.
             var ea = new RoutedEventArgs(Button.ClickEvent, btn);
             btn.RaiseEvent(ea);
             return true;

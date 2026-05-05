@@ -3,17 +3,19 @@
   <PropertyGroup>
     <!--
       Phase 3.2 - WinUI 3 / Windows App SDK adapter for Marionette.NET.
-      Windows-only by definition (WinUI 3 is Windows-only). Pinned to the latest
-      stable Windows App SDK as of 2026-05 (1.8.260416003 — locally cached
-      package; release notes confirm 1.8.x is the GA train). Adopters who need
-      to pin to a different stable line override the package version in their
-      own csproj.
+      Windows-only by definition (WinUI 3 is Windows-only). Pinned to the
+      current Windows App SDK 2.x stable. Adopters must have
+      Microsoft.WindowsAppRuntime 2.x installed (winget install
+      Microsoft.WindowsAppRuntime.2.0, or the downloader from
+      learn.microsoft.com/windows/apps/windows-app-sdk/downloads) — an
+      unpackaged 2.x build hangs silently in the bootstrap if only 1.x
+      runtimes are present.
 
-      TFM choice: net10.0-windows10.0.19041.0 — matches the Microsoft.Windows.SDK.NET.Ref
-      that the WinAppSDK 1.8 brings in transitively (10.0.19041.57). Aligning the
-      project TFM to that windowed SDK avoids the "net6.0-windows10.0.17763.0
-      isn't a known TFM for net10.0" mismatch that bites adopters who try the
-      naive net10.0-windows TFM.
+      TFM choice: net10.0-windows10.0.19041.0 — matches the
+      Microsoft.Windows.SDK.NET.Ref that the WinAppSDK brings in transitively.
+      Aligning the project TFM to that windowed SDK avoids the
+      "net6.0-windows10.0.17763.0 isn't a known TFM for net10.0" mismatch
+      that bites adopters who try the naive net10.0-windows TFM.
 
       Unpackaged-first: WindowsPackageType=None means the .exe runs without an
       MSIX manifest. Adopters who want packaged builds can override; the adapter
@@ -67,7 +69,7 @@
       * Windows.Graphics.Imaging.BitmapEncoder (PNG encoding)
   -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260416003" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.0.1" />
   </ItemGroup>
 
 </Project>

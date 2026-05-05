@@ -2,6 +2,21 @@
 
 This preview can be consumed either from project references inside this repository or from the local NuGet packages produced by Phase 7.
 
+## Prerequisites
+
+- **.NET 10 SDK** matching `global.json` (`10.0.202` or newer with `rollForward=latestFeature`).
+- **Visual Studio C++ desktop workload** when AOT-publishing samples or adopter apps. The Native AOT toolchain calls `link.exe` and resolves `vswhere.exe` from `%ProgramFiles(x86)%\Microsoft Visual Studio\Installer`; ensure that path is on `PATH` for non-PowerShell shells.
+- **Microsoft.WindowsAppRuntime 2.x** when running the WinUI showcase (`Sample.WinUI.FormLab`) or any adopter app that pulls `Marionette.NET.Adapter.WinUI`. Unpackaged WinAppSDK 2.x EXEs hang in the bootstrap if the matching framework package is missing. Install via:
+
+  ```powershell
+  $url = "https://aka.ms/windowsappsdk/2.0/2.0.1/windowsappruntimeinstall-x64.exe"
+  $exe = Join-Path $env:TEMP "WindowsAppRuntimeInstall-x64.exe"
+  Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+  & $exe --quiet
+  ```
+
+  WPF, Avalonia, and MAUI samples have no runtime install requirement.
+
 ## Local NuGet Source
 
 Build local packages:

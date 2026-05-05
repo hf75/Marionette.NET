@@ -46,16 +46,17 @@
 
   <ItemGroup>
     <!--
-      4.14.0 is the Roslyn version that ships with the .NET 10 SDK. We pin to
-      it because it is the highest version a host running on 10.0.202 will
-      have available without MSBuild upgrade. Using a newer one risks the
-      analyzer failing to load on older hosts.
+      Roslyn 5.3.x. The .NET 10.0.202 SDK and current VS / Rider builds carry
+      a Roslyn host new enough to load 5.x analyzers; older hosts (pre-.NET-10
+      SDK) cannot load this generator. The build matrix is verified on
+      10.0.202; if you target an older SDK, pin the generator back to 4.14.0
+      (the last 4.x line that loads on .NET 9 hosts).
 
       PrivateAssets=all keeps Microsoft.CodeAnalysis.CSharp from flowing
       transitively to consumers — it's a generator-side dependency only.
     -->
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.3.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="5.3.0" PrivateAssets="all" />
   </ItemGroup>
 
   <!--

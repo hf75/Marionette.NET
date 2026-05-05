@@ -12,7 +12,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Marionette.Adapter.Avalonia</RootNamespace>
     <AssemblyName>Marionette.NET.Adapter.Avalonia</AssemblyName>
-    <Description>Avalonia 11.x adapter for Marionette.NET. Only referenced when EnableMcpAutomation=true on an Avalonia project.</Description>
+    <Description>Avalonia 12.x adapter for Marionette.NET. Only referenced when EnableMcpAutomation=true on an Avalonia project.</Description>
 
     <!--
       Trim / AOT analyzer flags. Same rationale as the WPF adapter: light up only
@@ -40,11 +40,13 @@
     visual primitives). Adopters' own csproj brings Avalonia.Desktop /
     Avalonia.Themes.Fluent / etc. - the Phase 2 sample, Sample.Avalonia.Dashboard,
     pulls those itself.
-    Pin to a known stable 11.3.x release (latest as of 2026-05) - 12.x exists but
-    we explicitly avoid it per the Phase 2.1 trapdoor list.
+    Pinned to the current Avalonia 12.x stable. The Phase 9.1 type_text path
+    (direct Text-property setter) and the iterative LogicalChildren+VisualChildren
+    walker stay valid under 12.x; the only adopter-visible breaking change in
+    the dashboard sample was TextBox.Watermark → PlaceholderText.
   -->
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="11.3.14" />
+    <PackageReference Include="Avalonia" Version="12.0.2" />
   </ItemGroup>
 
 </Project>

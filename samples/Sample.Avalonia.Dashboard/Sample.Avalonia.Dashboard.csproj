@@ -30,7 +30,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
 
-    <!-- Compile *.axaml as Avalonia XAML resources (Avalonia 11.x convention). -->
+    <!-- Compile *.axaml as Avalonia XAML resources. -->
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
@@ -69,13 +69,13 @@
     <ProjectReference Include="..\..\src\Marionette.NET.Adapter.Avalonia\Marionette.NET.Adapter.Avalonia.csproj" />
   </ItemGroup>
 
-  <!-- Avalonia packages. Pin to the same 11.x stable as the adapter to avoid
+  <!-- Avalonia packages. Pin to the same 12.x stable as the adapter to avoid
        diamond-version pulls. Avalonia.Desktop pulls native dependencies for the
        three desktop platforms; Avalonia.Themes.Fluent ships the modern theme. -->
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="11.3.14" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.3.14" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.14" />
+    <PackageReference Include="Avalonia" Version="12.0.2" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.0.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.2" />
   </ItemGroup>
 
   <!-- Emit Marionette.g.cs to disk so adopters can see what the generator produced. -->

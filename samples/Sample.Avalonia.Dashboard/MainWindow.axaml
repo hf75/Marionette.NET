@@ -83,15 +83,15 @@
         <Grid Grid.Row="2" ColumnDefinitions="*,Auto,*,Auto,Auto" Margin="0,0,0,12">
             <TextBox x:Name="NameTextBox"
                      Grid.Column="0"
-                     Watermark="metric name"
+                     PlaceholderText="metric name"
                      Margin="0,0,8,0" />
             <TextBox x:Name="ValueTextBox"
                      Grid.Column="2"
-                     Watermark="value"
+                     PlaceholderText="value"
                      Margin="0,0,8,0" />
             <TextBox x:Name="UnitTextBox"
                      Grid.Column="3"
-                     Watermark="unit"
+                     PlaceholderText="unit"
                      Width="80"
                      Margin="0,0,8,0" />
             <!-- Phase 3.1: AutomationId so simulate_input / raise_event can

@@ -385,8 +385,8 @@ Drives a real input event through the framework's input pipeline against the nam
 |---|---|---|
 | `click` | yes (full input pipeline) | yes (`Button.ClickEvent` via routed-event dispatch) |
 | `double_click` | yes (MouseDoubleClick + double down/up) | yes (raised `Button.ClickEvent` twice) |
-| `right_click` | yes (right-button down/up) | yes (`Button.ClickEvent`; Avalonia 11.x doesn't expose a publicly-constructible right-click args type) |
-| `key_press` / `key_down` / `key_up` | yes (full keyboard pipeline) | **not yet** — Avalonia 11.x KeyEventArgs ctor is internal. Use a `[McpCallable]` method or `raise_event`. |
+| `right_click` | yes (right-button down/up) | yes (`Button.ClickEvent`; Avalonia 12.x doesn't expose a publicly-constructible right-click args type) |
+| `key_press` / `key_down` / `key_up` | yes (full keyboard pipeline) | **not yet** — Avalonia 12.x KeyEventArgs ctor is internal. Use a `[McpCallable]` method or `raise_event`. |
 | `type_text` | yes (per-char TextInput) | **not yet** — same Avalonia limitation. |
 | `mouse_move` | yes (RoutedMouseMoveEvent) | **not yet** — Avalonia raw-input pipeline gated. |
 
@@ -419,7 +419,7 @@ Raises a named routed/bubbling event on the named control. Bubbling and tunnelin
 
 **Event resolution:**
 
-Both adapters walk the control's type chain looking for a static `<EventName>Event` field of type `RoutedEvent` (the WPF / Avalonia idiom). For `Click` on a `Button`, that resolves to `ButtonBase.ClickEvent` (WPF) or `Button.ClickEvent` (Avalonia 11.x has no `ButtonBase`).
+Both adapters walk the control's type chain looking for a static `<EventName>Event` field of type `RoutedEvent` (the WPF / Avalonia idiom). For `Click` on a `Button`, that resolves to `ButtonBase.ClickEvent` (WPF) or `Button.ClickEvent` (Avalonia 12.x has no `ButtonBase`).
 
 ### When to use each path
 
