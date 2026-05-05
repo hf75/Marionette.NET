@@ -1,6 +1,7 @@
 # Marionette.NET — Masterplan
 
 > **Status:** Pre-alpha · Planning · Decisions locked 2026-05-03
+>            · Implementation update 2026-05-05 (see "Update 2026-05-05" section at the end)
 > **Working dir:** `C:\Home\Code\nw.Automation`
 > **License:** MIT
 > **Target Framework:** `net10.0` (Runtime/Adapters), `netstandard2.0` (Abstractions)
@@ -317,3 +318,56 @@ Anregungen, nicht Kopier-Vorlagen — die Marionette-Codebasis ist neu und unabh
 | stdio + GUI Mode-Switching | `LIVE_MCP_VISION.md` § Frozen-Mode |
 
 **Wichtig:** Marionette importiert *keinen* N.E.O.-Code direkt. Alle Konzepte werden frisch implementiert, sauber namespaced, ohne `Neo.*`-Abhängigkeiten.
+
+---
+
+## Update 2026-05-05 — Implementierungsverlauf
+
+Dieser Abschnitt dokumentiert, wie sich der originale Phasenplan in der tatsächlichen Implementierung verlängert / verzweigt hat. Der Original-Phasenplan oben (Phase 0–7) bleibt der **Decisions-Snapshot** vom 2026-05-03 und wird *nicht* nachträglich umgeschrieben.
+
+### Phasen-Reihenfolge in der Praxis
+
+| Phase | Status | Commit / Doku |
+|---|---|---|
+| 0 — Foundation Spike | ✓ | [PHASE0_FINDINGS.md](PHASE0_FINDINGS.md) |
+| 1 — Core + WPF + Skill-Pack | ✓ | [PHASE1_FINDINGS.md](PHASE1_FINDINGS.md) |
+| 2 — Avalonia + Watchable + Dynamic Tools | ✓ | [PHASE2_FINDINGS.md](PHASE2_FINDINGS.md) |
+| 3 — WinUI + Real Input + Multi-Window | ✓ | [PHASE3_FINDINGS.md](PHASE3_FINDINGS.md) |
+| **4 — Uno** | **übersprungen, weiterhin auf der Roadmap** | — |
+| 4.1 — MAUI (vorgezogen aus Original-Phase 5) | ✓ | inline in PHASE-3/4-Findings |
+| 4.2 — AOT/Trim-Härtung | ✓ | inline |
+| 5 — MAUI | siehe 4.1 (vorgezogen) | — |
+| 6 — Testing-Toolkit + DX-Polish | ✓ | [PHASE6_FINDINGS.md](PHASE6_FINDINGS.md) |
+| 7 — Distribution + Dogfooding (lokal) | ✓ | [PHASE7_FINDINGS.md](PHASE7_FINDINGS.md) |
+| 8 — AOT JSON-Source-Gen (Events / Observables / Callables) | ✓ | [PHASE8_FINDINGS.md](PHASE8_FINDINGS.md) |
+| 8.5 — Slice-5: Collection-Interfaces, non-string Dictionary keys | ✓ | inline in PHASE8_FINDINGS.md |
+| 9 — Cross-Adapter-Polish (Avalonia type_text, MAUI multi-window, WinUI Win11 reality) | ✓ | [PHASE9_FINDINGS.md](PHASE9_FINDINGS.md) |
+| 10 — AOT-clean per-method dynamic tools (`MarionetteAIFunction`) | ✓ | [PHASE10_FINDINGS.md](PHASE10_FINDINGS.md) |
+| 11 — Interface-Fallback + `RunAsyncSourceGenSafe` annotation-free entry point | ✓ | [PHASE11_FINDINGS.md](PHASE11_FINDINGS.md) |
+
+### Was sich gegenüber dem Original-Plan geändert hat
+
+- **Uno wurde aus der sequenziellen Reihenfolge herausgenommen.** MAUI (Original-Phase-5) wurde stattdessen vorgezogen, weil die WinAppSDK-Toolchain bereits durch WinUI vorhanden war und die MAUI-Windows-Head-Implementation gradlinig daraus folgte. Uno bleibt als einziger nicht ausgelieferter Adapter auf der Roadmap; alle anderen Phase-Inhalte wurden geliefert.
+- **Phase 8 wurde zur Slice-Phase.** Das Original sah AOT-Härtung als 4.2-Aufgabe, aber JSON-Source-Generation für User-Typen war so umfangreich, dass es eine eigene Phase mit fünf Slices wurde (8.1–8.5). 8.5 schloss die Collection-Interface-Lücke vollständig.
+- **Phase 10 entkoppelte sich vom SDK-Wartelauf.** Die ursprüngliche Annahme war, dass AOT-fähige Per-Method-Tools auf einen `ModelContextProtocol`-Source-Generator warten müssten. Phase 10 zeigte, dass der SDK-eigene `McpServerTool.Create(AIFunction, …)`-Overload bereits reflection-frei war — wir sind nur am `Delegate`-Overload hängengeblieben.
+- **Phase 11 öffnete den Source-Generator für jede User-/Concurrent-Collection.** Statt jedes neue Container-Type explizit auflisten zu müssen, walkt der Generator jetzt `AllInterfaces` und matched gegen die Standard-Contracts (`IList`, `IDictionary`, `ISet`, `IEnumerable`, …). `ConcurrentDictionary`, `ConcurrentQueue`, beliebige User-Collections sind damit automatisch abgedeckt.
+- **`RunAsyncSourceGenSafe` ist Phase 11.** Ein zweiter Host-Entry-Point ohne `[RequiresUnreferencedCode]`/`[RequiresDynamicCode]` für Adopter, die `raise_event` nicht nutzen und in den source-gen-fähigen Payload-Shapes bleiben. Original-Phase-Plan hatte das nicht vorgesehen — der Bedarf entstand erst nachdem Phase 8/10 die meisten Reflection-Pfade geschlossen hatten und nur noch `raise_event` als architektonisch-unvermeidbare Reflection-Surface übrig blieb.
+
+### Distribution + Push
+
+Original-Phase-7 sah `git push origin main` und GitHub-Release am Ende von Phase 7 vor. Stand 2026-05-05: **lokales Release ready** (11 nupkgs in `artifacts/nuget`, 3 dogfood-verifizierte Showcases unter `artifacts/showcases`, demo GIFs in `docs/media`), aber Push und GitHub-Release sind weiterhin zurückgestellt. Der Code-Stand entspricht über Phase 7 hinaus inzwischen Phase 11.
+
+### Tenets-Status
+
+Alle zehn Tenets aus dem Original-Plan halten unverändert. Die einzige Erweiterung ist Tenet 4 ("Source-Generators over runtime Reflection"), das durch Phase 8 / 8.5 / 11 substanziell verstärkt wurde — die runtime-reflection-freie Codepath-Abdeckung ist deutlich breiter als die Phase-0-Skizze versprach.
+
+### Was bleibt offen
+
+1. **Uno-Adapter** (siehe oben, einziger Adapter auf der Roadmap).
+2. **`git push` + GitHub-Release** (bewusst zurückgehalten).
+3. **Architektonische Reflection-Restposten** (per Doku, nicht "to do"):
+   - `raise_event` event-name resolution — adopter-fallbar via `RunAsyncSourceGenSafe`.
+   - WPF + AOT GUI crash (Microsoft-known, Frozen-Mode `--mcp --headless` läuft).
+   - Avalonia simulate_input key/text/mouse-move (interne Ctors in 12.x).
+   - WinUI InputInjector elevation/manifest auf locked-down Systemen.
+   - Multi-dim Arrays + Tuple-keyed Dictionaries (STJ-Limitierungen, keine Source-Gen-Lösung).

@@ -2,7 +2,7 @@
 
 The canonical reference for the Marionette.NET v1 surface. Every skill in `skill-pack/claude-code/*/SKILL.md` cites this file. Adopters using a non-Claude agent (Cursor, Cline, Aider) can read this directly.
 
-**Status:** Phase 4.1 (WPF + Avalonia + WinUI + MAUI adapters; input-simulation + routed-event raising). The attribute set is locked; remaining phases (Uno) add adapters without changing the core contract.
+**Status:** Post-Phase-11 (WPF + Avalonia + WinUI + MAUI adapters; input-simulation + routed-event raising; AOT JSON source-gen for events / observables / callables incl. interface fallback for custom + concurrent collections; AOT-clean per-method dynamic tools via the `MarionetteAIFunction` subclass; `MarionetteHost.RunAsyncSourceGenSafe` annotation-free entry point). The attribute set is locked; the only remaining roadmap adapter is Uno.
 
 ---
 
@@ -379,18 +379,18 @@ Drives a real input event through the framework's input pipeline against the nam
 {"root":"TodoListViewModel","control":"NewTodoTextBox","kind":"key_press","args":{"key":"Enter"}}
 ```
 
-**Adapter coverage (Phase 3.1):**
+**Adapter coverage (post-Phase-9):**
 
-| Kind | WPF adapter | Avalonia adapter |
-|---|---|---|
-| `click` | yes (full input pipeline) | yes (`Button.ClickEvent` via routed-event dispatch) |
-| `double_click` | yes (MouseDoubleClick + double down/up) | yes (raised `Button.ClickEvent` twice) |
-| `right_click` | yes (right-button down/up) | yes (`Button.ClickEvent`; Avalonia 12.x doesn't expose a publicly-constructible right-click args type) |
-| `key_press` / `key_down` / `key_up` | yes (full keyboard pipeline) | **not yet** — Avalonia 12.x KeyEventArgs ctor is internal. Use a `[McpCallable]` method or `raise_event`. |
-| `type_text` | yes (per-char TextInput) | **not yet** — same Avalonia limitation. |
-| `mouse_move` | yes (RoutedMouseMoveEvent) | **not yet** — Avalonia raw-input pipeline gated. |
+| Kind | WPF | Avalonia | WinUI | MAUI |
+|---|---|---|---|---|
+| `click` | yes (full input pipeline) | yes (`Button.ClickEvent` via routed-event dispatch) | yes (`AutomationPeer.Invoke()` first, `InputInjector` fallback) | yes (`IButtonController.SendClicked()` semantic path) |
+| `double_click` | yes | yes (raised `Button.ClickEvent` twice) | yes (two AutomationPeer invokes) | partial — emulated via two clicks |
+| `right_click` | yes (right-button down/up) | yes (`Button.ClickEvent`; Avalonia 12.x doesn't expose a publicly-constructible right-click args type) | yes via `InputInjector` (when available) | **not yet** — MAUI has no semantic right-click |
+| `key_press` / `key_down` / `key_up` | yes (full keyboard pipeline) | **not yet** — Avalonia 12.x `KeyEventArgs` ctor is internal. Use `[McpCallable]` or `raise_event`. | yes via `InputInjector` (Phase 9.3 confirms unpackaged-unelevated on Win 11 22H2+; older builds need elevation or MSIX with `inputInjectionBrokered`) | **not yet** — MAUI 10.x has no publicly-constructible keyboard event args. |
+| `type_text` | yes (per-char `TextInput`) | yes — Phase-9.1 sets `Text` directly on `TextBox` / `MaskedTextBox` / `AutoCompleteBox` / `TextBlock`. Other targets unsupported. | yes — `AutomationPeer` shortcut on `TextBox` first, `InputInjector` per-char fallback | yes — sets `Entry.Text` / `Editor.Text` / `SearchBar.Text` directly |
+| `mouse_move` | yes (`RoutedMouseMoveEvent`) | **not yet** — Avalonia raw-input pipeline gated. | yes via `InputInjector` (when available) | **not yet** — same as MAUI keyboard. |
 
-When an unsupported kind is invoked the adapter returns `success: false` with a descriptive error code and a logged hint pointing at `[McpCallable]` or `raise_event` as alternatives.
+When an unsupported kind is invoked the adapter returns `success: false` with a descriptive error code and a logged hint pointing at `[McpCallable]` or `raise_event` as alternatives. WinUI's startup probe also writes one info line to stderr indicating whether `InputInjector.TryCreate()` returned a working handle on the current machine — see [docs/winui-input-injection.md](../../docs/winui-input-injection.md) for the availability matrix.
 
 ### `raise_event(root, control, event, args?)`
 
@@ -428,7 +428,7 @@ Both adapters walk the control's type chain looking for a static `<EventName>Eve
 | You want to invoke a method semantically (the cleanest path). | `invoke_method` |
 | You want to check that a button's `Click` handler is wired correctly. | `raise_event(event:"Click")` (light-weight) or `simulate_input(kind:"click")` (full input pipeline) |
 | You're writing a test that mimics a real user click + focus path. | `simulate_input` |
-| You need to type into a TextBox programmatically. | WPF: `simulate_input(kind:"type_text")`. Avalonia: a `[McpCallable]` that mutates the underlying ViewModel field. |
+| You need to type into a TextBox programmatically. | WPF / WinUI / MAUI / Avalonia (post-Phase-9.1): `simulate_input(kind:"type_text")` works on `TextBox` / `Entry` / `Editor` / `SearchBar`. For non-TextBox targets on Avalonia or MAUI, use `[McpCallable]` to mutate the underlying ViewModel field. |
 | You want to test a custom control's bubbled event handler chain. | `raise_event` (the routed-event system honours bubbling) |
 
 ### Don'ts
@@ -693,6 +693,39 @@ Now updates are push-driven, sub-millisecond.
 The MCP host owns stdout for JSON-RPC frames. `Console.WriteLine` from inside a callable corrupts the wire protocol. Use `ILogger` injected via the runtime's host (logs go to stderr) or `System.Diagnostics.Trace.WriteLine` (goes to OutputDebugString, not stdout). The runtime's `StdoutGuardWriter` flags violations on stderr but the damage is already done by the time it sees the bytes.
 
 ---
+
+## Choosing a host entry point (post-Phase-11)
+
+`Marionette.Runtime.MarionetteHost` exposes two entry points with the same parameter shape (`string[] args`, `IReadOnlyList<RootDescriptor> roots`, `IUiAutomationAdapter? adapter`, `CancellationToken ct`). The choice is purely about AOT-warning surface — the runtime semantics are identical except for whether the `raise_event` MCP tool is registered:
+
+| Entry point | Tool surface | Annotations on the entry-point method | When to use |
+|---|---|---|---|
+| `RunAsync` | full six tools incl. `raise_event` | `[RequiresUnreferencedCode]` + `[RequiresDynamicCode]` | adopters who use `raise_event` from MCP clients OR who have payload types not covered by the source generator |
+| `RunAsyncSourceGenSafe` | five tools, **no `raise_event`** | annotation-free | adopters who do NOT call `raise_event` AND keep every payload type within the source-gen-eligible shape set |
+
+The source-gen-eligible payload shapes (Phase 8 / 8.5 / 11):
+
+- Primitives, `Nullable<T>`, enums, plain user records / classes with public-getter properties (recursive).
+- `T[]`, `List<T>`, `Dictionary<K, V>` across STJ-supported key types (string + integral / floating-point primitives + bool + char + DateTime / DateTimeOffset / TimeSpan + Guid + Uri + Version + enums).
+- Every standard collection interface and concrete type: `IEnumerable<T>`, `IReadOnlyList<T>`, `IReadOnlyCollection<T>`, `IList<T>`, `ICollection<T>`, `ISet<T>`, `IReadOnlySet<T>`, `HashSet<T>`, `Stack<T>`, `Queue<T>`, `IDictionary<K, V>`, `IReadOnlyDictionary<K, V>`.
+- Phase-11 interface fallback: any user / concurrent type that implements one of those interfaces and has a public parameterless constructor — `ConcurrentDictionary<K,V>`, `ConcurrentQueue<T>`, `ConcurrentStack<T>`, `ConcurrentBag<T>`, custom `class MyList<T> : IList<T>` etc.
+
+Out-of-scope shapes (force the legacy reflection path; AOT throws `InvalidOperationException` at the offending call):
+
+- Multi-dimensional arrays (`T[,]`). Use jagged arrays `T[][]` instead.
+- Tuple-keyed dictionaries (`Dictionary<(int,int), V>`). Serialise composite keys as a single string instead.
+- Custom collection types lacking a public parameterless constructor.
+
+When in doubt, start with `RunAsyncSourceGenSafe` and switch to `RunAsync` only if the build / runtime surfaces a need.
+
+```csharp
+// Recommended default for AOT-published apps:
+public static async Task<int> Main(string[] args)
+    => await Marionette.Runtime.MarionetteHost.RunAsyncSourceGenSafe(
+        args,
+        Marionette.Generated.GeneratedManifest.Roots,
+        adapter: BuildAdapter());
+```
 
 ## Wiring snippets
 

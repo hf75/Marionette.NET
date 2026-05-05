@@ -12,12 +12,17 @@ Marionette.NET is split into leaf packages so production builds can strip the MC
 2. `Marionette.NET.SourceGenerator`
    - Roslyn incremental generator that scans the attributes and emits `Marionette.Generated.GeneratedManifest`.
    - Emits strongly typed descriptors, parameter JSON schemas, event schemas, and MAR diagnostics.
+   - **AOT JSON source-gen (Phase 8 / 8.5 / 11):** also emits two `JsonSerializerContext`-derived classes (`MarionetteEventArgsJsonContext`, `MarionetteJsonContext`) populated via `JsonMetadataServices` factories at compile time. Every `[McpEvent]` args type, `[McpObservable]` value type, and `[McpCallable]` return / parameter type whose graph is source-gen-eligible gets a typed `JsonTypeInfo<T>` so runtime serialisation never reflects on user types. Eligible shapes: primitives, `Nullable<T>`, enums, plain user records / classes with public-getter properties, `T[]`, `List<T>`, and (Phase 8.5 + 11) every standard `IEnumerable` / `IList` / `IReadOnlyList` / `ICollection` / `IReadOnlyCollection` / `ISet` / `IReadOnlySet` / `HashSet` / `Stack` / `Queue` plus `Dictionary` / `IDictionary` / `IReadOnlyDictionary` across STJ-supported key types. Phase 11 also adds an interface-fallback walker that picks up any user / concurrent type implementing one of the supported interfaces (e.g. `ConcurrentDictionary<K,V>` registers via `IDictionary<K,V>`).
    - No runtime reflection is required to discover roots or invoke callables.
 
 3. `Marionette.NET.Runtime`
    - Framework-neutral MCP host and tool implementation.
-   - Owns `inspect_app_api`, `invoke_method`, `read_observable`, `capture_screenshot`, `simulate_input`, and `raise_event`.
+   - Owns `inspect_app_api`, `invoke_method`, `read_observable`, `capture_screenshot`, `simulate_input`, and `raise_event`. The first five live on `MarionetteTools`; `raise_event` lives on its own `MarionetteRaiseEventTools` class so adopters who do not use it can opt out of registration entirely (Phase 11).
    - Owns loop protection, dynamic per-method tools, event resources, watchable observable resources, and stdio isolation.
+   - **AOT-clean dynamic per-method tools (Phase 10):** the `DynamicToolRegistry` registers tools via the SDK's reflection-free `McpServerTool.Create(AIFunction, …)` overload using an internal `MarionetteAIFunction : Microsoft.Extensions.AI.AIFunction` subclass. The subclass supplies `Name` / `Description` / `JsonSchema` / `UnderlyingMethod => null` / `InvokeCoreAsync` directly — no `MethodInfo` walking, no dynamic codegen, no reflection on user types at registration or invocation time.
+   - **Two host entry points (Phase 11):**
+     - `MarionetteHost.RunAsync` — full surface (six tools incl. `raise_event`), carries `[RequiresUnreferencedCode]` / `[RequiresDynamicCode]` because the `raise_event` path resolves event names by reflection on framework control types.
+     - `MarionetteHost.RunAsyncSourceGenSafe` — five-tool surface (no `raise_event`), annotation-free. Adopters who confirm they neither call `raise_event` nor let unsupported JSON shapes reach the runtime path get a clean compile under AOT.
 
 4. Adapter packages
    - `Marionette.NET.Adapter.Wpf`
@@ -65,6 +70,24 @@ The registry tracks descriptors by root name. Adapters can also supply live root
 - Single-window apps usually bind the generated descriptor to the main window or its singleton ViewModel.
 - Multi-window apps register each instance through the adapter tracker.
 - Dynamic per-method tools gain `:<windowId>` suffixes only when more than one window is available for the same root.
+
+## AOT contract
+
+The runtime ships two reflection surfaces:
+
+1. **`raise_event`** resolves event names against framework control type chains by reflection. Architectural — no source-gen workaround. Hosted on `MarionetteRaiseEventTools` so it can be excluded by entry-point choice.
+2. **Legacy JSON fallback** for type graphs the source generator does NOT cover (multi-dimensional arrays, abstract bases, tuple-keyed dictionaries, types lacking a public parameterless ctor). Source-gen-eligible payloads bypass this path entirely.
+
+Adopters' AOT contract:
+
+| Path | Result under AOT |
+|---|---|
+| `RunAsync` + source-gen-eligible payloads + `raise_event` unused | works, but compile shows `[RequiresUnreferencedCode]` warning at the host call site (suppress or accept) |
+| `RunAsyncSourceGenSafe` + source-gen-eligible payloads + `raise_event` unused | **annotation-free compile**, fully reflection-free runtime |
+| Either entry point + non-source-gen-eligible payload type | runtime `InvalidOperationException` from `JsonSerializer` (reflection-disabled) at the actual offending call |
+| `RunAsync` + `raise_event` invoked by an MCP client | works; trim may strip metadata for custom controls |
+
+Phase 10's `MarionetteAIFunction` rewrite verified end-to-end via the StdioTest harness: 4/4 AOT-published samples (TodoApp / Avalonia / WinUI FormLab / MAUI PocketPlanner) pass `tools/list` enumeration AND explicit dynamic-tool invocation under AOT.
 
 ## Error Shape
 

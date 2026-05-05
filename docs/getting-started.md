@@ -91,6 +91,28 @@ The samples are the canonical references for now:
 - `samples/Sample.WinUI.FormLab`
 - `samples/Sample.Maui.PocketPlanner`
 
+## Choosing an Entry Point
+
+`Marionette.Runtime.MarionetteHost` exposes two entry points with the same parameter list. Pick the one that matches your AOT-strictness requirement:
+
+```csharp
+// Default — full surface (six tools incl. raise_event).
+// Carries [RequiresUnreferencedCode] / [RequiresDynamicCode].
+[RequiresUnreferencedCode("…")]
+public static async Task<int> Main(string[] args)
+    => await MarionetteHost.RunAsync(args, GeneratedManifest.Roots, adapter);
+
+// AOT-strict — five tools (no raise_event), annotation-free.
+// Use when (a) you do not invoke raise_event from MCP clients, AND
+// (b) every [McpEvent] args / [McpObservable] value / [McpCallable]
+// return + parameter type stays within the source-gen-eligible shape
+// set documented in docs/stripping.md.
+public static async Task<int> Main(string[] args)
+    => await MarionetteHost.RunAsyncSourceGenSafe(args, GeneratedManifest.Roots, adapter);
+```
+
+If your app uses `simulate_input` and `[McpCallable]` to drive the UI (the masterplan-recommended pattern), the strict entry point is almost always the right choice. The full path is only needed when an MCP client actually invokes `raise_event` to fire a routed event by name.
+
 ## Local Verification
 
 Run the full local release check:
