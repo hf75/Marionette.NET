@@ -249,9 +249,52 @@ internal static class JsonContextEmitter
             case JsonTypeKind.MultiDimArrayRank2:
                 EmitMultiDimArrayRank2Creation(sb, type);
                 break;
+            case JsonTypeKind.ValueTupleKey2:
+            case JsonTypeKind.ValueTupleKey3:
+                EmitValueTupleKeyCreation(sb, type);
+                break;
         }
 
         sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Phase 12.5: render a <c>JsonTypeInfo&lt;(T1,T2)&gt;</c> (or rank 3)
+    /// backed by a runtime
+    /// <see cref="Marionette.Runtime.Json.ValueTupleKeyConverter{T1,T2}"/>.
+    /// The component converters are read off each component
+    /// <c>JsonTypeInfo</c>'s <c>.Converter</c> member at the call site
+    /// (works for primitives and enums; enforced by the collector's
+    /// <c>IsSupportedDictionaryKey</c> check).
+    /// </summary>
+    private static void EmitValueTupleKeyCreation(StringBuilder sb, JsonTypeModel type)
+    {
+        var components = type.TupleComponentTypeFullNames;
+        var componentCtxs = type.TupleComponentContextNames;
+        var rank = components.Length;
+        var tupleFqn = StripGlobalPrefix(type.TypeFullName);
+
+        sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateValueInfo<global::");
+        sb.Append(tupleFqn);
+        sb.AppendLine(">(");
+        sb.AppendLine("            Options,");
+        sb.Append("            new global::Marionette.Runtime.Json.ValueTupleKeyConverter<");
+        for (int i = 0; i < rank; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            sb.Append("global::");
+            sb.Append(StripGlobalPrefix(components[i]));
+        }
+        sb.AppendLine(">(");
+        for (int i = 0; i < rank; i++)
+        {
+            sb.Append("                (global::System.Text.Json.Serialization.JsonConverter<global::");
+            sb.Append(StripGlobalPrefix(components[i]));
+            sb.Append(">)");
+            sb.Append(componentCtxs[i]);
+            sb.Append(".Converter");
+            sb.AppendLine(i + 1 < rank ? "," : "));");
+        }
     }
 
     /// <summary>

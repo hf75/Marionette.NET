@@ -692,6 +692,57 @@ public class SnapshotTests
         Assert.DoesNotContain("Demo_TreeNode", generated);
     }
 
+    [Fact]
+    public void GoldenValueTupleKey_RegistersWithRuntimeConverter()
+    {
+        // Phase 12.5: rank-2 and rank-3 ValueTuple keys on Dictionary
+        // properties register with a runtime ValueTupleKeyConverter<T1,T2>
+        // (or T1,T2,T3). The converter delegates per-component read/write
+        // to the typed primitive converter from each element's own
+        // JsonTypeInfo.Converter — so we just need to assert the
+        // conversion wiring lands in the generated code.
+        var source = """
+            using System;
+            using System.Collections.Generic;
+            using Marionette;
+
+            namespace Demo;
+
+            public sealed class TupleKeyEventArgs : EventArgs
+            {
+                public TupleKeyEventArgs() { }
+                public Dictionary<(int X, int Y), string> Grid { get; init; } = new();
+                public Dictionary<(string Region, int Year, int Quarter), double> Sales { get; init; } = new();
+            }
+
+            [McpRoot("tupleroot")]
+            public class TupleRoot
+            {
+                [McpEvent("Tuple-keyed dictionary payloads.")]
+                public event EventHandler<TupleKeyEventArgs>? Fired;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        // Both tuple key types land as JsonTypeInfo properties.
+        Assert.Contains("ValueTuple2_System_Int32_System_Int32", generated);
+        Assert.Contains("ValueTuple3_System_String_System_Int32_System_Int32", generated);
+        // Runtime converters are wired with the element JsonTypeInfo's
+        // Converter members.
+        Assert.Contains("ValueTupleKeyConverter<global::System.Int32, global::System.Int32>", generated);
+        Assert.Contains("ValueTupleKeyConverter<global::System.String, global::System.Int32, global::System.Int32>", generated);
+        // The dictionaries reference the tuple key types as their KeyInfo.
+        Assert.Contains("KeyInfo = ValueTuple2_System_Int32_System_Int32", generated);
+        Assert.Contains("KeyInfo = ValueTuple3_System_String_System_Int32_System_Int32", generated);
+    }
+
     private static string Normalize(string s) => s.Replace("\r\n", "\n");
 
     private static string FormatDiagnostics(System.Collections.Generic.IEnumerable<Microsoft.CodeAnalysis.Diagnostic> diags)

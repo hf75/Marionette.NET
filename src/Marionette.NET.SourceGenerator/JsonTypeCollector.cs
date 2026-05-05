@@ -224,6 +224,48 @@ internal sealed class JsonTypeCollector
             return null;
         }
 
+        // Phase 12.5: ValueTuple keys (rank 2 / 3). Detected as
+        // INamedTypeSymbol.IsTupleType. Check BEFORE the generic-shape
+        // block because ValueTuple<T1, T2> is itself a generic type — the
+        // generic block would otherwise short-circuit to null.
+        if (unannotated is INamedTypeSymbol tupleCheck && tupleCheck.IsTupleType)
+        {
+            var elements = tupleCheck.TupleElements;
+            var rank = elements.Length;
+            if (rank != 2 && rank != 3) return null;
+
+            var componentNames = new List<string>(rank);
+            var componentFqns = new List<string>(rank);
+            foreach (var comp in elements)
+            {
+                if (!IsSupportedDictionaryKey(comp.Type)) return null;
+                var cn = TryRegister(comp.Type, visiting, depth + 1);
+                if (cn is null) return null;
+                componentNames.Add(cn);
+                componentFqns.Add(_types[cn].TypeFullName);
+            }
+
+            var kind = rank == 2 ? JsonTypeKind.ValueTupleKey2 : JsonTypeKind.ValueTupleKey3;
+            // Use the named generic form so global:: prefix attaches cleanly
+            // in the emitter (tuple syntax `(int, string)` doesn't accept
+            // a global:: prefix).
+            var tupleFqn = "System.ValueTuple<" + string.Join(", ", componentFqns) + ">";
+            var tupleKeyId = (rank == 2 ? "ValueTuple2_" : "ValueTuple3_") + string.Join("_", componentNames);
+            if (!_types.ContainsKey(tupleKeyId))
+            {
+                _types[tupleKeyId] = new JsonTypeModel(
+                    TypeFullName: tupleFqn,
+                    PropertyName: tupleKeyId,
+                    Kind: kind,
+                    PrimitiveConverter: null,
+                    UnderlyingTypeFullName: null,
+                    Properties: EquatableArray<JsonPropertyModel>.Empty,
+                    TupleComponentContextNames: componentNames.ToImmutableArray().ToEquatableArray(),
+                    TupleComponentTypeFullNames: componentFqns.ToImmutableArray().ToEquatableArray());
+            }
+            return tupleKeyId;
+        }
+
         // Phase 8.4 + 8.5: generic collection / dictionary types. Each
         // unbound-generic name maps to a JsonTypeKind and (for collections) to
         // a known STJ JsonMetadataServices factory.
@@ -690,20 +732,37 @@ internal sealed class JsonTypeCollector
 
     /// <summary>
     /// Phase 8.5: STJ ships built-in <c>JsonConverter</c>s for a fixed set of
-    /// dictionary key types. This helper enumerates that set so the collector
-    /// only registers a dictionary type whose key actually round-trips through
-    /// JSON. Out-of-set keys (custom types, <c>Tuple</c>, <c>nint</c>, etc.)
+    /// dictionary key types. Phase 12.5 extends the supported set to
+    /// rank-2 / rank-3 <c>ValueTuple</c> keys (each component must itself
+    /// be a supported key shape — primitives + enums recurse).
+    /// Out-of-set keys (custom types, higher-rank tuples, <c>nint</c>, etc.)
     /// fall back to the legacy reflection path.
     /// </summary>
     /// <remarks>
     /// Source: <c>System.Text.Json</c> documentation, "Supported types →
     /// Dictionary keys" in .NET 10. Enums are accepted because STJ converts
     /// them through their underlying integral converter at the key boundary.
+    /// Tuple keys are NOT a built-in shape; Phase 12.5 supplies a runtime
+    /// <see cref="Marionette.Runtime.Json.ValueTupleKeyConverter{T1,T2}"/>
+    /// that the source generator wires through
+    /// <c>JsonMetadataServices.CreateValueInfo</c>.
     /// </remarks>
     private static bool IsSupportedDictionaryKey(ITypeSymbol type)
     {
         var unannotated = type.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
         if (unannotated is INamedTypeSymbol enumSym && enumSym.TypeKind == TypeKind.Enum) return true;
+        // Phase 12.5: rank-2 / rank-3 ValueTuple keys whose components are
+        // themselves supported keys.
+        if (unannotated is INamedTypeSymbol tupleSym && tupleSym.IsTupleType)
+        {
+            var rank = tupleSym.TupleElements.Length;
+            if (rank != 2 && rank != 3) return false;
+            foreach (var comp in tupleSym.TupleElements)
+            {
+                if (!IsSupportedDictionaryKey(comp.Type)) return false;
+            }
+            return true;
+        }
         var (converter, _) = ClassifyPrimitive(unannotated);
         return converter is not null && converter != "ObjectConverter";
     }

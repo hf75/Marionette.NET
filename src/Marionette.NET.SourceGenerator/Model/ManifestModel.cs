@@ -265,6 +265,17 @@ internal enum JsonTypeKind
     /// Higher ranks (T[,,], T[,,,]) remain unsupported.
     /// </summary>
     MultiDimArrayRank2,
+    /// <summary>
+    /// Phase 12.5: rank-2 value-tuple dictionary keys (<c>(T1, T2)</c>).
+    /// STJ has no built-in JsonConverter for tuple keys; the emitter wires
+    /// <c>JsonMetadataServices.CreateValueInfo&lt;(T1, T2)&gt;</c> against a
+    /// runtime-supplied <see cref="Marionette.Runtime.Json.ValueTupleKeyConverter{T1,T2}"/>.
+    /// </summary>
+    ValueTupleKey2,
+    /// <summary>
+    /// Phase 12.5: rank-3 value-tuple dictionary keys (<c>(T1, T2, T3)</c>).
+    /// </summary>
+    ValueTupleKey3,
 }
 
 /// <summary>
@@ -337,6 +348,19 @@ internal enum JsonTypeKind
 /// the correct contract: the serialise path enumerates an existing
 /// instance and never needs a ctor).
 /// </param>
+/// <param name="TupleComponentContextNames">
+/// Phase 12.5: for <see cref="JsonTypeKind.ValueTupleKey2"/> and
+/// <see cref="JsonTypeKind.ValueTupleKey3"/>, the encoded property names
+/// of the tuple's component <c>JsonTypeInfo</c> entries. The emitter
+/// references these via <c>(JsonConverter&lt;TX&gt;)<c>{Name}</c>.Converter</c>
+/// when constructing the runtime
+/// <see cref="Marionette.Runtime.Json.ValueTupleKeyConverter{T1,T2}"/>.
+/// </param>
+/// <param name="TupleComponentTypeFullNames">
+/// Phase 12.5: parallel to <paramref name="TupleComponentContextNames"/> —
+/// the canonical full names for each tuple component, for emitting the
+/// <c>JsonConverter&lt;TX&gt;</c> generic type arguments.
+/// </param>
 internal sealed record JsonTypeModel(
     string TypeFullName,
     string PropertyName,
@@ -349,7 +373,9 @@ internal sealed record JsonTypeModel(
     string? ElementTypeFullName = null,
     string? KeyTypeFullName = null,
     string? ConcreteContainerOverride = null,
-    bool ConcreteContainerHasParameterlessCtor = true);
+    bool ConcreteContainerHasParameterlessCtor = true,
+    EquatableArray<string> TupleComponentContextNames = default,
+    EquatableArray<string> TupleComponentTypeFullNames = default);
 
 /// <summary>
 /// Phase 8.1: a single property on a Json-context-tracked object type. The
