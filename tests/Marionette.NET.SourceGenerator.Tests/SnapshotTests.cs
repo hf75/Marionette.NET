@@ -209,6 +209,131 @@ public class SnapshotTests
         Snapshot.Verify(Normalize(result.GeneratedText), "GoldenEventInput_EmitsExpectedManifest");
     }
 
+    [Fact]
+    public void GoldenCollectionShapes_EmitsExpectedManifest()
+    {
+        // Phase 8.5: every collection shape the generator newly supports.
+        // The fixture exercises:
+        //   - IEnumerable<T> / IReadOnlyList<T> / IReadOnlyCollection<T>
+        //     (all three dispatch through CreateIEnumerableInfo)
+        //   - IList<T> / ICollection<T>
+        //   - ISet<T> / IReadOnlySet<T> / HashSet<T>
+        //   - Stack<T> / Queue<T>
+        //   - Dictionary<K,V> with non-string K (int and an enum)
+        //   - IDictionary<K,V> / IReadOnlyDictionary<K,V>
+        // The shapes are exposed via [McpEvent] args so they participate in
+        // the JSON-context emission. We assert the generated text references
+        // each STJ factory at least once.
+        var source = """
+            using System;
+            using System.Collections.Generic;
+            using Marionette;
+
+            namespace Demo;
+
+            public enum Severity { Low, Medium, High }
+
+            public sealed class CollectionEventArgs : EventArgs
+            {
+                public CollectionEventArgs() { }
+
+                public IEnumerable<int> EnumerableInts { get; init; } = System.Linq.Enumerable.Empty<int>();
+                public IReadOnlyList<string> ReadOnlyListOfStrings { get; init; } = System.Array.Empty<string>();
+                public IReadOnlyCollection<int> ReadOnlyCollectionOfInts { get; init; } = System.Array.Empty<int>();
+                public IList<string> ListOfStrings { get; init; } = new List<string>();
+                public ICollection<int> CollectionOfInts { get; init; } = new List<int>();
+                public ISet<string> SetOfStrings { get; init; } = new HashSet<string>();
+                public IReadOnlySet<int> ReadOnlySetOfInts { get; init; } = new HashSet<int>();
+                public HashSet<string> HashSetOfStrings { get; init; } = new HashSet<string>();
+                public Stack<int> StackOfInts { get; init; } = new Stack<int>();
+                public Queue<string> QueueOfStrings { get; init; } = new Queue<string>();
+                public Dictionary<int, string> IntKeyedDictionary { get; init; } = new();
+                public Dictionary<Severity, int> EnumKeyedDictionary { get; init; } = new();
+                public IDictionary<string, int> IDict { get; init; } = new Dictionary<string, int>();
+                public IReadOnlyDictionary<string, int> IReadOnlyDict { get; init; } = new Dictionary<string, int>();
+            }
+
+            [McpRoot("collroot")]
+            public class CollectionRoot
+            {
+                [McpEvent("Every Phase 8.5 collection shape on one event.")]
+                public event EventHandler<CollectionEventArgs>? CollectionFired;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+
+        // Each STJ factory must appear at least once. We don't pin the exact
+        // emission shape (a verified-snapshot would be brittle as the
+        // emitter evolves) — what matters is that every Phase-8.5 shape
+        // dispatches to its expected factory.
+        Assert.Contains("CreateIEnumerableInfo", generated);
+        Assert.Contains("CreateIListInfo", generated);
+        Assert.Contains("CreateICollectionInfo", generated);
+        Assert.Contains("CreateISetInfo", generated);
+        Assert.Contains("CreateStackInfo", generated);
+        Assert.Contains("CreateQueueInfo", generated);
+        Assert.Contains("CreateIDictionaryInfo", generated);
+        Assert.Contains("CreateIReadOnlyDictionaryInfo", generated);
+        // Non-string dictionary keys: int + enum.
+        Assert.Contains("Dictionary<global::System.Int32, global::System.String>", generated);
+        Assert.Contains("Dictionary<global::Demo.Severity, global::System.Int32>", generated);
+        // ObjectCreator should pick HashSet for set-like interfaces.
+        Assert.Contains("new global::System.Collections.Generic.HashSet<global::System.String>()", generated);
+    }
+
+    [Fact]
+    public void GoldenUnsupportedShapes_FallsBackToReflection()
+    {
+        // Phase 8.5: types the generator deliberately does NOT cover (multi-
+        // dim arrays, abstract bases, exotic generics) leave the descriptor's
+        // typed Serialize lambda null. The runtime then takes the legacy
+        // reflection path. This fixture verifies that unsupported types do
+        // not appear as JsonTypeInfo properties on the emitted context.
+        var source = """
+            using System;
+            using Marionette;
+
+            namespace Demo;
+
+            public sealed class UnsupportedEventArgs : EventArgs
+            {
+                public UnsupportedEventArgs() { }
+                public int[,] MultiDimArray { get; init; } = new int[0,0];
+            }
+
+            [McpRoot("unsupported")]
+            public class UnsupportedRoot
+            {
+                [McpEvent("Args type the generator cannot register.")]
+                public event EventHandler<UnsupportedEventArgs>? Fired;
+            }
+            """;
+
+        var result = GeneratorRunner.Run(source, assemblyName: "Demo");
+
+        Assert.False(result.HasGeneratorErrors,
+            $"Generator emitted errors:\n{FormatDiagnostics(result.GeneratorDiagnostics)}");
+        Assert.False(result.HasCompilationErrors,
+            $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
+
+        var generated = result.GeneratedText;
+        // The MarionetteEventArgsJsonContext should NOT register the
+        // unsupported type — the descriptor's SerializeArgs stays null and
+        // runtime serialisation handles it.
+        Assert.DoesNotContain("Demo_UnsupportedEventArgs", generated);
+        // The descriptor must still emit (events surface in the manifest);
+        // the assertion is just that it did not get a JSON-context entry.
+        Assert.Contains("\"Fired\"", generated);
+    }
+
     private static string Normalize(string s) => s.Replace("\r\n", "\n");
 
     private static string FormatDiagnostics(System.Collections.Generic.IEnumerable<Microsoft.CodeAnalysis.Diagnostic> diags)

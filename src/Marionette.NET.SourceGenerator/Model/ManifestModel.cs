@@ -187,11 +187,76 @@ internal enum JsonTypeKind
     /// </summary>
     List,
     /// <summary>
-    /// Phase 8.4: <c>Dictionary&lt;string, TValue&gt;</c>. STJ only supports
-    /// string-keyed dictionaries via the typed factory; non-string keys
-    /// remain unsupported and fall back to runtime serialisation.
+    /// Phase 8.4 / 8.5: <c>Dictionary&lt;TKey, TValue&gt;</c>. The typed factory
+    /// is <c>CreateDictionaryInfo&lt;Dictionary&lt;K,V&gt;, K, V&gt;</c>. Slice 4 only allowed
+    /// <c>TKey == string</c>; slice 5 expands to every STJ-supported key shape
+    /// (string + numeric primitives + bool + char + DateTime / DateTimeOffset /
+    /// TimeSpan + Guid + Uri + Version + enums).
     /// </summary>
     Dictionary,
+    /// <summary>
+    /// Phase 8.5: <c>IEnumerable&lt;T&gt;</c>, <c>IReadOnlyList&lt;T&gt;</c>, and
+    /// <c>IReadOnlyCollection&lt;T&gt;</c>. STJ groups these three under the
+    /// <c>CreateIEnumerableInfo&lt;TCollection, TElement&gt;</c> factory; the
+    /// <c>TCollection</c> generic argument carries the user-visible interface
+    /// type so the produced <c>JsonTypeInfo&lt;T&gt;</c> matches the property's
+    /// declared type.
+    /// </summary>
+    IEnumerable,
+    /// <summary>
+    /// Phase 8.5: <c>IList&lt;T&gt;</c> via
+    /// <c>CreateIListInfo&lt;TCollection, TElement&gt;</c>.
+    /// </summary>
+    IList,
+    /// <summary>
+    /// Phase 8.5: <c>ICollection&lt;T&gt;</c> via
+    /// <c>CreateICollectionInfo&lt;TCollection, TElement&gt;</c>.
+    /// </summary>
+    ICollection,
+    /// <summary>
+    /// Phase 8.5: <c>ISet&lt;T&gt;</c> via
+    /// <c>CreateISetInfo&lt;TCollection, TElement&gt;</c>. Used for both the
+    /// interface and concrete <c>HashSet&lt;T&gt;</c> (HashSet has no dedicated
+    /// factory in STJ — the source generator dispatches concrete sets through
+    /// the same path with <c>TCollection = HashSet&lt;T&gt;</c>).
+    /// </summary>
+    ISet,
+    /// <summary>
+    /// Phase 8.5: <c>IReadOnlySet&lt;T&gt;</c>. STJ on .NET 10 has no dedicated
+    /// factory for this interface, so the emitter routes it through
+    /// <c>CreateIEnumerableInfo&lt;TCollection, TElement&gt;</c> with
+    /// <c>TCollection = IReadOnlySet&lt;T&gt;</c> and a <c>HashSet&lt;T&gt;</c>
+    /// <c>ObjectCreator</c> (HashSet implements IReadOnlySet from .NET 5+).
+    /// </summary>
+    IReadOnlySet,
+    /// <summary>
+    /// Phase 8.5: <c>HashSet&lt;T&gt;</c>. Same factory call as
+    /// <see cref="ISet"/> but the model carries the concrete <c>TCollection</c>
+    /// for the JsonTypeInfo property's typing.
+    /// </summary>
+    HashSet,
+    /// <summary>
+    /// Phase 8.5: <c>Stack&lt;T&gt;</c> via
+    /// <c>CreateStackInfo&lt;TCollection, TElement&gt;</c>.
+    /// </summary>
+    Stack,
+    /// <summary>
+    /// Phase 8.5: <c>Queue&lt;T&gt;</c> via
+    /// <c>CreateQueueInfo&lt;TCollection, TElement&gt;</c>.
+    /// </summary>
+    Queue,
+    /// <summary>
+    /// Phase 8.5: <c>IDictionary&lt;TKey, TValue&gt;</c> via
+    /// <c>CreateIDictionaryInfo&lt;TCollection, TKey, TValue&gt;</c>.
+    /// Concrete container for the runtime <c>ObjectCreator</c> is
+    /// <c>Dictionary&lt;TKey, TValue&gt;</c>.
+    /// </summary>
+    IDictionary,
+    /// <summary>
+    /// Phase 8.5: <c>IReadOnlyDictionary&lt;TKey, TValue&gt;</c> via
+    /// <c>CreateIReadOnlyDictionaryInfo&lt;TCollection, TKey, TValue&gt;</c>.
+    /// </summary>
+    IReadOnlyDictionary,
 }
 
 /// <summary>
@@ -238,6 +303,12 @@ internal enum JsonTypeKind
 /// emitter can render <c>JsonMetadataServices.CreateListInfo&lt;...&gt;</c>
 /// generic arguments without re-resolving symbols).
 /// </param>
+/// <param name="KeyTypeFullName">
+/// Phase 8.5: canonical full name of the dictionary key type. Slice 4 hardcoded
+/// <c>System.String</c>; slice 5 lifts the key to any STJ-supported shape, so
+/// the emitter needs the full name to render the factory's <c>TKey</c> generic
+/// argument. Always <see langword="null"/> for non-dictionary kinds.
+/// </param>
 internal sealed record JsonTypeModel(
     string TypeFullName,
     string PropertyName,
@@ -247,7 +318,8 @@ internal sealed record JsonTypeModel(
     EquatableArray<JsonPropertyModel> Properties,
     string? ElementContextName = null,
     string? KeyContextName = null,
-    string? ElementTypeFullName = null);
+    string? ElementTypeFullName = null,
+    string? KeyTypeFullName = null);
 
 /// <summary>
 /// Phase 8.1: a single property on a Json-context-tracked object type. The

@@ -181,65 +181,117 @@ internal sealed class JsonTypeCollector
             return arrKey;
         }
 
-        // Phase 8.4: List<T> / Dictionary<string, V>. We restrict to these
-        // two specific generics — IEnumerable<T> + Dictionary<non-string, V>
-        // need different STJ factory shapes (or aren't supported at all)
-        // and would dilute slice 4's promise.
+        // Phase 8.4 + 8.5: generic collection / dictionary types. Each
+        // unbound-generic name maps to a JsonTypeKind and (for collections) to
+        // a known STJ JsonMetadataServices factory.
         if (unannotated is INamedTypeSymbol genericSym &&
             genericSym.IsGenericType &&
             !genericSym.IsUnboundGenericType)
         {
             var unbound = genericSym.ConstructUnboundGenericType()
                 .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-            if (unbound == "global::System.Collections.Generic.List<>")
+
+            // Element-only generic collections: every shape STJ ships a
+            // CreateXxxInfo<TCollection, TElement> factory for, plus the
+            // List<T> case Phase 8.4 already handled. Each entry maps the
+            // unbound generic name to a (kind, propertyKeyPrefix, userFqnTemplate)
+            // triple — userFqnTemplate substitutes "{T}" with the element's
+            // canonical full name.
+            (JsonTypeKind kind, string keyPrefix, string fqnTemplate)? collectionShape = unbound switch
             {
+                "global::System.Collections.Generic.List<>" =>
+                    (JsonTypeKind.List, "List", "System.Collections.Generic.List<{T}>"),
+                "global::System.Collections.Generic.IEnumerable<>" =>
+                    (JsonTypeKind.IEnumerable, "IEnumerable", "System.Collections.Generic.IEnumerable<{T}>"),
+                "global::System.Collections.Generic.IReadOnlyList<>" =>
+                    (JsonTypeKind.IEnumerable, "IReadOnlyList", "System.Collections.Generic.IReadOnlyList<{T}>"),
+                "global::System.Collections.Generic.IReadOnlyCollection<>" =>
+                    (JsonTypeKind.IEnumerable, "IReadOnlyCollection", "System.Collections.Generic.IReadOnlyCollection<{T}>"),
+                "global::System.Collections.Generic.IList<>" =>
+                    (JsonTypeKind.IList, "IList", "System.Collections.Generic.IList<{T}>"),
+                "global::System.Collections.Generic.ICollection<>" =>
+                    (JsonTypeKind.ICollection, "ICollection", "System.Collections.Generic.ICollection<{T}>"),
+                "global::System.Collections.Generic.ISet<>" =>
+                    (JsonTypeKind.ISet, "ISet", "System.Collections.Generic.ISet<{T}>"),
+                "global::System.Collections.Generic.IReadOnlySet<>" =>
+                    (JsonTypeKind.IReadOnlySet, "IReadOnlySet", "System.Collections.Generic.IReadOnlySet<{T}>"),
+                "global::System.Collections.Generic.HashSet<>" =>
+                    (JsonTypeKind.HashSet, "HashSet", "System.Collections.Generic.HashSet<{T}>"),
+                "global::System.Collections.Generic.Stack<>" =>
+                    (JsonTypeKind.Stack, "Stack", "System.Collections.Generic.Stack<{T}>"),
+                "global::System.Collections.Generic.Queue<>" =>
+                    (JsonTypeKind.Queue, "Queue", "System.Collections.Generic.Queue<{T}>"),
+                _ => null,
+            };
+            if (collectionShape.HasValue)
+            {
+                var (kind, keyPrefix, fqnTemplate) = collectionShape.Value;
                 var elementName = TryRegister(genericSym.TypeArguments[0], visiting, depth + 1);
                 if (elementName is null) return null;
                 var elementCanonical = _types[elementName].TypeFullName;
-                var listKey = "List_" + elementName;
-                if (!_types.ContainsKey(listKey))
+                var collKey = keyPrefix + "_" + elementName;
+                if (!_types.ContainsKey(collKey))
                 {
-                    _types[listKey] = new JsonTypeModel(
-                        TypeFullName: "System.Collections.Generic.List<" + elementCanonical + ">",
-                        PropertyName: listKey,
-                        Kind: JsonTypeKind.List,
+                    _types[collKey] = new JsonTypeModel(
+                        TypeFullName: fqnTemplate.Replace("{T}", elementCanonical),
+                        PropertyName: collKey,
+                        Kind: kind,
                         PrimitiveConverter: null,
                         UnderlyingTypeFullName: null,
                         Properties: EquatableArray<JsonPropertyModel>.Empty,
                         ElementContextName: elementName,
                         ElementTypeFullName: elementCanonical);
                 }
-                return listKey;
+                return collKey;
             }
-            if (unbound == "global::System.Collections.Generic.Dictionary<,>")
+
+            // Dictionary shapes — three flavours. The factory for each is
+            // structurally identical; the only difference is the user-visible
+            // type and the JsonTypeKind for the emitter to dispatch on.
+            (JsonTypeKind kind, string keyPrefix, string fqnTemplate)? dictShape = unbound switch
             {
-                // STJ only supports string-keyed dictionaries via the typed
-                // factory; non-string keys fall back to runtime serialisation.
-                if (genericSym.TypeArguments[0].SpecialType != SpecialType.System_String) return null;
+                "global::System.Collections.Generic.Dictionary<,>" =>
+                    (JsonTypeKind.Dictionary, "Dictionary", "System.Collections.Generic.Dictionary<{K}, {V}>"),
+                "global::System.Collections.Generic.IDictionary<,>" =>
+                    (JsonTypeKind.IDictionary, "IDictionary", "System.Collections.Generic.IDictionary<{K}, {V}>"),
+                "global::System.Collections.Generic.IReadOnlyDictionary<,>" =>
+                    (JsonTypeKind.IReadOnlyDictionary, "IReadOnlyDictionary", "System.Collections.Generic.IReadOnlyDictionary<{K}, {V}>"),
+                _ => null,
+            };
+            if (dictShape.HasValue)
+            {
+                var (kind, keyPrefix, fqnTemplate) = dictShape.Value;
+                // Slice 5: accept every TKey shape STJ has a built-in
+                // converter for. That's: string, all integral / floating-point
+                // primitives, bool, char, DateTime / DateTimeOffset / TimeSpan,
+                // Guid, Uri, Version, and enums.
+                if (!IsSupportedDictionaryKey(genericSym.TypeArguments[0])) return null;
+                var keyName = TryRegister(genericSym.TypeArguments[0], visiting, depth + 1);
+                if (keyName is null) return null;
+                var keyCanonical = _types[keyName].TypeFullName;
                 var valueName = TryRegister(genericSym.TypeArguments[1], visiting, depth + 1);
                 if (valueName is null) return null;
                 var valueCanonical = _types[valueName].TypeFullName;
-                // Make sure the key (System.String) is registered too — the
-                // dictionary's KeyInfo references it.
-                var keyName = TryRegister(genericSym.TypeArguments[0], visiting, depth + 1);
-                if (keyName is null) return null;
-                var dictKey = "Dictionary_" + keyName + "_" + valueName;
+                var dictKey = keyPrefix + "_" + keyName + "_" + valueName;
                 if (!_types.ContainsKey(dictKey))
                 {
                     _types[dictKey] = new JsonTypeModel(
-                        TypeFullName: "System.Collections.Generic.Dictionary<System.String, " + valueCanonical + ">",
+                        TypeFullName: fqnTemplate.Replace("{K}", keyCanonical).Replace("{V}", valueCanonical),
                         PropertyName: dictKey,
-                        Kind: JsonTypeKind.Dictionary,
+                        Kind: kind,
                         PrimitiveConverter: null,
                         UnderlyingTypeFullName: null,
                         Properties: EquatableArray<JsonPropertyModel>.Empty,
                         ElementContextName: valueName,
                         KeyContextName: keyName,
-                        ElementTypeFullName: valueCanonical);
+                        ElementTypeFullName: valueCanonical,
+                        KeyTypeFullName: keyCanonical);
                 }
                 return dictKey;
             }
-            // Any other generic instantiation: defer to slice 5.
+
+            // Any other generic instantiation: still unsupported (caller
+            // falls back to runtime reflection serialiser).
             return null;
         }
 
@@ -387,6 +439,26 @@ internal sealed class JsonTypeCollector
             "global::System.Version" => ("VersionConverter", "System.Version"),
             _ => ((string?)null, (string?)null),
         };
+    }
+
+    /// <summary>
+    /// Phase 8.5: STJ ships built-in <c>JsonConverter</c>s for a fixed set of
+    /// dictionary key types. This helper enumerates that set so the collector
+    /// only registers a dictionary type whose key actually round-trips through
+    /// JSON. Out-of-set keys (custom types, <c>Tuple</c>, <c>nint</c>, etc.)
+    /// fall back to the legacy reflection path.
+    /// </summary>
+    /// <remarks>
+    /// Source: <c>System.Text.Json</c> documentation, "Supported types →
+    /// Dictionary keys" in .NET 10. Enums are accepted because STJ converts
+    /// them through their underlying integral converter at the key boundary.
+    /// </remarks>
+    private static bool IsSupportedDictionaryKey(ITypeSymbol type)
+    {
+        var unannotated = type.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+        if (unannotated is INamedTypeSymbol enumSym && enumSym.TypeKind == TypeKind.Enum) return true;
+        var (converter, _) = ClassifyPrimitive(unannotated);
+        return converter is not null && converter != "ObjectConverter";
     }
 
     /// <summary>

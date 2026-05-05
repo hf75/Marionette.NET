@@ -84,56 +84,74 @@ public static class MarionetteHost
     /// </returns>
     /// <remarks>
     /// <para>
-    /// <b>AOT/trim contract (Phase 4.2):</b> the runtime's hot paths are
-    /// reflection-free — every <c>[McpCallable]</c> dispatch goes through a
-    /// typed lambda emitted by the source generator, every observable read uses
-    /// a typed getter, every event subscribe uses a typed delegate bridge.
-    /// The reflection surfaces that DO exist are:
+    /// <b>AOT/trim contract:</b> the runtime's hot paths are reflection-free —
+    /// every <c>[McpCallable]</c> dispatch goes through a typed lambda emitted
+    /// by the source generator, every observable read uses a typed getter,
+    /// every event subscribe uses a typed delegate bridge, every
+    /// <c>[McpEvent]</c> args / <c>[McpObservable]</c> value /
+    /// <c>[McpCallable]</c> return + parameter goes through a typed
+    /// <see cref="System.Text.Json.Serialization.Metadata.JsonTypeInfo{T}"/>
+    /// emitted by the Phase-8 JSON source generator, and per-method dynamic
+    /// tools register through the Phase-10 <c>MarionetteAIFunction</c> +
+    /// <c>McpServerTool.Create(AIFunction, …)</c> AOT-clean overload.
+    /// </para>
+    /// <para>
+    /// Two reflection surfaces remain — both narrowly scoped:
     /// </para>
     /// <list type="bullet">
     ///   <item><description>
     ///     <c>raise_event</c> — see
     ///     <see cref="IUiAutomationAdapter.RaiseEventAsync(string, string, string, IReadOnlyDictionary{string, object?}?, string?, CancellationToken)"/>
     ///     which is itself marked <see cref="RequiresUnreferencedCodeAttribute"/>.
+    ///     The runtime resolves event names against user-control type chains
+    ///     and the framework's <c>RoutedEvent</c> static fields by reflection;
+    ///     trim/AOT can lose this metadata for custom controls.
     ///   </description></item>
     ///   <item><description>
-    ///     The MCP SDK's per-tool argument marshalling reflects on the
-    ///     <see cref="ModelContextProtocol.Server.McpServerToolType"/>'s tool
-    ///     methods. The SDK's analyzer surface ships its own annotations;
-    ///     adopters who enable AOT see the SDK's IL2026 / IL3050 hints rather
-    ///     than Marionette's.
-    ///   </description></item>
-    ///   <item><description>
-    ///     The optional <see cref="IUiAutomationAdapter.RaiseEventAsync"/>
-    ///     surface (see above).
+    ///     Legacy JSON fallback path for <c>[McpEvent]</c> args /
+    ///     <c>[McpObservable]</c> values / <c>[McpCallable]</c> returns whose
+    ///     type graph is NOT covered by the Phase-8 source generator.
+    ///     Source-gen-eligible shapes (primitives, plain user records / classes
+    ///     with public-getter properties, <c>Nullable&lt;T&gt;</c>, enums,
+    ///     <c>T[]</c>, <c>List&lt;T&gt;</c>, every standard
+    ///     <c>IEnumerable</c>/<c>IList</c>/<c>ICollection</c>/<c>ISet</c>/<c>HashSet</c>/<c>Stack</c>/<c>Queue</c> and
+    ///     <c>Dictionary&lt;K,V&gt;</c>/<c>IDictionary</c>/<c>IReadOnlyDictionary</c>
+    ///     across STJ-supported key types) emit a typed
+    ///     <c>JsonTypeInfo&lt;T&gt;</c> at compile time and the runtime never
+    ///     touches the legacy path. Out-of-scope shapes (e.g. multi-dimensional
+    ///     arrays, abstract base types, generic types beyond the supported
+    ///     collection set) trigger the descriptor's runtime
+    ///     <c>JsonSerializer.Serialize</c> fallback.
     ///   </description></item>
     /// </list>
     /// <para>
     /// <see cref="RequiresUnreferencedCodeAttribute"/> is applied here at the
     /// composition boundary: adopters call <c>RunAsync</c> from their <c>Main</c>
     /// after parsing argv. AOT-publishing apps suppress the warning at that
-    /// single call site once they've audited their use of <c>raise_event</c>;
-    /// alternatively they avoid <c>raise_event</c> entirely and use
-    /// <c>simulate_input</c> + <c>[McpCallable]</c> for fully reflection-free
-    /// automation.
+    /// single call site once they've audited their use of <c>raise_event</c>
+    /// AND confirmed every payload type is source-gen-eligible. Adopters who
+    /// avoid <c>raise_event</c> and stay within the supported JSON shapes get
+    /// fully reflection-free automation under AOT — verified by
+    /// PHASE10_FINDINGS.md's stdio handshake matrix.
     /// </para>
     /// </remarks>
     [RequiresUnreferencedCode(
-        "MarionetteHost.RunAsync surfaces the raise_event MCP tool, which resolves event " +
-        "names by reflection on user types. Trimmed apps may lose event metadata for custom " +
-        "controls. Additionally, the runtime serialises observable values, callable results, " +
-        "and event payloads via System.Text.Json's reflection-based JsonSerializer; trimming " +
-        "may strip the property metadata of user types. Suppress at the call site after " +
-        "auditing, or avoid raise_event and confine [McpObservable]/event payloads to JSON-" +
-        "primitive shapes (int/string/bool/arrays/INPC records) so the serializer's reflection " +
-        "doesn't reach beyond what the trimmer keeps.")]
+        "MarionetteHost.RunAsync surfaces the raise_event MCP tool, which resolves event names " +
+        "by reflection on user types — trimming may strip the metadata for custom controls. " +
+        "Separately, [McpEvent] args / [McpObservable] values / [McpCallable] returns whose type " +
+        "graph is NOT covered by the Phase-8 JSON source generator (e.g. multi-dimensional arrays, " +
+        "abstract bases, exotic generics) fall back to System.Text.Json's reflection-based " +
+        "serialiser. Source-gen-eligible shapes (primitives, user records, Nullable<T>, enums, " +
+        "T[], List<T>, every standard IEnumerable/IList/ICollection/ISet/Stack/Queue, " +
+        "Dictionary/IDictionary/IReadOnlyDictionary across STJ-supported key types) are " +
+        "AOT-clean by source-gen and never hit this surface. Suppress at the call site after " +
+        "auditing both raise_event use and your payload type graphs.")]
     [RequiresDynamicCode(
-        "MarionetteHost.RunAsync uses System.Text.Json for boxed-object serialisation of " +
-        "[McpObservable] reads, [McpCallable] results, and [McpEvent] payloads. JsonSerializer " +
-        "may JIT-generate code at runtime when no JsonTypeInfo is supplied. Phase 4.2 keeps " +
-        "this on the AOT-warning surface; Phase 6 may migrate to System.Text.Json source-" +
-        "generation per descriptor type to close the warning. Suppress at the call site if " +
-        "your AOT toolchain ships the JsonReader fallback path.")]
+        "MarionetteHost.RunAsync's legacy JSON fallback uses JsonSerializer over boxed objects " +
+        "for [McpEvent] args / [McpObservable] values / [McpCallable] returns whose type graph " +
+        "is not fully covered by the Phase-8 JSON source generator. Source-gen-eligible payloads " +
+        "go through typed JsonTypeInfo<T> and need no dynamic code. Suppress at the call site " +
+        "if your payloads stay within the supported shapes.")]
     public static async Task<int> RunAsync(
         string[] args,
         IReadOnlyList<RootDescriptor> roots,

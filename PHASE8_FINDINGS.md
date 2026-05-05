@@ -230,6 +230,67 @@ compile-time guarantee instead of a hopeful trim attempt.
 - **`MarionetteTools.SerializeRoot`** (used by `inspect_app_api`) —
   currently still on the legacy path; low-frequency call so impact is small.
 
+## What landed in Phase 8.5
+
+### Closed every "deferred" item from slice 5
+
+The original Phase 8 findings noted: *"Slice 5 deferred: IEnumerable<T> / IList<T> / IReadOnlyList<T> / ICollection<T>, multi-dimensional arrays, Dictionary<int,V> / Dictionary<TEnum,V>, Stack<T>/Queue<T>/HashSet<T>."*
+
+Every line of that list except multi-dimensional arrays (which STJ does not natively support) is now covered. The generator dispatches each user-visible shape to its matching `JsonMetadataServices.CreateXxxInfo<TCollection, TElement>` factory:
+
+| User type | `JsonTypeKind` | STJ factory | Notes |
+|---|---|---|---|
+| `T[]` (rank=1) | `Array` | `CreateArrayInfo<T>` | Phase 8.4 |
+| `List<T>` | `List` | `CreateListInfo<List<T>, T>` | Phase 8.4 |
+| `IEnumerable<T>` | `IEnumerable` | `CreateIEnumerableInfo<IEnumerable<T>, T>` | Phase 8.5 |
+| `IReadOnlyList<T>` | `IEnumerable` | `CreateIEnumerableInfo<IReadOnlyList<T>, T>` | Phase 8.5; STJ has no dedicated factory |
+| `IReadOnlyCollection<T>` | `IEnumerable` | `CreateIEnumerableInfo<IReadOnlyCollection<T>, T>` | Phase 8.5; STJ has no dedicated factory |
+| `IList<T>` | `IList` | `CreateIListInfo<IList<T>, T>` | Phase 8.5 |
+| `ICollection<T>` | `ICollection` | `CreateICollectionInfo<ICollection<T>, T>` | Phase 8.5 |
+| `ISet<T>` | `ISet` | `CreateISetInfo<ISet<T>, T>` | Phase 8.5 |
+| `IReadOnlySet<T>` | `IReadOnlySet` | `CreateIEnumerableInfo<IReadOnlySet<T>, T>` | Phase 8.5; .NET 10 STJ ships no `CreateIReadOnlySetInfo`, so we fall through to the IEnumerable factory and rely on HashSet's `IReadOnlySet` implementation for the `ObjectCreator` |
+| `HashSet<T>` | `HashSet` | `CreateISetInfo<HashSet<T>, T>` | Phase 8.5 |
+| `Stack<T>` | `Stack` | `CreateStackInfo<Stack<T>, T>` | Phase 8.5 |
+| `Queue<T>` | `Queue` | `CreateQueueInfo<Queue<T>, T>` | Phase 8.5 |
+| `Dictionary<K,V>` | `Dictionary` | `CreateDictionaryInfo<Dictionary<K,V>, K, V>` | Phase 8.5 lifts the slice-4 string-key constraint |
+| `IDictionary<K,V>` | `IDictionary` | `CreateIDictionaryInfo<IDictionary<K,V>, K, V>` | Phase 8.5 |
+| `IReadOnlyDictionary<K,V>` | `IReadOnlyDictionary` | `CreateIReadOnlyDictionaryInfo<IReadOnlyDictionary<K,V>, K, V>` | Phase 8.5 |
+
+### Non-string dictionary keys
+
+`Dictionary<TKey, TValue>` and the two interface variants now accept any STJ-supported key shape: `string`, all integral and floating-point primitives, `bool`, `char`, `DateTime`, `DateTimeOffset`, `TimeSpan`, `Guid`, `Uri`, `Version`, and any enum. The `JsonTypeCollector.IsSupportedDictionaryKey` predicate gates registration; out-of-set keys (custom types, `Tuple`, `nint`, …) trigger the legacy reflection fallback as before.
+
+### Multi-dimensional arrays — out of scope
+
+STJ has no `CreateMultiDimensionalArrayInfo<T>` factory. Multi-dim arrays (`T[,]`, `T[,,]`) are not naturally JSON-shaped (no canonical mapping to nested arrays without a custom converter). The collector continues to reject them via the `Rank == 1` check; the descriptor's typed `Serialize*` lambda stays null and the runtime falls back to reflection (which itself will throw at runtime for true multi-dim arrays — STJ does not handle them either). Adopters who need a JSON-friendly matrix should use `T[][]` (jagged arrays), which the existing array-recursion path already handles cleanly.
+
+### Source generator hygiene
+
+The emitter previously had per-shape `EmitListCreation` / `EmitDictionaryCreation` methods with substantial duplication. Phase 8.5 introduces two unified helpers:
+
+- `EmitElementCollectionCreation(sb, type, factoryName, concreteContainerTemplate)` for every element-only collection kind (List, IEnumerable, IList, ICollection, ISet, IReadOnlySet, HashSet, Stack, Queue).
+- `EmitDictionaryCreation(sb, type, factoryName, concreteContainerTemplate)` for the three dictionary kinds.
+
+Each per-kind dispatch arm in the emitter's switch is now a single call with the factory name and the concrete-container template (`{T}` / `{K}` / `{V}` placeholders). The whole emitter is ~80 lines shorter and the per-shape rendering logic now lives in two places, not nine.
+
+### Verification
+
+- Build matrix: 0 warnings, 0 errors across 19 projects (Debug + Release).
+- Source-gen tests: 30/30 PASS (was 28/28 — added `GoldenCollectionShapes` + `GoldenUnsupportedShapes`).
+- Testing-toolkit tests: 12/12 PASS.
+- Integration eval-cases: 7/7 PASS + 3 GUI-skipped.
+- AOT publish smoke (TodoApp / Avalonia Dashboard / PocketPlanner full): all exit 0, 0 Marionette IL warnings.
+- AOT-runtime stdio handshake against TodoApp / Avalonia Dashboard / PocketPlanner full: all PASS (12/14/12 PASS, 0 FAIL each), including the dynamic-tool exercise lines for TodoApp + Avalonia.
+
+### Remaining limitations
+
+- Multi-dimensional arrays (`T[,]`, `T[,,]`): no STJ factory; not coverable by source-gen.
+- Custom collection types (e.g. user-defined `MyList<T> : IList<T>`): the collector matches by exact unbound generic name and does not yet recognise interface-implementations of supported shapes. Workaround: expose an `IList<T>`-typed property instead.
+- Tuple-keyed dictionaries (`Dictionary<(int, int), V>`): STJ has no built-in tuple-key converter; rejected by `IsSupportedDictionaryKey`.
+- Concurrent collections (`ConcurrentDictionary`, `ConcurrentBag`, etc.): STJ ships dedicated factories but they're rarely used as `[McpEvent]` payloads. Deferred until adopter demand surfaces.
+
+These items continue to fall back to the legacy reflection-based serialiser; the runtime fallback path remains correct. The host's `[RequiresUnreferencedCode]` annotation explicitly carries the "out-of-scope shapes trigger the descriptor's runtime `JsonSerializer.Serialize` fallback" caveat for adopter visibility.
+
 ## Known limitations of slice 1 + 2
 
 - Type with `[JsonIgnore]`-decorated properties: the collector does not

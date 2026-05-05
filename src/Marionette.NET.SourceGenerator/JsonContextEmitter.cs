@@ -176,10 +176,75 @@ internal static class JsonContextEmitter
                 EmitArrayCreation(sb, type);
                 break;
             case JsonTypeKind.List:
-                EmitListCreation(sb, type);
+                // List<T>: ObjectCreator returns a fresh List<T>.
+                EmitElementCollectionCreation(sb, type,
+                    factoryName: "CreateListInfo",
+                    concreteContainerTemplate: "global::System.Collections.Generic.List<{T}>");
+                break;
+            case JsonTypeKind.IEnumerable:
+                // IEnumerable<T> / IReadOnlyList<T> / IReadOnlyCollection<T>
+                // all use STJ's CreateIEnumerableInfo; ObjectCreator returns a
+                // List<T> which satisfies all three interfaces.
+                EmitElementCollectionCreation(sb, type,
+                    factoryName: "CreateIEnumerableInfo",
+                    concreteContainerTemplate: "global::System.Collections.Generic.List<{T}>");
+                break;
+            case JsonTypeKind.IList:
+                EmitElementCollectionCreation(sb, type,
+                    factoryName: "CreateIListInfo",
+                    concreteContainerTemplate: "global::System.Collections.Generic.List<{T}>");
+                break;
+            case JsonTypeKind.ICollection:
+                EmitElementCollectionCreation(sb, type,
+                    factoryName: "CreateICollectionInfo",
+                    concreteContainerTemplate: "global::System.Collections.Generic.List<{T}>");
+                break;
+            case JsonTypeKind.ISet:
+                EmitElementCollectionCreation(sb, type,
+                    factoryName: "CreateISetInfo",
+                    concreteContainerTemplate: "global::System.Collections.Generic.HashSet<{T}>");
+                break;
+            case JsonTypeKind.IReadOnlySet:
+                // STJ on .NET 10 does NOT ship CreateIReadOnlySetInfo (it is
+                // a future-branch addition). The interface is enumerable, so
+                // we route it through CreateIEnumerableInfo. HashSet<T>
+                // implements IReadOnlySet<T> from .NET 5 onward, so the
+                // ObjectCreator returns a HashSet.
+                EmitElementCollectionCreation(sb, type,
+                    factoryName: "CreateIEnumerableInfo",
+                    concreteContainerTemplate: "global::System.Collections.Generic.HashSet<{T}>");
+                break;
+            case JsonTypeKind.HashSet:
+                // HashSet<T> uses CreateISetInfo with TCollection = HashSet<T>;
+                // ObjectCreator just returns a fresh HashSet<T>.
+                EmitElementCollectionCreation(sb, type,
+                    factoryName: "CreateISetInfo",
+                    concreteContainerTemplate: "global::System.Collections.Generic.HashSet<{T}>");
+                break;
+            case JsonTypeKind.Stack:
+                EmitElementCollectionCreation(sb, type,
+                    factoryName: "CreateStackInfo",
+                    concreteContainerTemplate: "global::System.Collections.Generic.Stack<{T}>");
+                break;
+            case JsonTypeKind.Queue:
+                EmitElementCollectionCreation(sb, type,
+                    factoryName: "CreateQueueInfo",
+                    concreteContainerTemplate: "global::System.Collections.Generic.Queue<{T}>");
                 break;
             case JsonTypeKind.Dictionary:
-                EmitDictionaryCreation(sb, type);
+                EmitDictionaryCreation(sb, type,
+                    factoryName: "CreateDictionaryInfo",
+                    concreteContainerTemplate: "global::System.Collections.Generic.Dictionary<{K}, {V}>");
+                break;
+            case JsonTypeKind.IDictionary:
+                EmitDictionaryCreation(sb, type,
+                    factoryName: "CreateIDictionaryInfo",
+                    concreteContainerTemplate: "global::System.Collections.Generic.Dictionary<{K}, {V}>");
+                break;
+            case JsonTypeKind.IReadOnlyDictionary:
+                EmitDictionaryCreation(sb, type,
+                    factoryName: "CreateIReadOnlyDictionaryInfo",
+                    concreteContainerTemplate: "global::System.Collections.Generic.Dictionary<{K}, {V}>");
                 break;
         }
 
@@ -205,21 +270,40 @@ internal static class JsonContextEmitter
         sb.AppendLine("            });");
     }
 
-    private static void EmitListCreation(StringBuilder sb, JsonTypeModel type)
+    /// <summary>
+    /// Phase 8.5: unified renderer for element-only collection kinds (List,
+    /// IEnumerable, IList, ICollection, ISet, IReadOnlySet, HashSet, Stack,
+    /// Queue). The factory call shape is identical for all of them — only the
+    /// factory method name and the concrete container type for ObjectCreator
+    /// differ. <c>concreteContainerTemplate</c> uses <c>{T}</c> as the element
+    /// placeholder; e.g. <c>global::System.Collections.Generic.List&lt;{T}&gt;</c>
+    /// becomes <c>global::System.Collections.Generic.List&lt;global::Demo.Foo&gt;</c>
+    /// after substitution.
+    /// </summary>
+    private static void EmitElementCollectionCreation(
+        StringBuilder sb,
+        JsonTypeModel type,
+        string factoryName,
+        string concreteContainerTemplate)
     {
         var elementFqn = StripGlobalPrefix(type.ElementTypeFullName!);
-        sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<global::");
-        sb.Append(elementFqn);
-        sb.Append(">, global::");
+        var collectionFqn = StripGlobalPrefix(type.TypeFullName);
+        var concreteContainer = concreteContainerTemplate.Replace("{T}", "global::" + elementFqn);
+
+        sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.");
+        sb.Append(factoryName);
+        sb.Append("<global::");
+        sb.Append(collectionFqn);
+        sb.Append(", global::");
         sb.Append(elementFqn);
         sb.AppendLine(">(Options,");
-        sb.Append("            new global::System.Text.Json.Serialization.Metadata.JsonCollectionInfoValues<global::System.Collections.Generic.List<global::");
-        sb.Append(elementFqn);
-        sb.AppendLine(">>");
+        sb.Append("            new global::System.Text.Json.Serialization.Metadata.JsonCollectionInfoValues<global::");
+        sb.Append(collectionFqn);
+        sb.AppendLine(">");
         sb.AppendLine("            {");
-        sb.Append("                ObjectCreator = static () => new global::System.Collections.Generic.List<global::");
-        sb.Append(elementFqn);
-        sb.AppendLine(">(),");
+        sb.Append("                ObjectCreator = static () => new ");
+        sb.Append(concreteContainer);
+        sb.AppendLine("(),");
         sb.AppendLine("                NumberHandling = default,");
         sb.AppendLine("                SerializeHandler = null,");
         sb.Append("                ElementInfo = ");
@@ -228,24 +312,42 @@ internal static class JsonContextEmitter
         sb.AppendLine("            });");
     }
 
-    private static void EmitDictionaryCreation(StringBuilder sb, JsonTypeModel type)
+    /// <summary>
+    /// Phase 8.5: dictionary renderer. Handles <c>Dictionary&lt;K,V&gt;</c>,
+    /// <c>IDictionary&lt;K,V&gt;</c> and <c>IReadOnlyDictionary&lt;K,V&gt;</c>
+    /// by templating the factory name + concrete container. The key type is
+    /// any STJ-supported dictionary-key shape (string, primitives, enum,
+    /// DateTime, Guid, …); the collector enforces this at registration time.
+    /// </summary>
+    private static void EmitDictionaryCreation(
+        StringBuilder sb,
+        JsonTypeModel type,
+        string factoryName,
+        string concreteContainerTemplate)
     {
-        // Slice 4: string-keyed only. The collector enforces that
-        // KeyContextName is always System_String so the renderer can
-        // hardcode the string key type.
-        var elementFqn = StripGlobalPrefix(type.ElementTypeFullName!);
-        sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.CreateDictionaryInfo<global::System.Collections.Generic.Dictionary<global::System.String, global::");
-        sb.Append(elementFqn);
-        sb.Append(">, global::System.String, global::");
-        sb.Append(elementFqn);
+        var keyFqn = StripGlobalPrefix(type.KeyTypeFullName!);
+        var valueFqn = StripGlobalPrefix(type.ElementTypeFullName!);
+        var collectionFqn = StripGlobalPrefix(type.TypeFullName);
+        var concreteContainer = concreteContainerTemplate
+            .Replace("{K}", "global::" + keyFqn)
+            .Replace("{V}", "global::" + valueFqn);
+
+        sb.Append("        global::System.Text.Json.Serialization.Metadata.JsonMetadataServices.");
+        sb.Append(factoryName);
+        sb.Append("<global::");
+        sb.Append(collectionFqn);
+        sb.Append(", global::");
+        sb.Append(keyFqn);
+        sb.Append(", global::");
+        sb.Append(valueFqn);
         sb.AppendLine(">(Options,");
-        sb.Append("            new global::System.Text.Json.Serialization.Metadata.JsonCollectionInfoValues<global::System.Collections.Generic.Dictionary<global::System.String, global::");
-        sb.Append(elementFqn);
-        sb.AppendLine(">>");
+        sb.Append("            new global::System.Text.Json.Serialization.Metadata.JsonCollectionInfoValues<global::");
+        sb.Append(collectionFqn);
+        sb.AppendLine(">");
         sb.AppendLine("            {");
-        sb.Append("                ObjectCreator = static () => new global::System.Collections.Generic.Dictionary<global::System.String, global::");
-        sb.Append(elementFqn);
-        sb.AppendLine(">(),");
+        sb.Append("                ObjectCreator = static () => new ");
+        sb.Append(concreteContainer);
+        sb.AppendLine("(),");
         sb.AppendLine("                NumberHandling = default,");
         sb.AppendLine("                SerializeHandler = null,");
         sb.Append("                KeyInfo = ");
