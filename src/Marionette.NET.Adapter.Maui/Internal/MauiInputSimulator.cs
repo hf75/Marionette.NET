@@ -1,40 +1,40 @@
-// Marionette.NET — MAUI input simulation helper (Phase 4.1)
+// Marionette.NET — MAUI input simulation helper
 //
-// Implements simulate_input for .NET MAUI 10.x. MAUI's input surface is
-// fundamentally different from WPF/Avalonia/WinUI:
+// History:
+//   Phase 4.1  — `click`, `double_click`, `type_text` semantically (via
+//                IButtonController.SendClicked + direct Entry/Editor/SearchBar
+//                Text property set). Other kinds returned false.
+//   Phase 12.3 — completes the matrix where MAUI's public API allows it:
+//                  * `key_press` with `key="Enter"` on Entry / Editor / SearchBar
+//                    via SendCompleted() / SearchCommand.Execute()
+//                  * `right_click` via TapGestureRecognizer with
+//                    Buttons=Secondary (when the adopter has wired one)
+//                  * `mouse_move` via PointerGestureRecognizer.PointerMovedCommand
+//                    (when the adopter has wired one)
+//                Other key codes still return success:false — MAUI 10.x has
+//                no publicly-constructible KeyboardEventArgs.
 //
-//   * NO unified raw-input pipeline. MAUI delegates platform input to the
-//     handlers (WinUI handler on Windows, UIKit on iOS, Android views, etc.)
+// MAUI's input model still differs from WPF/Avalonia/WinUI:
+//
+//   * No unified raw-input pipeline. MAUI delegates to platform handlers
 //     and there is no cross-platform `InputManager.ProcessInput` analogue.
-//   * NO public RoutedEvent surface. MAUI events are standard CLR events on
-//     the Element / View / Control hierarchy; subscribers register with
-//     `+=`, the platform handler bridges from native input to those events.
-//   * NO `RaiseEvent` API on Element. Synthesising an event is done either
-//     via the controller interface (`IButtonController.SendClicked()`) or
-//     by reflection on the compiler-emitted backing field (Phase 3.2 WinUI
-//     pattern; covered separately by MauiEventRaiser).
-//   * NO `AutomationPeer.Invoke()` cross-platform. Each platform has its own
-//     accessibility shape; MAUI doesn't surface one.
+//   * No public RoutedEvent surface. MAUI events are CLR events on
+//     Element/View/Control; the platform handler bridges native input.
+//   * Phase 12.3 leverages MAUI's gesture-recognizer system instead — when
+//     adopters register a PointerGestureRecognizer (or a Secondary-button
+//     TapGestureRecognizer) on a target View, we invoke the corresponding
+//     command. That's the closest semantic equivalent MAUI ships.
 //
-// Phase 4.1 strategy follows MASTERPLAN tenet 2 ("Semantic beats visual"):
+// Strategy (MASTERPLAN tenet 2, "Semantic beats visual"):
 //
-//   * For "click" / "double_click" / "right_click" on a Button (or any
-//     IButtonController-implementing element): call
-//     `IButtonController.SendClicked()`. This fires the framework's Click
-//     event AND any bound Command in one call - the same path the platform
-//     handler uses when the user actually clicks. Works on every MAUI head
-//     (Windows / Android / iOS / MacCatalyst) without elevation, capabilities,
-//     or platform-specific input injection.
-//   * For "type_text" on an Entry / Editor / SearchBar: set the Text
-//     property directly. This bypasses the platform IME but produces the
-//     same TextChanged event flow that adopters subscribe to.
-//   * For "key_press" / "key_down" / "key_up" / "mouse_move": Phase 4.1
-//     returns success:false with a logged limitation. MAUI 10.x doesn't
-//     expose a publicly-constructible KeyboardEventArgs; adopters who need
-//     keyboard automation should:
-//       (a) use a [McpCallable] method that mutates the underlying state, or
-//       (b) on Windows-only adopters, escalate to platform-specific
-//           InputInjector via custom code (Phase 6 may surface this).
+//   * `click` / `double_click`: IButtonController.SendClicked.
+//   * `right_click`: TapGestureRecognizer with ButtonsMask.Secondary, command
+//     execution. Adopters without a Secondary-button gesture see false.
+//   * `type_text`: direct Text property set (Entry/Editor/SearchBar/Label).
+//   * `key_press` with key="Enter": SendCompleted() on Entry/Editor,
+//     SearchCommand.Execute() on SearchBar. Other keys return false.
+//   * `key_down` / `key_up`: not supported (no public events to fire).
+//   * `mouse_move`: PointerGestureRecognizer.PointerMovedCommand.Execute().
 //
 // Threading: every public method here MUST be called on the MAUI UI thread.
 // MauiUiAutomationAdapter wraps each call in DispatchAsync<T>(...) before
@@ -84,29 +84,35 @@ internal static class MauiInputSimulator
                 return TrySendClick(target, log);
 
             case "right_click":
-                // No public right-click semantic surface in MAUI. Adopters
-                // who need context-menu semantics should use a [McpCallable]
-                // method bound to the same handler.
-                log.LogInformation(
-                    "simulate_input(right_click): not supported by the Phase-4.1 MAUI adapter " +
-                    "(MAUI has no public right-click semantic surface). " +
-                    "Use a [McpCallable] for the context-menu action.");
-                return false;
+                // Phase 12.3: invoke a TapGestureRecognizer with
+                // ButtonsMask.Secondary if the adopter has wired one on the
+                // target View. Otherwise log + return false.
+                return TrySendRightClick(target, log);
 
             case "type_text":
                 return TryTypeText(target, args, log);
 
             case "key_press":
+                // Phase 12.3: only `key="Enter"` is meaningful in MAUI's
+                // semantic input model — that's the form-submit path on
+                // Entry / Editor / SearchBar. Other keys return false.
+                return TrySendEnter(target, args, log);
+
             case "key_down":
             case "key_up":
-            case "mouse_move":
                 log.LogInformation(
-                    "simulate_input: kind '{Kind}' is not supported by the Phase-4.1 MAUI adapter " +
-                    "(MAUI 10.x has no publicly-constructible keyboard / pointer event args). " +
-                    "Use a [McpCallable] method that mutates the underlying state, OR " +
-                    "raise_event with the framework event name.",
+                    "simulate_input: kind '{Kind}' is not supported by the MAUI adapter — " +
+                    "MAUI 10.x has no publicly-constructible KeyboardEventArgs and no public " +
+                    "way to fire the platform handler's key-down / key-up events. Use a " +
+                    "[McpCallable] method that mutates the underlying state, OR `key_press` " +
+                    "with key=\"Enter\" for the form-submit semantic on Entry / Editor / SearchBar.",
                     kind);
                 return false;
+
+            case "mouse_move":
+                // Phase 12.3: invoke PointerGestureRecognizer.PointerMovedCommand
+                // when the adopter has wired one on the target View.
+                return TrySendPointerMove(target, log);
 
             default:
                 log.LogWarning("simulate_input: unknown kind '{Kind}'.", kind);
@@ -152,6 +158,157 @@ internal static class MauiInputSimulator
             "implementing IButtonController). For non-button controls use raise_event " +
             "with a specific event name, OR a [McpCallable] method.",
             target.GetType().Name);
+        return false;
+    }
+
+    /// <summary>
+    /// Phase 12.3: fire the form-submit semantic on text inputs:
+    /// <list type="bullet">
+    ///   <item><description><see cref="Entry"/>: <c>SendCompleted()</c> — fires <c>Completed</c> event + executes <c>ReturnCommand</c>.</description></item>
+    ///   <item><description><see cref="Editor"/>: <c>SendCompleted()</c>.</description></item>
+    ///   <item><description><see cref="SearchBar"/>: invokes <c>SearchCommand</c> with <c>SearchCommandParameter</c>.</description></item>
+    /// </list>
+    /// Only fires when <c>args.key == "Enter"</c> (case-insensitive); other
+    /// key codes log and return false.
+    /// </summary>
+    private static bool TrySendEnter(Element target, IReadOnlyDictionary<string, object?>? args, ILogger log)
+    {
+        var key = (args is not null && args.TryGetValue("key", out var k) && k is string ks) ? ks : null;
+        if (!string.Equals(key, "Enter", StringComparison.OrdinalIgnoreCase))
+        {
+            log.LogInformation(
+                "simulate_input(key_press) on {Type}: only key=\"Enter\" is supported in the MAUI adapter " +
+                "(form-submit semantic). Got key=\"{Key}\". Use a [McpCallable] for arbitrary keys.",
+                target.GetType().Name, key ?? "<null>");
+            return false;
+        }
+
+        try
+        {
+            switch (target)
+            {
+                case Entry entry:
+                    entry.SendCompleted();
+                    return true;
+                case Editor editor:
+                    editor.SendCompleted();
+                    return true;
+                case SearchBar sb:
+                    if (sb.SearchCommand is { } cmd)
+                    {
+                        cmd.Execute(sb.SearchCommandParameter);
+                        return true;
+                    }
+                    log.LogInformation(
+                        "simulate_input(key_press, Enter) on SearchBar '{Name}': SearchCommand is not bound. " +
+                        "Set a SearchCommand or subscribe to SearchButtonPressed and invoke a [McpCallable] instead.",
+                        sb.AutomationId ?? "(unset)");
+                    return false;
+                default:
+                    log.LogInformation(
+                        "simulate_input(key_press, Enter) on {Type}: target is not an Entry / Editor / SearchBar. " +
+                        "Phase 12.3 supports those three. Use a [McpCallable] for other input controls.",
+                        target.GetType().Name);
+                    return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "simulate_input(key_press, Enter) on '{Name}' threw.",
+                target.AutomationId ?? "(unset)");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Phase 12.3: invoke a <see cref="TapGestureRecognizer"/> bound for
+    /// <c>ButtonsMask.Secondary</c> on the target view's gesture-recognizer
+    /// chain. MAUI's right-click contract is: the adopter wires a Tap
+    /// recognizer with <c>Buttons = ButtonsMask.Secondary</c> and a Command;
+    /// we execute that Command.
+    /// </summary>
+    private static bool TrySendRightClick(Element target, ILogger log)
+    {
+        if (target is not View view)
+        {
+            log.LogInformation(
+                "simulate_input(right_click) on {Type}: target is not a View, has no GestureRecognizers collection.",
+                target.GetType().Name);
+            return false;
+        }
+
+        foreach (var gr in view.GestureRecognizers)
+        {
+            if (gr is TapGestureRecognizer tap && (tap.Buttons & ButtonsMask.Secondary) == ButtonsMask.Secondary)
+            {
+                if (tap.Command is null)
+                {
+                    log.LogInformation(
+                        "simulate_input(right_click) on {Name}: found a Secondary-button TapGestureRecognizer " +
+                        "but its Command is not bound.",
+                        target.AutomationId ?? "(unset)");
+                    continue;
+                }
+                if (!tap.Command.CanExecute(tap.CommandParameter))
+                {
+                    log.LogInformation(
+                        "simulate_input(right_click) on {Name}: Secondary-button gesture's Command.CanExecute returned false.",
+                        target.AutomationId ?? "(unset)");
+                    return false;
+                }
+                tap.Command.Execute(tap.CommandParameter);
+                return true;
+            }
+        }
+        log.LogInformation(
+            "simulate_input(right_click) on {Name}: no TapGestureRecognizer with Buttons=Secondary attached. " +
+            "Adopters who need right-click semantics should attach one with a bound Command.",
+            target.AutomationId ?? "(unset)");
+        return false;
+    }
+
+    /// <summary>
+    /// Phase 12.3: invoke a <see cref="PointerGestureRecognizer.PointerMovedCommand"/>
+    /// on the target view's gesture-recognizer chain. The recognizer must be
+    /// adopter-attached with the command bound.
+    /// </summary>
+    private static bool TrySendPointerMove(Element target, ILogger log)
+    {
+        if (target is not View view)
+        {
+            log.LogInformation(
+                "simulate_input(mouse_move) on {Type}: target is not a View, has no GestureRecognizers collection.",
+                target.GetType().Name);
+            return false;
+        }
+
+        foreach (var gr in view.GestureRecognizers)
+        {
+            if (gr is PointerGestureRecognizer ptr)
+            {
+                if (ptr.PointerMovedCommand is null)
+                {
+                    log.LogInformation(
+                        "simulate_input(mouse_move) on {Name}: found a PointerGestureRecognizer but " +
+                        "PointerMovedCommand is not bound.",
+                        target.AutomationId ?? "(unset)");
+                    continue;
+                }
+                if (!ptr.PointerMovedCommand.CanExecute(ptr.PointerMovedCommandParameter))
+                {
+                    log.LogInformation(
+                        "simulate_input(mouse_move) on {Name}: PointerMovedCommand.CanExecute returned false.",
+                        target.AutomationId ?? "(unset)");
+                    return false;
+                }
+                ptr.PointerMovedCommand.Execute(ptr.PointerMovedCommandParameter);
+                return true;
+            }
+        }
+        log.LogInformation(
+            "simulate_input(mouse_move) on {Name}: no PointerGestureRecognizer attached. " +
+            "Adopters who need pointer-move semantics should attach one with PointerMovedCommand bound.",
+            target.AutomationId ?? "(unset)");
         return false;
     }
 
