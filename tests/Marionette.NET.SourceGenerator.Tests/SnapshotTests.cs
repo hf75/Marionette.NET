@@ -427,11 +427,17 @@ public class SnapshotTests
     }
 
     [Fact]
-    public void GoldenAbstractCustomCollection_FallsBackToReflection()
+    public void GoldenNoCtorCustomCollection_RegistersSerializeOnly()
     {
-        // Phase 11 contract: types that implement a supported interface but
-        // lack a public parameterless ctor stay on the legacy reflection
-        // path — their ObjectCreator would otherwise throw at runtime.
+        // Phase 12.6: types that implement a supported interface but lack
+        // a public parameterless ctor are registered as SERIALIZE-ONLY —
+        // the JsonTypeInfo lands on the context but ObjectCreator = null
+        // so deserialisation by callers will fail clearly. The serialise
+        // direction enumerates the existing instance (no ctor needed).
+        // Adopters who only use the type as an event/observable/return
+        // payload get full source-gen coverage; adopters who try to
+        // round-trip get a runtime InvalidOperationException at exactly
+        // the call site that needed deserialisation.
         var source = """
             using System.Collections.Generic;
             using System;
@@ -439,7 +445,7 @@ public class SnapshotTests
 
             namespace Demo;
 
-            // Lacks a public parameterless ctor → interface fallback rejects.
+            // Lacks a public parameterless ctor.
             public sealed class CtorRequiredList<T> : List<T>
             {
                 public CtorRequiredList(int capacity) : base(capacity) { }
@@ -467,9 +473,13 @@ public class SnapshotTests
             $"Compilation of generated code failed:\n{FormatDiagnostics(result.CompilationDiagnostics)}");
 
         var generated = result.GeneratedText;
-        // The args type itself must NOT appear as a registered context entry,
-        // because its CtorRequiredList<int> property forced rollback.
-        Assert.DoesNotContain("Demo_NoCtorEventArgs", generated);
+        // The args type DOES appear (Phase 12.6 — serialise-only registration).
+        Assert.Contains("Demo_NoCtorEventArgs", generated);
+        Assert.Contains("Custom_Demo_CtorRequiredList", generated);
+        // ObjectCreator is null for the no-ctor user collection — the
+        // emitter would otherwise render `static () => new CtorRequiredList<int>()`
+        // which wouldn't compile.
+        Assert.Contains("ObjectCreator = null", generated);
     }
 
     [Fact]

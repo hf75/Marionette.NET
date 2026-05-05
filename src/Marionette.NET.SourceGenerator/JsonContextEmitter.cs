@@ -308,9 +308,21 @@ internal static class JsonContextEmitter
         sb.Append(collectionFqn);
         sb.AppendLine(">");
         sb.AppendLine("            {");
-        sb.Append("                ObjectCreator = static () => new ");
-        sb.Append(concreteContainer);
-        sb.AppendLine("(),");
+        // Phase 12.6: serialise-only path — when the user type lacks a
+        // public parameterless ctor we emit `ObjectCreator = null`. The
+        // serialise direction enumerates an existing instance and never
+        // needs to construct one; deserialisation by callers throws a
+        // clear runtime error.
+        if (type.ConcreteContainerHasParameterlessCtor)
+        {
+            sb.Append("                ObjectCreator = static () => new ");
+            sb.Append(concreteContainer);
+            sb.AppendLine("(),");
+        }
+        else
+        {
+            sb.AppendLine("                ObjectCreator = null,");
+        }
         sb.AppendLine("                NumberHandling = default,");
         sb.AppendLine("                SerializeHandler = null,");
         sb.Append("                ElementInfo = ");
@@ -356,9 +368,21 @@ internal static class JsonContextEmitter
         sb.Append(collectionFqn);
         sb.AppendLine(">");
         sb.AppendLine("            {");
-        sb.Append("                ObjectCreator = static () => new ");
-        sb.Append(concreteContainer);
-        sb.AppendLine("(),");
+        // Phase 12.6: serialise-only path — when the user type lacks a
+        // public parameterless ctor we emit `ObjectCreator = null`. The
+        // serialise direction enumerates an existing instance and never
+        // needs to construct one; deserialisation by callers throws a
+        // clear runtime error.
+        if (type.ConcreteContainerHasParameterlessCtor)
+        {
+            sb.Append("                ObjectCreator = static () => new ");
+            sb.Append(concreteContainer);
+            sb.AppendLine("(),");
+        }
+        else
+        {
+            sb.AppendLine("                ObjectCreator = null,");
+        }
         sb.AppendLine("                NumberHandling = default,");
         sb.AppendLine("                SerializeHandler = null,");
         sb.Append("                KeyInfo = ");

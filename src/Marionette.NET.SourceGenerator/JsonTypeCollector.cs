@@ -511,10 +511,16 @@ internal sealed class JsonTypeCollector
         HashSet<string> visiting,
         int depth)
     {
-        // The user type must be concrete and instantiable.
+        // The user type must be concrete and instantiable for the type
+        // itself (abstract / static / interface types can't appear as a
+        // property's runtime type without polymorphism the source-gen
+        // doesn't model). Phase 12.6: a missing public parameterless ctor
+        // is NOT a rejection — we register the type as serialise-only,
+        // emit ObjectCreator = null, and let runtime deserialisation
+        // fail clearly if a caller tries to round-trip the type.
         if (type.IsAbstract || type.IsStatic) return null;
         if (type.TypeKind == TypeKind.Interface) return null;
-        if (!HasPublicParameterlessCtor(type)) return null;
+        var hasCtor = HasPublicParameterlessCtor(type);
 
         var typeFqn = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
@@ -589,7 +595,8 @@ internal sealed class JsonTypeCollector
                     KeyContextName: keyName,
                     ElementTypeFullName: valueCanonical,
                     KeyTypeFullName: keyCanonical,
-                    ConcreteContainerOverride: unprefixedTypeFqn);
+                    ConcreteContainerOverride: unprefixedTypeFqn,
+                    ConcreteContainerHasParameterlessCtor: hasCtor);
             }
             return customKey;
         }
@@ -609,7 +616,8 @@ internal sealed class JsonTypeCollector
                     Properties: EquatableArray<JsonPropertyModel>.Empty,
                     ElementContextName: elementName,
                     ElementTypeFullName: elementCanonical,
-                    ConcreteContainerOverride: unprefixedTypeFqn);
+                    ConcreteContainerOverride: unprefixedTypeFqn,
+                    ConcreteContainerHasParameterlessCtor: hasCtor);
             }
             return customKey;
         }

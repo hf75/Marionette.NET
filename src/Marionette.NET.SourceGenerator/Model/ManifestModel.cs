@@ -320,6 +320,15 @@ internal enum JsonTypeKind
 /// the override carries the user type so the runtime allocates the correct
 /// concrete instance instead of a default substitute.
 /// </param>
+/// <param name="ConcreteContainerHasParameterlessCtor">
+/// Phase 12.6: <see langword="true"/> when the emitter should render
+/// <c>ObjectCreator = static () =&gt; new &lt;Type&gt;()</c>. <see langword="false"/>
+/// when the user collection type lacks a public parameterless ctor — the
+/// emitter renders <c>ObjectCreator = null</c> instead, leaving the type
+/// serialise-only (deserialisation by callers throws at runtime, which is
+/// the correct contract: the serialise path enumerates an existing
+/// instance and never needs a ctor).
+/// </param>
 internal sealed record JsonTypeModel(
     string TypeFullName,
     string PropertyName,
@@ -331,7 +340,8 @@ internal sealed record JsonTypeModel(
     string? KeyContextName = null,
     string? ElementTypeFullName = null,
     string? KeyTypeFullName = null,
-    string? ConcreteContainerOverride = null);
+    string? ConcreteContainerOverride = null,
+    bool ConcreteContainerHasParameterlessCtor = true);
 
 /// <summary>
 /// Phase 8.1: a single property on a Json-context-tracked object type. The
