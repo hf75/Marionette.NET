@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Phase 15 Spike A — WinForms adapter foundation harness.
+    Pure verification project: builds and runs to prove three load-bearing
+    claims before the full Marionette.NET.Adapter.WinForms ships.
+
+    Outside the solution intentionally (Phase-0 utility pattern). Inherits
+    Directory.Build.props but explicitly relaxes TreatWarningsAsErrors so
+    spike-only diagnostics aren't fatal.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>SpikeWinForms</RootNamespace>
+    <AssemblyName>SpikeWinForms</AssemblyName>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!--
+    Reuse-claim 3: the spike depends on Marionette.NET.Runtime so the
+    Win32InputInjector type is available without copy-paste. If the runtime
+    DLL changes shape this spike rebuilds against it — the reuse story is
+    a load-bearing claim, not a separate codebase.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.Runtime\Marionette.NET.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>

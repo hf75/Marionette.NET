@@ -4,7 +4,7 @@
 
 **👉 [Read SHOWCASE.md](SHOWCASE.md) for the 90-second pitch + live demo walkthrough.**
 
-Marionette.NET turns any C# desktop application into an MCP server that Claude (or any MCP-aware agent) can drive end-to-end. **In-process**, **attribute-driven**, **cross-framework** (WPF + Avalonia + WinUI 3 + MAUI today; Uno on the roadmap), **AOT-friendly**, and **strippable to literal zero footprint** in production builds.
+Marionette.NET turns any C# desktop application into an MCP server that Claude (or any MCP-aware agent) can drive end-to-end. **In-process**, **attribute-driven**, **cross-framework** (WPF + Avalonia + WinUI 3 + MAUI + Windows Forms — five-framework roster, Uno investigated and dropped), **AOT-friendly**, and **strippable to literal zero footprint** in production builds.
 
 ```csharp
 [McpRoot]
@@ -51,7 +51,7 @@ Claude can now call `TodoListViewModel.AddTodo({"title": "buy milk"})` directly 
 
 ## Status
 
-**v0.1.0-preview — post-Phase-14 release candidate.** What works today:
+**v0.1.0-preview — post-Phase-15 release candidate.** What works today:
 
 - The four meta-tools, channel push, watchable resources, `[McpEvent]` (Phase 1.2 / 1.6).
 - Source generator emits AOT-clean dispatcher tables + per-method JSON schemas; 32/32 generator tests green.
@@ -69,12 +69,13 @@ Claude can now call `TodoListViewModel.AddTodo({"title": "buy milk"})` directly 
 - **Phase 12.2** — `[McpRaisable]` opt-in catalog: AOT-clean `raise_event` for WPF + Avalonia via assembly-level declarations + source-generated typed dispatcher.
 - **Phase 13** — every source-generator shape gap closed: multi-dim arrays rank 3+4, tuple keys rank 4+5, `in` parameters, Stream params via base64, custom `[JsonConverter]` (type + property level), generic `[McpRoot]` via `[assembly: McpClosedRoot]`, generic `[McpCallable]` via `ClosedTypes`. 49/49 source-gen tests.
 - **Phase 14** — consolidated event layer: Win32 `SendInput` core for WPF/WinUI/MAUI Windows-head, Avalonia reflection-opt-in for raw input. Closes the last input/event caps.
-- **Sample.Wpf.TodoApp + Sample.Avalonia.Dashboard + Sample.WinUI.FormLab + Sample.Maui.PocketPlanner + Sample.Wpf.NeonControlCenter** — all compatible with the skill-pack v2 workflows. NeonControlCenter is the end-of-phase showcase: 13/13 PASS live-driven via MCP in GUI mode.
+- **Phase 15** — Windows Forms adapter (`Marionette.NET.Adapter.WinForms`). Fifth framework on the roster: net10.0-windows, `Form.DrawToBitmap`-based screenshots, `Control.BeginInvoke` UI-thread marshalling, `Win32InputInjector` reuse for `simulate_input`, CLR-event `On<EventName>` reflection for `raise_event`, `Application.OpenForms` multi-window tracking. Showcase: [`Sample.WinForms.OrderTracker`](samples/Sample.WinForms.OrderTracker). IL-strip verified, stdio handshake green.
+- **Sample.Wpf.TodoApp + Sample.Avalonia.Dashboard + Sample.WinUI.FormLab + Sample.Maui.PocketPlanner + Sample.Wpf.NeonControlCenter + Sample.WinForms.OrderTracker** — all compatible with the skill-pack v2 workflows. NeonControlCenter is the end-of-phase showcase: 13/13 PASS live-driven via MCP in GUI mode.
 - 7 end-to-end eval-cases (`dotnet test`) + 3 conditional GUI eval-cases (EC-8 simulate_input, EC-9 raise_event, EC-10 multi-window; gated on `MARIONETTE_GUI_TESTS=1`).
 - Local showcase publish + dogfood: WPF TodoApp, Avalonia Dashboard, and WinUI FormLab publish to `artifacts/showcases` and pass headless MCP handshake checks.
 - **AOT-publish + AOT-runtime stdio handshake**: 5 samples × stripped + full publish (10 publishes) all clean, 0 Marionette IL warnings; AOT-runtime handshake exercises explicit dynamic-tool invocation on all four UI-framework adapters (Phase 10 / 11).
 
-What is **not** yet here: Uno adapter (planned for v0.2), public NuGet push, GitHub Release tag. The repo is now public; the NuGet push is the next milestone. See [MASTERPLAN.md](MASTERPLAN.md) for the full roadmap.
+What is **not** here: public NuGet push, GitHub Release tag. The repo is public; the NuGet push is the next milestone. The Uno adapter — originally on the roadmap as Phase 4, then deferred — was investigated in Phase 16 (see [.phase16/spike-a-findings.md](.phase16/spike-a-findings.md)) and dropped: modern Uno's Skia-renderer default and hard NuGet version conflicts make a clean adapter a multi-week clone with uncertain runtime payoff. Adapter roster is final at five (WPF, Avalonia, WinUI, MAUI, WinForms). See [MASTERPLAN.md](MASTERPLAN.md) for the full roadmap.
 
 ## Quickstart
 
@@ -122,6 +123,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .phase7\release-local.ps1
 - **[PHASE12_FINDINGS.md](PHASE12_FINDINGS.md)** - Phase 12 outcomes (MAUI semantic input completion, multi-dim arrays rank 2, no-ctor collections serialise-only, [JsonIgnore(Condition)] sub-modes, type-graph depth lift to 64, raise_event AOT catalog, tuple-keyed dictionaries).
 - **[PHASE13_FINDINGS.md](PHASE13_FINDINGS.md)** - Phase 13 outcomes (every source-generator shape gap: multi-dim ranks 3+4, tuple keys ranks 4+5, `in` params, Stream base64, custom `[JsonConverter]`, generic `[McpRoot]`/`[McpCallable]`).
 - **[PHASE14_FINDINGS.md](PHASE14_FINDINGS.md)** - Phase 14 outcomes (consolidated event layer: Win32 `SendInput` for WPF/WinUI/MAUI, Avalonia reflection opt-in).
+- **[PHASE15_FINDINGS.md](PHASE15_FINDINGS.md)** - Phase 15 outcomes (Windows Forms adapter — fifth framework on the roster, `Win32InputInjector` reuse, IL-strip verified).
 - **[.phase6/6a-testing-toolkit-dx.md](.phase6/6a-testing-toolkit-dx.md)** - Phase 6a testing toolkit slice.
 - **[.phase7/7a-distribution-dogfooding.md](.phase7/7a-distribution-dogfooding.md)** - Local package/showcase dogfooding plan.
 - **[docs/getting-started.md](docs/getting-started.md)** - Local NuGet consumption and host wiring.

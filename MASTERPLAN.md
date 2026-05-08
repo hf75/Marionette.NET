@@ -333,7 +333,7 @@ Dieser Abschnitt dokumentiert, wie sich der originale Phasenplan in der tatsäch
 | 1 — Core + WPF + Skill-Pack | ✓ | [PHASE1_FINDINGS.md](PHASE1_FINDINGS.md) |
 | 2 — Avalonia + Watchable + Dynamic Tools | ✓ | [PHASE2_FINDINGS.md](PHASE2_FINDINGS.md) |
 | 3 — WinUI + Real Input + Multi-Window | ✓ | [PHASE3_FINDINGS.md](PHASE3_FINDINGS.md) |
-| **4 — Uno** | **übersprungen, weiterhin auf der Roadmap** | — |
+| **4 — Uno** | **gestrichen** (siehe 2026-05-08 Update unten) | — |
 | 4.1 — MAUI (vorgezogen aus Original-Phase 5) | ✓ | inline in PHASE-3/4-Findings |
 | 4.2 — AOT/Trim-Härtung | ✓ | inline |
 | 5 — MAUI | siehe 4.1 (vorgezogen) | — |
@@ -344,10 +344,15 @@ Dieser Abschnitt dokumentiert, wie sich der originale Phasenplan in der tatsäch
 | 9 — Cross-Adapter-Polish (Avalonia type_text, MAUI multi-window, WinUI Win11 reality) | ✓ | [PHASE9_FINDINGS.md](PHASE9_FINDINGS.md) |
 | 10 — AOT-clean per-method dynamic tools (`MarionetteAIFunction`) | ✓ | [PHASE10_FINDINGS.md](PHASE10_FINDINGS.md) |
 | 11 — Interface-Fallback + `RunAsyncSourceGenSafe` annotation-free entry point | ✓ | [PHASE11_FINDINGS.md](PHASE11_FINDINGS.md) |
+| 12.x — Cross-Adapter-Lückenschluss (MAUI semantic input, [JsonIgnore], depth lift, multi-dim arrays, raise_event AOT, tuple keys) | ✓ | [PHASE12_FINDINGS.md](PHASE12_FINDINGS.md) |
+| 13 — Source-Generator-Shape-Lücken (multi-dim ranks 3+4, tuple keys 4+5, in/Stream/JsonConverter, generic Root/Callable) | ✓ | [PHASE13_FINDINGS.md](PHASE13_FINDINGS.md) |
+| 14 — Konsolidierte Event-Schicht (Win32 SendInput für WPF/WinUI/MAUI, Avalonia Reflection-Opt-in) | ✓ | [PHASE14_FINDINGS.md](PHASE14_FINDINGS.md) |
+| 15 — Windows Forms Adapter | ✓ | [PHASE15_FINDINGS.md](PHASE15_FINDINGS.md) |
+| **16 — Uno** | **gestrichen 2026-05-08** (siehe Update unten) | [.phase16/spike-a-findings.md](.phase16/spike-a-findings.md) |
 
 ### Was sich gegenüber dem Original-Plan geändert hat
 
-- **Uno wurde aus der sequenziellen Reihenfolge herausgenommen.** MAUI (Original-Phase-5) wurde stattdessen vorgezogen, weil die WinAppSDK-Toolchain bereits durch WinUI vorhanden war und die MAUI-Windows-Head-Implementation gradlinig daraus folgte. Uno bleibt als einziger nicht ausgelieferter Adapter auf der Roadmap; alle anderen Phase-Inhalte wurden geliefert.
+- **Uno wurde gestrichen (2026-05-08).** Ursprünglich Phase 4, dann zurückgestellt mit dem Hinweis "weiterhin auf der Roadmap". Phase 16 hat einen Spike gestartet, der zwei strukturelle Probleme aufdeckte: (1) modernes Uno (`unoapp` 6.x default) nutzt den Skia-Renderer auch auf Windows, also nicht WinUI 3 — die "WinUI-Adapter just works"-These trägt nicht; (2) hartes NuGet-Versionskonflikt-Graph zwischen Marionette-Pins und Uno-Scaffold-Pins. Volle Untersuchung in [.phase16/spike-a-findings.md](.phase16/spike-a-findings.md). Adapter-Roster ist damit final auf fünf gesetzt: WPF, Avalonia, WinUI, MAUI, **WinForms** (Phase 15).
 - **Phase 8 wurde zur Slice-Phase.** Das Original sah AOT-Härtung als 4.2-Aufgabe, aber JSON-Source-Generation für User-Typen war so umfangreich, dass es eine eigene Phase mit fünf Slices wurde (8.1–8.5). 8.5 schloss die Collection-Interface-Lücke vollständig.
 - **Phase 10 entkoppelte sich vom SDK-Wartelauf.** Die ursprüngliche Annahme war, dass AOT-fähige Per-Method-Tools auf einen `ModelContextProtocol`-Source-Generator warten müssten. Phase 10 zeigte, dass der SDK-eigene `McpServerTool.Create(AIFunction, …)`-Overload bereits reflection-frei war — wir sind nur am `Delegate`-Overload hängengeblieben.
 - **Phase 11 öffnete den Source-Generator für jede User-/Concurrent-Collection.** Statt jedes neue Container-Type explizit auflisten zu müssen, walkt der Generator jetzt `AllInterfaces` und matched gegen die Standard-Contracts (`IList`, `IDictionary`, `ISet`, `IEnumerable`, …). `ConcurrentDictionary`, `ConcurrentQueue`, beliebige User-Collections sind damit automatisch abgedeckt.
@@ -363,9 +368,8 @@ Alle zehn Tenets aus dem Original-Plan halten unverändert. Die einzige Erweiter
 
 ### Was bleibt offen
 
-1. **Uno-Adapter** (siehe oben, einziger Adapter auf der Roadmap).
-2. **`git push` + GitHub-Release** (bewusst zurückgehalten).
-3. **Architektonische Reflection-Restposten** (per Doku, nicht "to do"):
+1. **GitHub-Release / `v0.1.0-preview.1`-Tag + öffentlicher NuGet-Push** — `git push` ist seit Ende Phase 14 erledigt (Repo öffentlich auf [hf75/Marionette.NET](https://github.com/hf75/Marionette.NET)), aber Tag, Release und NuGet-Push stehen aus.
+2. **Architektonische Reflection-Restposten** (per Doku, nicht "to do"):
    - `raise_event` event-name resolution — adopter-fallbar via `RunAsyncSourceGenSafe`.
    - WPF + AOT GUI crash (Microsoft-known, Frozen-Mode `--mcp --headless` läuft).
    - Avalonia simulate_input key/text/mouse-move (interne Ctors in 12.x).

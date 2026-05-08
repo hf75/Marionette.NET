@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Phase 15 — Sample.WinForms.OrderTracker
+    Showcase WinForms adopter app modelled on Sample.Wpf.TodoApp.
+    Wiring is identical to the WPF/Avalonia/WinUI/MAUI samples — same
+    flag set (mcp, mcp+headless, mcp-help), same Marionette handshake.
+    The point is to prove the WinForms adapter ships in the same
+    skill-pack-ready shape as every other framework adapter.
+  -->
+  <Import Project="..\..\build\Marionette.NET.props" />
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Sample.WinForms.OrderTracker</RootNamespace>
+    <AssemblyName>Sample.WinForms.OrderTracker</AssemblyName>
+    <StartupObject>Sample.WinForms.OrderTracker.Program</StartupObject>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!--
+      WinForms SDK auto-emits `Application.Run(new Form1())` if no
+      ApplicationDefinition is set; we want our custom Main in Program.cs
+      so we suppress the default.
+    -->
+    <DisableWinExeOutputInference>false</DisableWinExeOutputInference>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PublishAot)'=='true'">
+    <SelfContained>true</SelfContained>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.Abstractions\Marionette.NET.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Marionette.NET.SourceGenerator\Marionette.NET.SourceGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(EnableMcpAutomation)'=='true'">
+    <ProjectReference Include="..\..\src\Marionette.NET.Adapter.WinForms\Marionette.NET.Adapter.WinForms.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+
+  <Import Project="..\..\build\Marionette.NET.targets" />
+
+</Project>

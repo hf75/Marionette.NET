@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Phase 15 — Windows Forms adapter for Marionette.NET.
+
+      Windows-only by definition (Windows Forms is a Windows-only framework).
+      TFM net10.0-windows mirrors Adapter.Wpf — no extra Windows SDK pin needed.
+
+      Why Phase 15: WinForms is the dominant framework in the legacy LOB-app
+      market (the segment most likely to need a "no source code, MCP-attach via
+      injector" path). Shipping a first-class Marionette adapter unlocks both
+      manual hand-decoration of WinForms apps and the future Marionette.NET.Inject
+      flow.
+
+      Implementation reuses Phase 14's Win32InputInjector verbatim — the spike
+      verified that the OS-level SendInput pipeline drives WinForms controls
+      identically to WPF / WinUI / MAUI. See .phase15/spike-a-findings.md.
+    -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Marionette.Adapter.WinForms</RootNamespace>
+    <AssemblyName>Marionette.NET.Adapter.WinForms</AssemblyName>
+    <Description>Windows Forms adapter for Marionette.NET. Only referenced when EnableMcpAutomation=true on a WinForms project.</Description>
+
+    <!--
+      AOT analyzer flags — same gating as the other adapters: only when the
+      consumer is being AOT-published. Plain dotnet build stays clean.
+    -->
+    <IsAotCompatible Condition="'$(PublishAot)'=='true' and $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">true</IsAotCompatible>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PublishAot)'=='true'">
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Marionette.NET.Runtime\Marionette.NET.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>
