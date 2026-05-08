@@ -95,6 +95,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
+      - name: Restore SDK workloads
+        # global.json pins SDK 10.0.202 with rollForward=latestFeature; the
+        # runner image's preinstalled MAUI workloads target a different SDK.
+        # Once setup-dotnet resolves to the runner's actual latest 10.0.x,
+        # `<UseMaui>true</UseMaui>` + `<SingleProject>true</SingleProject>` in
+        # Marionette.NET.Adapter.Maui pulls a manifest that demands every
+        # maui-* sub-workload (incl. maui-tizen) — and the resolved SDK's
+        # manifest doesn't match what the image preinstalled.
+        # `workload restore` against the solution installs whatever the
+        # resolved SDK's manifest needs. Idempotent, ~90s on cold restore.
+        run: dotnet workload restore Marionette.NET.sln
+        shell: pwsh
+
       - name: Restore solution
         run: dotnet restore Marionette.NET.sln
 
@@ -211,6 +224,14 @@ jobs:
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props', '**/Directory.Build.props', '**/global.json') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
+
+      - name: Restore SDK workloads
+        # See build-and-test job for the full rationale. Same fix is needed
+        # here because the AOT publish chain also restores the solution
+        # (transitively pulls the MAUI adapter even when only the StripeProbe
+        # is being published).
+        run: dotnet workload restore Marionette.NET.sln
+        shell: pwsh
 
       - name: Restore solution
         run: dotnet restore Marionette.NET.sln
